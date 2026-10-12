@@ -1,0 +1,6 @@
+# Pinned so `make lint` locally sees exactly the lints CI does; CI reads the
+# channel from this file. Bump deliberately, then re-run `make lint`.
+[toolchain]
+channel = "1.99.0"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

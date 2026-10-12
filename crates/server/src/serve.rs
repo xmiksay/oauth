@@ -1,0 +1,139 @@
+//! `oauth serve`: startup sequence and graceful shutdown.
+
+use std::{path::Path, sync::atomic::Ordering};
+
+use anyhow::Context;
+use axum::Router;
+use tokio::{net::TcpListener, task::JoinHandle};
+use tokio_util::sync::CancellationToken;
+
+use crate::{
+    app::{self, AppState},
+    config::{Config, LogFormat},
+    db, metrics,
+};
+
+pub fn init_tracing(format: LogFormat) -> anyhow::Result<()> {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info,sqlx=warn"));
+    let builder = tracing_subscriber::fmt().with_env_filter(filter);
+    match format {
+        LogFormat::Text => builder.try_init(),
+        LogFormat::Json => builder.json().try_init(),
+    }
+    .map_err(|err| anyhow::anyhow!("initialising tracing: {err}"))
+}
+
+pub async fn run(config: Config) -> anyhow::Result<()> {
+    tracing::info!(?config, "starting oauth server");
+    let metrics_handle = metrics::install()?;
+    let db = db::connect(&config.database_url).await?;
+
+    let app_listener = TcpListener::bind(config.listen_addr)
+        .await
+        .with_context(|| format!("binding LISTEN_ADDR {}", config.listen_addr))?;
+    let metrics_listener = TcpListener::bind(config.metrics_addr)
+        .await
+        .with_context(|| format!("binding METRICS_ADDR {}", config.metrics_addr))?;
+    tracing::info!(addr = %config.listen_addr, metrics = %config.metrics_addr, "listening");
+
+    let shutdown = CancellationToken::new();
+    tokio::spawn(forward_shutdown_signal(shutdown.clone()));
+    run_with(
+        Listeners {
+            app: app_listener,
+            metrics: metrics_listener,
+        },
+        AppState::new(db, false),
+        &config.web_dist_dir,
+        metrics::router(metrics_handle),
+        shutdown,
+    )
+    .await
+}
+
+pub struct Listeners {
+    pub app: TcpListener,
+    pub metrics: TcpListener,
+}
+
+/// Serves on already-bound listeners, then migrates and marks the state ready.
+/// Process-global setup (recorder, signal handlers) stays in [`run`] so tests
+/// can drive this directly.
+pub async fn run_with(
+    listeners: Listeners,
+    state: AppState,
+    web_dist: &Path,
+    metrics_router: Router,
+    shutdown: CancellationToken,
+) -> anyhow::Result<()> {
+    // Serve before migrating: while a replica waits for the migration lock,
+    // `/healthz` keeps it alive and `/readyz` keeps it out of the Service.
+    let app = axum::serve(listeners.app, app::router(state.clone(), web_dist))
+        .with_graceful_shutdown(shutdown.clone().cancelled_owned());
+    let metrics_srv = axum::serve(listeners.metrics, metrics_router)
+        .with_graceful_shutdown(shutdown.clone().cancelled_owned());
+    let servers = tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move {
+            let result = tokio::try_join!(async { app.await.context("app server") }, async {
+                metrics_srv.await.context("metrics server")
+            },);
+            // If one server failed, stop the other instead of hanging on it.
+            shutdown.cancel();
+            result.map(|_| ())
+        }
+    });
+
+    let migration = tokio::select! {
+        result = db::migrate(&state.db) => Some(result),
+        // Dropping the migration future rolls its transaction back.
+        () = shutdown.cancelled() => None,
+    };
+    match migration {
+        None => tracing::info!("stopping before migrations finished"),
+        Some(Ok(())) => {
+            state.migrated.store(true, Ordering::Release);
+            tracing::info!("migrations applied; ready");
+        }
+        Some(Err(err)) => {
+            // Never linger unready forever: stop serving and exit non-zero.
+            shutdown.cancel();
+            if let Err(server_err) = join(servers).await {
+                tracing::warn!(error = %server_err, "server error during shutdown");
+            }
+            return Err(err);
+        }
+    }
+    join(servers).await
+}
+
+async fn join(servers: JoinHandle<anyhow::Result<()>>) -> anyhow::Result<()> {
+    servers.await.context("server task panicked")?
+}
+
+async fn forward_shutdown_signal(token: CancellationToken) {
+    let ctrl_c = async {
+        if let Err(err) = tokio::signal::ctrl_c().await {
+            tracing::error!(error = %err, "ctrl-c handler failed");
+            std::future::pending::<()>().await;
+        }
+    };
+    let sigterm = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut sig) => {
+                sig.recv().await;
+            }
+            Err(err) => {
+                tracing::error!(error = %err, "SIGTERM handler failed");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    tokio::select! {
+        () = ctrl_c => {},
+        () = sigterm => {},
+    }
+    tracing::info!("shutdown signal received, draining connections");
+    token.cancel();
+}

@@ -1,0 +1,134 @@
+# oauth IdP — Kubernetes manifests.
+#
+# Prerequisite (not created here, holds secrets): a Secret named `oauth-secrets`
+#   kubectl create secret generic oauth-secrets \
+#     --from-literal=DATABASE_URL='postgres://user:pass@host:5432/oauth' \
+#     --from-literal=OAUTH_MASTER_KEY="$(openssl rand -base64 32)"
+# Back up OAUTH_MASTER_KEY: losing it makes stored signing keys unreadable.
+#
+# First admin (once, after the rollout is ready) — stub until M1a step 2:
+#   kubectl exec deploy/oauth -- oauth bootstrap --admin-email you@example.com
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oauth-config
+  labels:
+    app.kubernetes.io/name: oauth
+data:
+  PUBLIC_URL: "https://id.example.com"
+  LISTEN_ADDR: "0.0.0.0:8080"
+  METRICS_ADDR: "0.0.0.0:9090"
+  LOG_FORMAT: "json"
+  RUST_LOG: "info,sqlx=warn"
+  KEY_ROTATION_DAYS: "90"
+  KEY_PREPUBLISH_HOURS: "48"
+  SESSION_TTL_HOURS: "24"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oauth
+  labels:
+    app.kubernetes.io/name: oauth
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: oauth
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: oauth
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9090"
+        prometheus.io/path: "/metrics"
+    spec:
+      # The server never talks to the Kubernetes API.
+      automountServiceAccountToken: false
+      # preStop sleep (5s) + connection draining after SIGTERM.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: oauth
+          image: ghcr.io/xmiksay/oauth:0.1.0
+          args: ["serve"]
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: metrics
+              containerPort: 9090
+          envFrom:
+            - configMapRef:
+                name: oauth-config
+            - secretRef:
+                name: oauth-secrets
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 3
+          # The listener opens before migrations run; a replica waiting on the
+          # migration advisory lock passes liveness and fails readiness (503)
+          # until migrations commit, so no startupProbe is needed.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 2
+          lifecycle:
+            # Give endpoints/ingress time to drop this pod before SIGTERM stops
+            # it accepting new connections.
+            # exec form (debian base ships /bin/sleep) works on clusters older
+            # than the native `sleep` action (k8s 1.30).
+            preStop:
+              exec:
+                command: ["/bin/sleep", "5"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oauth
+  labels:
+    app.kubernetes.io/name: oauth
+spec:
+  selector:
+    app.kubernetes.io/name: oauth
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+    - name: metrics
+      port: 9090
+      targetPort: metrics
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: oauth
+  labels:
+    app.kubernetes.io/name: oauth
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: oauth

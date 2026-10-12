@@ -1,0 +1,22 @@
+# Dev-only Postgres. Credentials match .env.example; never use them elsewhere.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: oauth
+      POSTGRES_PASSWORD: oauth
+      POSTGRES_DB: oauth
+    ports:
+      # Override with POSTGRES_PORT if 5432 is taken (then adjust DATABASE_URL).
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oauth -d oauth"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+      start_period: 60s
+
+volumes:
+  pgdata:

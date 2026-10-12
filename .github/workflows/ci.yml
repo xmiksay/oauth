@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: 4
+
+# Actions are pinned to full commit SHAs (tag in the trailing comment) so a
+# moved or compromised tag cannot change what runs here.
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # dtolnay/rust-toolchain does not read rust-toolchain.toml; feed it the
+      # pinned channel so CI lints with exactly the local toolchain.
+      - name: Read pinned Rust toolchain
+        id: rust
+        shell: bash
+        run: sed -n 's/^channel *= *"\(.*\)"/ver=\1/p' rust-toolchain.toml >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master @ 2026-10-09
+        with:
+          toolchain: ${{ steps.rust.outputs.ver }}
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Install Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        run: npm ci --prefix web
+
+      - name: Lint
+        run: make lint
+
+      # Integration tests start Postgres via testcontainers on the runner's Docker.
+      - name: Test
+        run: make test
+
+      - name: Build SPA
+        run: make web-build
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Build only (no push) so Dockerfile regressions fail the PR.
+      - name: Build image
+        run: docker build .

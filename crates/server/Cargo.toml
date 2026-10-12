@@ -1,0 +1,42 @@
+[package]
+name = "oauth-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+name = "oauth_server"
+path = "src/lib.rs"
+
+[[bin]]
+name = "oauth"
+path = "src/main.rs"
+
+[dependencies]
+entity.workspace = true
+migration.workspace = true
+
+anyhow.workspace = true
+axum.workspace = true
+base64.workspace = true
+clap.workspace = true
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
+sea-orm.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tower-http.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+testcontainers-modules.workspace = true
+tower.workspace = true
+
+[lints]
+workspace = true
