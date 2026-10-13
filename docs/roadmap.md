@@ -15,7 +15,10 @@
 4. **`feat/m1a-management-api`** (done) — management + `me` API
    (`/api/v1`, [contract](api/management.md)), RBAC guards, audit log with
    retention.
-5. **`feat/m1a-web`** — login, My Account and admin UI.
+5. **`feat/m1a-web`** (done) — login / consent / logout pages, My Account
+   (profile, password, TOTP + recovery codes, sessions, consents) and the admin
+   center (users, groups, app registrations, role assignments, directory roles,
+   audit log, settings, tenants) on the built-in OIDC clients.
 
 ## M1b — local auth extras + domains
 

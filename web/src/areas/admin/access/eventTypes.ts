@@ -1,0 +1,51 @@
+/** Audit event types (`audit::EventType` in the backend) for the audit log filter. */
+export const AUDIT_EVENT_TYPES = [
+  'sign_in',
+  'token.refresh_reuse',
+  'token.code_replay',
+  'tenant.create',
+  'tenant.update',
+  'user.create',
+  'user.update',
+  'user.delete',
+  'user.password_reset',
+  'user.password_change',
+  'user.mfa_reset',
+  'user.sessions_revoke',
+  'user.session_revoke',
+  'user.profile_update',
+  'user.mfa.totp_enroll',
+  'user.mfa.totp_remove',
+  'user.mfa.recovery_codes_regenerate',
+  'group.create',
+  'group.update',
+  'group.delete',
+  'group.member_add',
+  'group.member_remove',
+  'directory_role.assign',
+  'directory_role.unassign',
+  'application.create',
+  'application.update',
+  'application.delete',
+  'application.secret_add',
+  'application.secret_remove',
+  'application.scope_add',
+  'application.scope_update',
+  'application.scope_remove',
+  'application.role_add',
+  'application.role_update',
+  'application.role_remove',
+  'application.permission_add',
+  'application.permission_remove',
+  'app_role_assignment.create',
+  'app_role_assignment.delete',
+  'consent.grant',
+  'consent.revoke',
+]
+
+/** `datetime-local` input value (local time) → RFC 3339 UTC; `undefined` when empty/invalid. */
+export function localToIso(value: string): string | undefined {
+  if (!value) return undefined
+  const d = new Date(value)
+  return Number.isNaN(d.getTime()) ? undefined : d.toISOString()
+}

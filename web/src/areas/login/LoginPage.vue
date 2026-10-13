@@ -1,28 +1,146 @@
 <script setup lang="ts">
-import { storeToRefs } from 'pinia'
-import { useTenantStore } from '@/stores/tenant'
+import { computed, onMounted, onUnmounted } from 'vue'
+import { useRoute } from 'vue-router'
+import AuthCard from '@/components/AuthCard.vue'
+import PasswordStep from './PasswordStep.vue'
+import MfaStep from './MfaStep.vue'
+import ChangePasswordStep from './ChangePasswordStep.vue'
+import ConsentStep from './ConsentStep.vue'
+import { useLoginFlow } from './useLoginFlow'
 
-const { slug } = storeToRefs(useTenantStore())
+const route = useRoute()
+const tenant = String(route.params.tenant ?? '')
+const tx = typeof route.query.tx === 'string' && route.query.tx ? route.query.tx : null
+
+const flow = useLoginFlow(tenant, tx)
+const { phase, view, error, locked, rateLimited, retryIn } = flow
+
+onMounted(flow.load)
+onUnmounted(flow.dispose)
+
+const title = computed(() => {
+  switch (view.value?.step) {
+    case 'mfa':
+      return 'Verify your identity'
+    case 'change_password':
+      return 'Update your password'
+    case 'consent':
+      return 'Permissions requested'
+    default:
+      return 'Sign in'
+  }
+})
+
+const subtitle = computed(() => {
+  const v = view.value
+  if (!v) return null
+  if (v.step === 'password') return `to continue to ${v.client.display_name}`
+  return v.user ? v.user.email : null
+})
 </script>
 
 <template>
-  <main class="flex min-h-screen items-center justify-center p-4">
-    <section
-      aria-labelledby="login-title"
-      class="w-full max-w-sm rounded-lg border border-neutral-200 bg-white p-8 shadow-sm dark:border-neutral-800 dark:bg-neutral-900"
+  <AuthCard
+    :title="phase === 'step' ? title : 'Sign in'"
+    :tenant="view?.tenant.display_name ?? tenant"
+    :subtitle="phase === 'step' ? subtitle : null"
+  >
+    <p
+      v-if="phase === 'loading'"
+      class="muted"
+      aria-live="polite"
     >
-      <p class="text-sm text-neutral-500 dark:text-neutral-400">
-        {{ slug }}
+      Loading…
+    </p>
+    <p
+      v-else-if="phase === 'redirecting'"
+      class="muted"
+      aria-live="polite"
+    >
+      Signing you in…
+    </p>
+    <div
+      v-else-if="phase === 'expired'"
+      role="alert"
+      class="space-y-2"
+    >
+      <p class="font-medium">
+        This sign-in has expired.
       </p>
-      <h1
-        id="login-title"
-        class="mt-1 text-2xl font-semibold"
+      <p class="muted text-sm">
+        Sign-in requests are valid for 15 minutes and work only in the browser that started
+        them. Go back to the application you were signing in to and start again.
+      </p>
+    </div>
+    <p
+      v-else-if="phase === 'missing'"
+      class="muted"
+    >
+      To sign in, open the application you want to use — it will bring you here.
+    </p>
+    <div
+      v-else-if="phase === 'error'"
+      class="space-y-4"
+    >
+      <p
+        role="alert"
+        class="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200"
       >
-        Sign in
-      </h1>
-      <p class="mt-4 text-neutral-600 dark:text-neutral-400">
-        Sign-in is not available yet.
+        {{ error }}
       </p>
-    </section>
-  </main>
+      <button
+        type="button"
+        class="btn btn-primary w-full"
+        @click="flow.load"
+      >
+        Try again
+      </button>
+    </div>
+    <template v-else-if="view">
+      <div
+        v-if="rateLimited"
+        class="mb-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200"
+      >
+        <!-- Announced once; the ticking seconds stay outside the live region. -->
+        <p role="alert">
+          Too many attempts. Please wait before trying again.
+        </p>
+        <p
+          aria-live="off"
+          data-testid="retry-countdown"
+        >
+          Try again in {{ retryIn }} s.
+        </p>
+      </div>
+      <p
+        v-else-if="error"
+        role="alert"
+        class="mb-4 rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200"
+      >
+        {{ error }}
+      </p>
+      <PasswordStep
+        v-if="view.step === 'password'"
+        :locked="locked"
+        @submit="flow.password"
+      />
+      <MfaStep
+        v-else-if="view.step === 'mfa'"
+        :locked="locked"
+        @totp="flow.totp"
+        @recovery="flow.recovery"
+      />
+      <ChangePasswordStep
+        v-else-if="view.step === 'change_password'"
+        :locked="locked"
+        @submit="flow.changePassword"
+      />
+      <ConsentStep
+        v-else-if="view.step === 'consent'"
+        :view="view"
+        :locked="locked"
+        @decide="flow.consent"
+      />
+    </template>
+  </AuthCard>
 </template>

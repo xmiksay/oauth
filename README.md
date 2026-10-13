@@ -24,8 +24,35 @@ a one-time password that must be changed at first sign-in):
 make bootstrap ADMIN_EMAIL=you@example.com            # RESET=1 re-issues the password
 ```
 
+Sign in at <http://localhost:8080/system/admin> with that password (you are
+asked to choose a new one).
+
 `make help` lists all targets. Before pushing: `make lint && make test`
 (integration tests start Postgres through testcontainers, so Docker must run).
+
+## Web UI
+
+One Vue SPA served by the backend, per tenant `{t}`:
+
+| URL | What |
+|---|---|
+| `/{t}/admin` | Admin center (Entra-portal-like): users, groups, app registrations (authentication, secrets, token configuration, expose an API, app roles, API permissions + admin consent), role assignments, directory roles, audit log, settings; in the `system` tenant also tenants |
+| `/{t}/myaccount` | My Account: profile, password, authenticator app + recovery codes, sessions, app permissions |
+| `/{t}/login?tx=…` | Sign-in steps (password → authenticator / recovery code → forced password change → consent) |
+| `/{t}/logout` | Sign-out confirmation / "signed out" page |
+
+Admin center and My Account are the tenant's built-in OIDC clients
+(`admin-portal`, `my-account`) and sign in like any other app.
+
+### Frontend development
+
+`make web-dev` runs Vite (http://localhost:5173) with HMR and proxies API,
+OIDC and login calls to the backend on :8080. The login API checks `Origin`
+against `PUBLIC_URL`, and the built-in apps' redirect URIs are registered from
+`PUBLIC_URL` when a tenant is created, so for Vite set
+`PUBLIC_URL=http://localhost:5173` in `.env` **before** `make bootstrap` (or
+use a fresh database). `make web-test` runs the vitest suite; `make lint`
+includes eslint + vue-tsc.
 
 ## Docs
 

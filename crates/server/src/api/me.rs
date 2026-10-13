@@ -16,6 +16,7 @@ use super::{
     Caller, consents,
     extract::{Json, Path},
     guard::find_user,
+    set_changed,
     user_actions::{list_sessions, session_view},
     users::detailed_view,
 };
@@ -87,7 +88,12 @@ pub async fn update(
 ) -> AppResult<axum::Json<Value>> {
     let user = me(&state, &caller).await?;
     let mut row: users::ActiveModel = user.clone().into();
-    row.display_name = Set(display_name(&body.display_name, "user")?);
+    if !set_changed(
+        &mut row.display_name,
+        display_name(&body.display_name, "user")?,
+    ) {
+        return Ok(axum::Json(detailed_view(&state.db, &user).await?));
+    }
     row.updated_at = Set(chrono::Utc::now().fixed_offset());
     let txn = state.db.begin().await?;
     let updated = row.update(&txn).await?;

@@ -15,7 +15,7 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
 | `crates/server/` | bin `oauth` (`serve`, `bootstrap`) + lib `oauth_server` (all modules; integration tests use it) |
 | `crates/entity/` | SeaORM entities (one file per table) + `enums.rs` |
 | `crates/migration/` | `sea-orm-migration` Migrator (append-only, raw SQL) |
-| `web/` | Vite + Vue 3 + TS + Tailwind + Pinia SPA (`/{t}/login`, `/{t}/myaccount`, `/{t}/admin`) |
+| `web/` | Vite + Vue 3 + TS + Tailwind + Pinia SPA (`/{t}/login`, `/{t}/logout`, `/{t}/myaccount`, `/{t}/admin`); conventions below |
 | `deploy/k8s/deploy.yml` | ConfigMap, Deployment, Service, PodDisruptionBudget (Secret `oauth-secrets` created by hand) |
 | `.github/workflows/ci.yml` | `make lint` + `make test` + `make web-build`, plus `docker build`, on PR and push to `main`; actions pinned by SHA |
 
@@ -25,7 +25,7 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
 |---|---|
 | `make dev-db` | Postgres 17 via docker compose (creds in `.env.example`) |
 | `make run` | `oauth serve`, loads `.env` |
-| `make web-dev` | Vite dev server |
+| `make web-dev` | Vite dev server on :5173 proxying to :8080 (needs `PUBLIC_URL=http://localhost:5173` set before `bootstrap`) |
 | `make build` / `make web-build` | release binary + SPA / SPA only |
 | `make lint` | `cargo fmt --check`, clippy `-D warnings`, eslint, vue-tsc |
 | `make fmt` | `cargo fmt` |
@@ -114,7 +114,9 @@ Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md); manag
   its audit event on that transaction (`caller.audit(&txn, …)`). Objects of
   other tenants are 404 (always filter by `caller.tenant_id()`); body-named
   objects that don't exist are 400 (`guard::referenced`). Lists paginate
-  with `page::fetch` (UUIDv7 keyset). Changing a user goes through
+  with `page::fetch` (UUIDv7 keyset). PATCH applies, audits and rule-checks
+  only values that actually change (`api::set_changed`; clients echo
+  unchanged fields). Changing a user goes through
   `guard::ensure_can_modify_user`; removing a GlobalAdmin's effect through
   `guard::ensure_not_last_global_admin`. App writes go through
   `app_rules` (`writable_app`, `ensure_may_manage_credentials` for secrets
@@ -136,3 +138,35 @@ Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md); manag
   and integration tests (`crates/server/tests/`, in-process router + testcontainers).
 - Branches `feat/m1a-*` per roadmap step, ff-only onto `main`; `make lint` and
   `make test` green before push.
+
+## Frontend conventions (`web/`)
+
+Layout: `src/api/` (HTTP), `src/auth/oidc.ts` (UserManager settings, `SPA_SCOPE`),
+`src/stores/` (Pinia: `auth`, `tenant`, `application`), `src/composables/`
+(`usePagedList`, `useAction`, `usePrincipalNames`), `src/components/` (shared UI),
+`src/areas/{login,logout,myaccount,admin}/` (pages; admin split into
+`users/ groups/ apps/ access/`), `src/router/` (`admin.ts` = admin child routes),
+`src/lib/format.ts` (pure helpers), `src/test/helpers.ts` (fetch / UserManager fakes).
+
+- All HTTP goes through `api/client.ts` (`request`, `ApiError`, `errorMessage`);
+  management calls through `api/management.ts` (`authed` adds the bearer token
+  from the auth store and re-authenticates on 401; `t.get/post/patch/del` take
+  tenant-relative paths, ``p`…` `` escapes path segments). One module per resource
+  group; response shapes in `api/types.ts`, matching `docs/api/management.md`.
+- Auth state only in `stores/auth` (one `UserManager` per tenant + area, tokens in
+  `sessionStorage`, never `localStorage`; one manager per tenant + area for the page's
+  lifetime; refresh only through `accessToken()`, which is single-flight — never call
+  `signinSilent` elsewhere or turn on `automaticSilentRenew`: refresh tokens rotate and
+  reuse revokes the family). Routes needing sign-in carry
+  `meta.area`; callback routes `meta.callback`. Don't call the API from a
+  template expression — wrap it in a script function.
+- **Secret-once rule:** one-time passwords, client secrets and recovery codes are
+  held only in the showing component's local ref and rendered with
+  `SecretOnceDialog`; cleared on close; never put in Pinia, storage or logs.
+- PATCH only changed fields (`stores/application.changedFields`, defence in depth: the
+  server ignores unchanged values too).
+- Lists use `usePagedList` + `ListShell`; errors render through `ErrorAlert`
+  (hides 401, phrases 403). Hide actions the caller's directory roles
+  (`auth.canWriteUsers` / `canWriteApps` / `isGlobalAdmin`) can't perform.
+- Tests: vitest + jsdom + `@vue/test-utils`, colocated `*.test.ts`. Don't return a
+  value from `beforeEach` (vitest runs it as a cleanup hook).

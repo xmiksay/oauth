@@ -28,7 +28,7 @@ use super::{
     },
     extract::{Json, Path, Query},
     page::{self, Order, PageParams, Paged},
-    search, ts, validate,
+    search, set_changed, ts, validate,
 };
 use crate::{
     app::AppState,
@@ -136,7 +136,9 @@ fn parse<E: ActiveEnum<Value = String>>(raw: &str, field: &str, allowed: &str) -
         .map_err(|_| AppError::BadRequest(format!("{field} must be one of: {allowed}")))
 }
 
-/// Validates and applies the settable fields; returns the changed names.
+/// Validates the settable fields and applies those whose value differs from
+/// `row`; returns the changed names (unchanged values sent back are ignored,
+/// so built-in / privileged-app rules only see real changes).
 fn apply(
     row: &mut applications::ActiveModel,
     body: &AppBody,
@@ -144,36 +146,48 @@ fn apply(
     client_type: ClientType,
 ) -> AppResult<Vec<&'static str>> {
     let mut fields = Vec::new();
+    let mut mark = |changed: bool, name: &'static str| {
+        if changed {
+            fields.push(name);
+        }
+    };
     if let Some(name) = &body.display_name {
-        row.display_name = Set(display_name(name, "application")?);
-        fields.push("display_name");
+        let name = display_name(name, "application")?;
+        mark(set_changed(&mut row.display_name, name), "display_name");
     }
     if let Some(uris) = &body.redirect_uris {
         validate::redirect_uris(uris, "redirect_uris")?;
-        row.redirect_uris = Set(uris.clone());
-        fields.push("redirect_uris");
+        mark(
+            set_changed(&mut row.redirect_uris, uris.clone()),
+            "redirect_uris",
+        );
     }
     if let Some(uris) = &body.post_logout_redirect_uris {
         validate::redirect_uris(uris, "post_logout_redirect_uris")?;
-        row.post_logout_redirect_uris = Set(uris.clone());
-        fields.push("post_logout_redirect_uris");
+        mark(
+            set_changed(&mut row.post_logout_redirect_uris, uris.clone()),
+            "post_logout_redirect_uris",
+        );
     }
     if let Some(uri) = &body.identifier_uri {
         if let Some(uri) = uri {
             validate::identifier_uri(uri, client_id)?;
         }
-        row.identifier_uri = Set(uri.clone());
-        fields.push("identifier_uri");
+        mark(
+            set_changed(&mut row.identifier_uri, uri.clone()),
+            "identifier_uri",
+        );
     }
     if let Some(raw) = &body.access_token_format {
         let format: AccessTokenFormat = parse(raw, "access_token_format", "jwt, opaque")?;
-        row.access_token_format = Set(format);
-        fields.push("access_token_format");
+        mark(
+            set_changed(&mut row.access_token_format, format),
+            "access_token_format",
+        );
     }
     if let Some(raw) = &body.signing_alg {
         let alg: SigningAlg = parse(raw, "signing_alg", "RS256, ES256")?;
-        row.signing_alg = Set(alg);
-        fields.push("signing_alg");
+        mark(set_changed(&mut row.signing_alg, alg), "signing_alg");
     }
     if let Some(ttl) = body.access_token_ttl_secs {
         if !ACCESS_TTL.contains(&ttl) {
@@ -181,13 +195,17 @@ fn apply(
                 "access_token_ttl_secs must be 300-86400".into(),
             ));
         }
-        row.access_token_ttl_secs = Set(ttl);
-        fields.push("access_token_ttl_secs");
+        mark(
+            set_changed(&mut row.access_token_ttl_secs, ttl),
+            "access_token_ttl_secs",
+        );
     }
     if let Some(ttl) = body.refresh_token_ttl_secs {
         refresh_ttl(client_type, ttl)?;
-        row.refresh_token_ttl_secs = Set(ttl);
-        fields.push("refresh_token_ttl_secs");
+        mark(
+            set_changed(&mut row.refresh_token_ttl_secs, ttl),
+            "refresh_token_ttl_secs",
+        );
     }
     Ok(fields)
 }

@@ -19,7 +19,7 @@ use super::{
     app_rules::{MAX_ROLES, ensure_below, find_app, writable_app},
     extract::{Json, Path},
     guard::conflict_on_unique,
-    ts, validate,
+    set_changed, ts, validate,
 };
 use crate::{
     app::AppState,
@@ -69,17 +69,17 @@ pub struct RoleBody {
 
 fn member_types(raw: &[String]) -> AppResult<Vec<String>> {
     const ALLOWED: [&str; 2] = [member_type::USER, member_type::APPLICATION];
-    let mut out: Vec<String> = Vec::new();
-    for t in raw {
-        if !ALLOWED.contains(&t.as_str()) {
-            return Err(AppError::BadRequest(
-                "allowed_member_types entries must be `user` or `application`".into(),
-            ));
-        }
-        if !out.contains(t) {
-            out.push(t.clone());
-        }
+    if raw.iter().any(|t| !ALLOWED.contains(&t.as_str())) {
+        return Err(AppError::BadRequest(
+            "allowed_member_types entries must be `user` or `application`".into(),
+        ));
     }
+    // A set: canonical order, so a reordered echo of the stored value is no change.
+    let out: Vec<String> = ALLOWED
+        .iter()
+        .filter(|a| raw.iter().any(|t| t == *a))
+        .map(|a| (*a).to_owned())
+        .collect();
     if out.is_empty() {
         return Err(AppError::BadRequest(
             "allowed_member_types must not be empty".into(),
@@ -180,15 +180,19 @@ pub async fn update_role(
     if name.is_none() && body.description.is_none() && types.is_none() {
         return Ok(axum::Json(role_view(&role)));
     }
-    let mut row: app_roles::ActiveModel = role.into();
+    let mut row: app_roles::ActiveModel = role.clone().into();
+    let mut changed = false;
     if let Some(name) = name {
-        row.display_name = Set(name);
+        changed |= set_changed(&mut row.display_name, name);
     }
     if body.description.is_some() {
-        row.description = Set(description.unwrap_or_default());
+        changed |= set_changed(&mut row.description, description.unwrap_or_default());
     }
     if let Some(types) = types {
-        row.allowed_member_types = Set(types);
+        changed |= set_changed(&mut row.allowed_member_types, types);
+    }
+    if !changed {
+        return Ok(axum::Json(role_view(&role)));
     }
     let role = row.update(&txn).await?;
     let details = json!({ "role_id": role.id, "value": role.value });
@@ -237,6 +241,10 @@ mod tests {
         let s = |v: &[&str]| v.iter().map(|x| (*x).to_owned()).collect::<Vec<_>>();
         assert_eq!(
             member_types(&s(&["user", "user", "application"])).unwrap(),
+            s(&["user", "application"])
+        );
+        assert_eq!(
+            member_types(&s(&["application", "user"])).unwrap(),
             s(&["user", "application"])
         );
         assert!(member_types(&[]).is_err());
