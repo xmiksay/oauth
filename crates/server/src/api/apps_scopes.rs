@@ -21,7 +21,7 @@ use super::{
     app_rules::{MAX_SCOPES, ensure_below, find_app, writable_app},
     extract::{Json, Path},
     guard::conflict_on_unique,
-    ts, validate,
+    set_changed, ts, validate,
 };
 use crate::{
     app::AppState,
@@ -139,12 +139,16 @@ pub async fn update_scope(
     if body.description.is_none() && body.admin_consent_required.is_none() {
         return Ok(axum::Json(scope_view(&scope)));
     }
-    let mut row: app_scopes::ActiveModel = scope.into();
+    let mut row: app_scopes::ActiveModel = scope.clone().into();
+    let mut changed = false;
     if body.description.is_some() {
-        row.description = Set(description.unwrap_or_default());
+        changed |= set_changed(&mut row.description, description.unwrap_or_default());
     }
     if let Some(admin) = body.admin_consent_required {
-        row.admin_consent_required = Set(admin);
+        changed |= set_changed(&mut row.admin_consent_required, admin);
+    }
+    if !changed {
+        return Ok(axum::Json(scope_view(&scope)));
     }
     let scope = row.update(&txn).await?;
     let details = json!({ "scope_id": scope.id, "value": scope.value });

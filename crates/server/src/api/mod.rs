@@ -30,7 +30,7 @@ use axum::{
     routing::{delete, get, patch, post},
 };
 use chrono::{DateTime, FixedOffset, SecondsFormat};
-use sea_orm::{ColumnTrait, sea_query::Condition};
+use sea_orm::{ActiveValue, ColumnTrait, sea_query::Condition};
 
 use crate::{
     app::AppState,
@@ -197,6 +197,20 @@ pub fn search<C: ColumnTrait>(search: Option<&str>, columns: &[C]) -> AppResult<
     })))
 }
 
+/// Sets `slot` to `value` only when that changes what is stored; returns
+/// whether it did. PATCH handlers use it so unchanged values sent back are
+/// neither written, audited nor subject to change-only rules.
+pub fn set_changed<V>(slot: &mut ActiveValue<V>, value: V) -> bool
+where
+    V: Into<sea_orm::Value> + PartialEq,
+{
+    if slot.try_as_ref() == Some(&value) {
+        return false;
+    }
+    *slot = ActiveValue::Set(value);
+    true
+}
+
 /// Escapes LIKE wildcards (Postgres' default escape character is `\`).
 fn escape_like(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
@@ -217,6 +231,17 @@ mod tests {
     fn like_wildcards_are_escaped() {
         assert_eq!(escape_like(r"50%_off\"), r"50\%\_off\\");
         assert_eq!(escape_like("ann"), "ann");
+    }
+
+    #[test]
+    fn set_changed_only_marks_real_changes() {
+        let mut slot = ActiveValue::Unchanged(5_i32);
+        assert!(!set_changed(&mut slot, 5));
+        assert!(matches!(slot, ActiveValue::Unchanged(5)));
+        assert!(set_changed(&mut slot, 6));
+        assert!(matches!(slot, ActiveValue::Set(6)));
+        let mut unset: ActiveValue<i32> = ActiveValue::NotSet;
+        assert!(set_changed(&mut unset, 1));
     }
 
     #[test]

@@ -20,7 +20,7 @@ use super::{
     auth::SystemAdmin,
     extract::{Json, Path, Query},
     page::{self, Order, PageParams, Paged},
-    search, ts,
+    search, set_changed, ts,
 };
 use crate::{
     app::AppState,
@@ -183,12 +183,14 @@ async fn save(
     }
     let mut row: tenants::ActiveModel = tenant.clone().into();
     let mut fields = Vec::new();
-    if let Some(name) = &body.display_name {
-        row.display_name = Set(display_name(name, "tenant")?);
+    if let Some(name) = &body.display_name
+        && set_changed(&mut row.display_name, display_name(name, "tenant")?)
+    {
         fields.push("display_name");
     }
-    if let Some(disabled) = body.disabled {
-        row.disabled = Set(disabled);
+    if let Some(disabled) = body.disabled
+        && set_changed(&mut row.disabled, disabled)
+    {
         fields.push("disabled");
     }
     if let Some(days) = body.audit_retention_days {
@@ -199,8 +201,9 @@ async fn save(
                 RETENTION_DAYS.end()
             )));
         }
-        row.audit_retention_days = Set(days);
-        fields.push("audit_retention_days");
+        if set_changed(&mut row.audit_retention_days, days) {
+            fields.push("audit_retention_days");
+        }
     }
     if fields.is_empty() {
         return Ok(tenant);

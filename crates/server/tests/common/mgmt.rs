@@ -7,7 +7,7 @@ use axum::{
     http::{Method, Request, StatusCode, header},
 };
 use entity::{
-    applications,
+    applications, audit_events,
     enums::{ClientType, DirectoryRole},
     tenants, users,
 };
@@ -18,7 +18,7 @@ use oauth_server::{
     oidc::client_auth,
     tokens::{self, Delegated},
 };
-use sea_orm::DatabaseConnection;
+use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, QueryOrder};
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -26,6 +26,20 @@ use super::{
     browser::send,
     seed::{add_user, insert},
 };
+
+/// `details` of the `event_type` audit events targeting `target`, oldest first.
+pub async fn audited(db: &DatabaseConnection, event_type: &str, target: Uuid) -> Vec<Value> {
+    audit_events::Entity::find()
+        .filter(audit_events::Column::EventType.eq(event_type))
+        .filter(audit_events::Column::TargetId.eq(target))
+        .order_by_asc(audit_events::Column::Id)
+        .all(db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|e| e.details)
+        .collect()
+}
 
 pub async fn app_by_client_id(
     db: &DatabaseConnection,

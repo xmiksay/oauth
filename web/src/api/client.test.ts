@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { api, ApiError } from './client'
+import { api, ApiError, errorMessage, query } from './client'
 
 function mockFetch(status: number, body: string, contentType = 'application/json') {
   const fn = vi.fn().mockResolvedValue(
@@ -52,5 +52,38 @@ describe('api client', () => {
     expect(err).toBeInstanceOf(ApiError)
     expect((err as ApiError).status).toBe(502)
     expect((err as ApiError).body).toBe('Bad Gateway')
+  })
+})
+
+describe('error details', () => {
+  it('exposes error code, description and Retry-After', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response('{"error":"rate_limited","error_description":"slow down"}', {
+          status: 429,
+          headers: { 'content-type': 'application/json', 'retry-after': '42' },
+        }),
+      ),
+    )
+    const err = (await api.get('/x').catch((e: unknown) => e)) as ApiError
+    expect([err.code, err.description, err.retryAfter]).toEqual(['rate_limited', 'slow down', 42])
+    expect(errorMessage(err)).toBe('Too many attempts. Try again in 42 seconds.')
+  })
+
+  it('maps statuses to user-facing messages', () => {
+    expect(errorMessage(new ApiError(403, { error: 'forbidden' }))).toMatch(/permission/)
+    expect(errorMessage(new ApiError(409, { error: 'conflict', error_description: 'taken' }))).toBe(
+      'taken',
+    )
+    expect(errorMessage(new ApiError(500, 'x'))).toMatch(/server/)
+    expect(errorMessage(new TypeError('fetch failed'))).toMatch(/reach the server/)
+  })
+})
+
+describe('query', () => {
+  it('drops empty values and encodes the rest', () => {
+    expect(query({ a: 1, b: '', c: null, d: undefined, e: 'x y' })).toBe('?a=1&e=x+y')
+    expect(query({})).toBe('')
   })
 })
