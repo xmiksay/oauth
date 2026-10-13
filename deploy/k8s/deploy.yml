@@ -6,7 +6,8 @@
 #     --from-literal=OAUTH_MASTER_KEY="$(openssl rand -base64 32)"
 # Back up OAUTH_MASTER_KEY: losing it makes stored signing keys unreadable.
 #
-# First admin (once, after the rollout is ready) — stub until M1a step 2:
+# First admin (after the rollout is ready; idempotent, prints a one-time password
+# once — add --reset-password to issue a new one for an existing admin):
 #   kubectl exec deploy/oauth -- oauth bootstrap --admin-email you@example.com
 ---
 apiVersion: v1

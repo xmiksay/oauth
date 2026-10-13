@@ -11,7 +11,8 @@ RUN npm run build
 # --- server -------------------------------------------------------------------
 # Must match rust-toolchain.toml. That file is deliberately not copied: the
 # image's toolchain is the pinned one, and the file would make rustup fetch the
-# clippy/rustfmt components a release build never uses.
+# clippy/rustfmt components a release build never uses. The image's gcc is all
+# aws-lc-sys (crypto provider) needs; it no longer requires cmake.
 FROM rust:1.99.0-bookworm AS server
 ENV CARGO_BUILD_JOBS=4
 WORKDIR /src

@@ -51,6 +51,12 @@ async fn migrate_waits_for_lock_and_is_idempotent() {
     // A later restart is a no-op.
     db::migrate(&conn).await.unwrap();
     assert_eq!(pending(&conn).await, 0);
+
+    // Every `down` undoes its `up` cleanly (catches drop-order mistakes).
+    Migrator::down(&conn, None).await.unwrap();
+    assert_eq!(pending(&conn).await, Migrator::migrations().len());
+    db::migrate(&conn).await.unwrap();
+    assert_eq!(pending(&conn).await, 0);
 }
 
 #[tokio::test]

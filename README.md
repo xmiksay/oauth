@@ -5,7 +5,8 @@ SeaORM, PostgreSQL, Vue 3. Work in progress; see [docs/roadmap.md](docs/roadmap.
 
 ## Quick start
 
-Requires Rust (pinned by `rust-toolchain.toml`), Node 22 (`.nvmrc`) and Docker.
+Requires Rust (pinned by `rust-toolchain.toml`), a C compiler (`cc`; builds
+AWS-LC, the crypto provider — no cmake needed), Node 22 (`.nvmrc`) and Docker.
 
 ```sh
 cp .env.example .env
@@ -16,8 +17,14 @@ make web-build     # SPA into web/dist
 make run           # http://localhost:8080, metrics on :9090/metrics
 ```
 
-`make help` lists all targets. `oauth bootstrap` / `make bootstrap` (first
-admin) is a stub until M1a step 2. Before pushing: `make lint && make test`
+Then create the `system` tenant and its first Global Admin (idempotent; prints
+a one-time password that must be changed at first sign-in):
+
+```sh
+make bootstrap ADMIN_EMAIL=you@example.com            # RESET=1 re-issues the password
+```
+
+`make help` lists all targets. Before pushing: `make lint && make test`
 (integration tests start Postgres through testcontainers, so Docker must run).
 
 ## Docs

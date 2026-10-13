@@ -2,15 +2,15 @@
 //! separately, so not every helper is used everywhere.
 #![allow(dead_code)]
 
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 
 use axum::{
     Router,
     body::{Body, to_bytes},
     http::{Request, StatusCode},
 };
-use oauth_server::db::MIGRATION_LOCK_KEY;
-use sea_orm::{ConnectionTrait, Statement};
+use oauth_server::{config::Config, db::MIGRATION_LOCK_KEY};
+use sea_orm::{ConnectionTrait, DatabaseConnection, Statement};
 use testcontainers_modules::{
     postgres::Postgres,
     testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner},
@@ -64,4 +64,29 @@ pub async fn advisory(conn: &impl ConnectionTrait, func: &str) {
     ))
     .await
     .expect("advisory lock call");
+}
+
+pub const PUBLIC_URL: &str = "https://id.example.test";
+
+/// Config pointing at `db_url` with a fixed master key and [`PUBLIC_URL`].
+pub fn test_config(db_url: &str) -> Config {
+    let env = HashMap::from([
+        ("DATABASE_URL", db_url.to_owned()),
+        ("PUBLIC_URL", PUBLIC_URL.to_owned()),
+        // 32 bytes of 0x2a.
+        (
+            "OAUTH_MASTER_KEY",
+            "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=".to_owned(),
+        ),
+    ]);
+    Config::from_lookup(|k| env.get(k).cloned()).expect("test config")
+}
+
+/// Fresh Postgres, migrated, plus a config pointing at it.
+pub async fn migrated_db() -> (TestDb, DatabaseConnection, Config) {
+    let pg = start_postgres().await;
+    let conn = oauth_server::db::connect(&pg.url).await.expect("connect");
+    oauth_server::db::migrate(&conn).await.expect("migrate");
+    let config = test_config(&pg.url);
+    (pg, conn, config)
 }

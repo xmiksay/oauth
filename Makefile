@@ -65,9 +65,9 @@ web-build: ## Build the SPA into web/dist
 docker: ## Build the container image ($(IMAGE))
 	docker build -t $(IMAGE) .
 
-bootstrap: ## (stub until M1a step 2) Create system tenant + first admin: make bootstrap ADMIN_EMAIL=you@example.com
-	@[ -n "$(ADMIN_EMAIL)" ] || { echo "usage: make bootstrap ADMIN_EMAIL=you@example.com" >&2; exit 1; }
-	$(DOTENV) cargo run -- bootstrap --admin-email "$(ADMIN_EMAIL)"
+bootstrap: ## Create system tenant + Global Admin (idempotent): make bootstrap ADMIN_EMAIL=you@example.com [RESET=1]
+	@[ -n "$(ADMIN_EMAIL)" ] || { echo "usage: make bootstrap ADMIN_EMAIL=you@example.com [RESET=1]" >&2; exit 1; }
+	$(DOTENV) cargo run -- bootstrap --admin-email "$(ADMIN_EMAIL)" $(if $(RESET),--reset-password)
 
 clean: ## Remove build artifacts
 	cargo clean

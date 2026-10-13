@@ -14,6 +14,9 @@ pub enum AppError {
     BadRequest(String),
     #[error("not found")]
     NotFound,
+    /// The resource already exists (e.g. duplicate slug or email).
+    #[error("conflict: {0}")]
+    Conflict(String),
     #[error("service unavailable")]
     Unavailable,
     #[error(transparent)]
@@ -29,6 +32,7 @@ impl AppError {
         match self {
             Self::BadRequest(_) => (StatusCode::BAD_REQUEST, "invalid_request"),
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+            Self::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
             Self::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "temporarily_unavailable"),
             Self::Database(_) | Self::Internal(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "server_error")
@@ -38,7 +42,7 @@ impl AppError {
 
     fn client_message(&self) -> String {
         match self {
-            Self::BadRequest(msg) => msg.clone(),
+            Self::BadRequest(msg) | Self::Conflict(msg) => msg.clone(),
             Self::NotFound => "resource not found".into(),
             Self::Unavailable => "service temporarily unavailable".into(),
             Self::Database(_) | Self::Internal(_) => "internal server error".into(),
@@ -94,6 +98,11 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(body["error"], "invalid_request");
         assert_eq!(body["error_description"], "missing tenant");
+
+        let (status, body) = render(AppError::Conflict("slug taken".into())).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        assert_eq!(body["error"], "conflict");
+        assert_eq!(body["error_description"], "slug taken");
 
         let (status, _) = render(AppError::NotFound).await;
         assert_eq!(status, StatusCode::NOT_FOUND);

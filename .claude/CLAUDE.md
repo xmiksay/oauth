@@ -12,9 +12,9 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
 
 | Path | What |
 |---|---|
-| `crates/server/` | bin `oauth` (`serve`, `bootstrap` — stub until M1a step 2) + lib `oauth_server` (all modules; integration tests use it) |
-| `crates/entity/` | SeaORM entities |
-| `crates/migration/` | `sea-orm-migration` Migrator (append-only) |
+| `crates/server/` | bin `oauth` (`serve`, `bootstrap`) + lib `oauth_server` (all modules; integration tests use it) |
+| `crates/entity/` | SeaORM entities (one file per table) + `enums.rs` |
+| `crates/migration/` | `sea-orm-migration` Migrator (append-only, raw SQL) |
 | `web/` | Vite + Vue 3 + TS + Tailwind + Pinia SPA (`/{t}/login`, `/{t}/myaccount`, `/{t}/admin`) |
 | `deploy/k8s/deploy.yml` | ConfigMap, Deployment, Service, PodDisruptionBudget (Secret `oauth-secrets` created by hand) |
 | `.github/workflows/ci.yml` | `make lint` + `make test` + `make web-build`, plus `docker build`, on PR and push to `main`; actions pinned by SHA |
@@ -33,7 +33,7 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
 | `make test-unit` | `cargo test --workspace --lib --bins` |
 | `make test-integration` | `cargo test --workspace --test '*'` (testcontainers — Docker required) |
 | `make docker` | build image (`IMAGE=` to override tag) |
-| `make bootstrap ADMIN_EMAIL=…` | create `system` tenant + first admin (stub until M1a step 2) |
+| `make bootstrap ADMIN_EMAIL=… [RESET=1]` | migrate, then create `system` tenant + Global Admin (idempotent; `RESET=1` issues a new one-time password) |
 
 Toolchains are pinned: `rust-toolchain.toml` (1.99.0) and `.nvmrc` (22). CI reads
 both; bump them deliberately and together with any lint fallout.
@@ -60,8 +60,33 @@ See `.env.example` (authoritative, commented). Required: `DATABASE_URL`,
   transaction-safe (no `CREATE INDEX CONCURRENTLY`).
 - Metric labels must stay bounded (route templates, fixed enums) — never raw
   paths, tenant slugs, methods or user input.
-- Every table except `tenants` carries `tenant_id`. Secrets/tokens/codes are stored
-  as SHA-256 hashes and compared in constant time.
+- Every table except `tenants` carries `tenant_id`; children reference parents
+  via composite `(tenant_id, id)` FKs so cross-tenant links are impossible.
+  Secrets/tokens/codes are stored as SHA-256 hashes and compared in constant
+  time; reversible secrets (signing keys, TOTP) are AES-256-GCM sealed with
+  `OAUTH_MASTER_KEY` and an AAD binding them to their row (`keys::wrap`).
+- Schema: enums are `text` + `CHECK` (not Postgres enum types — those can't be
+  extended and used in one migration transaction); PKs are app-generated
+  UUIDv7 (`Uuid::now_v7()`); timestamps `timestamptz`. Rationale in
+  `crates/migration/src/lib.rs`.
+- Service code (`directory`, `keys`) is plain async functions over
+  `ConnectionTrait` / `TransactionTrait`; `directory` returns the typed
+  `DirectoryError` (→ `AppError`: 400 / 409 / 404 / 500).
+- Tenant slugs: `^[a-z0-9][a-z0-9-]{1,62}$` minus `directory::slug::RESERVED_SLUGS`
+  — adding a root route means adding its first segment there.
+- Application crypto goes through one provider: AWS-LC via `aws-lc-rs` for key
+  generation, AES-256-GCM, SHA-256 and randomness, and as `jsonwebtoken`'s
+  backend (`aws_lc_rs` + `use_pem`). (`ring` is still linked transitively by
+  sqlx's rustls for DB TLS — not used by our code.) Don't add `rsa` /
+  `p256` / `aes-gcm` / `rand` (the `rsa` crate has RUSTSEC-2023-0071); `cargo tree -i rsa` must find nothing. Only
+  `argon2` (password hashing) sits outside it and is built with opt-level 3
+  in dev so tests stay fast. Building `aws-lc-sys` needs a C compiler (no
+  cmake).
+- Never derive `Debug` on anything holding secret material: entities with
+  hashes / sealed keys and `bootstrap::OneTimePassword` hand-write a
+  redacting `Debug`. SeaORM still derives `Debug` on every `ActiveModel`, so
+  never log (`?`/`{:?}`) an `ActiveModel` of `users`, `user_totp`,
+  `user_recovery_codes`, `client_secrets` or `signing_keys`.
 - Each file ≤ 400 lines. Backend changes ship with unit tests (`#[cfg(test)]`)
   and integration tests (`crates/server/tests/`, in-process router + testcontainers).
 - Branches `feat/m1a-*` per roadmap step, ff-only onto `main`; `make lint` and
