@@ -22,6 +22,7 @@ mod m20261013_000001_directory;
 mod m20261013_000002_applications;
 mod m20261013_000003_signing_keys;
 mod m20261013_000004_oidc;
+mod m20261013_000005_audit;
 
 pub struct Migrator;
 
@@ -33,6 +34,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261013_000002_applications::Migration),
             Box::new(m20261013_000003_signing_keys::Migration),
             Box::new(m20261013_000004_oidc::Migration),
+            Box::new(m20261013_000005_audit::Migration),
         ]
     }
 }

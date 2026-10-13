@@ -1,7 +1,10 @@
 //! `oauth` — Entra-like multi-tenant OAuth 2.1 / OpenID Connect provider.
 
+pub mod api;
 pub mod app;
+pub mod audit;
 pub mod authn;
+pub mod authz;
 pub mod bootstrap;
 pub mod config;
 pub mod consent;

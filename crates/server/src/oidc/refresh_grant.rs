@@ -2,9 +2,9 @@
 //! optional down-scoping (RFC 6749 §6). The new refresh token keeps the
 //! grant's original scopes; only the access token is narrowed.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, net::IpAddr};
 
-use entity::applications;
+use entity::{applications, refresh_tokens};
 use sea_orm::TransactionTrait;
 
 use super::{
@@ -14,6 +14,7 @@ use super::{
 };
 use crate::{
     app::AppState,
+    audit,
     tenancy::Tenant,
     tokens::{
         self, Delegated, Refresh, TokenSet,
@@ -58,6 +59,7 @@ fn narrow(
 pub async fn grant(
     state: &AppState,
     tenant: &Tenant,
+    ip: Option<IpAddr>,
     client: &applications::Model,
     params: &HashMap<String, String>,
 ) -> OAuthResult<TokenSet> {
@@ -76,13 +78,20 @@ pub async fn grant(
     let now = chrono::Utc::now().fixed_offset();
     match refresh::state(&row, now) {
         State::Active => {}
-        State::Reused => return Err(reuse(conn, row.family_id).await?),
+        State::Reused => return Err(reuse(conn, &row, ip).await?),
         State::Revoked => return Err(OAuthError::invalid_grant("refresh token revoked")),
         State::Expired => return Err(OAuthError::invalid_grant("refresh token expired")),
     }
     let user = active_user(conn, tenant.id, row.user_id).await?;
     let original_resource = load_app(conn, row.resource_application_id).await?;
-    let (original_oidc, original_values) = scope::split_stored(&row.scopes);
+    let (original_oidc, mut original_values) = scope::split_stored(&row.scopes);
+    // Scopes the resource has since stopped exposing are never re-minted
+    // (deleting a scope also revokes the families holding it; this keeps
+    // the guarantee even for a family that slipped past that).
+    if let Some(resource) = &original_resource {
+        let exposed = scope::exposed_values(conn, resource.id).await?;
+        original_values.retain(|v| exposed.contains(v));
+    }
 
     let (oidc, resource, values) = match params.get("scope") {
         None => (original_oidc, original_resource, original_values),
@@ -108,7 +117,7 @@ pub async fn grant(
     // token we just issued.
     let txn = conn.begin().await?;
     if !refresh::mark_rotated(&txn, row.id).await? {
-        let err = reuse(&txn, row.family_id).await?;
+        let err = reuse(&txn, &row, ip).await?;
         txn.commit().await?;
         return Err(err);
     }
@@ -145,10 +154,22 @@ pub async fn grant(
 
 async fn reuse(
     conn: &impl sea_orm::ConnectionTrait,
-    family_id: uuid::Uuid,
+    row: &refresh_tokens::Model,
+    ip: Option<IpAddr>,
 ) -> OAuthResult<OAuthError> {
-    tracing::warn!(%family_id, "refresh token reuse; revoking the family");
-    refresh::revoke_family(conn, family_id).await?;
+    tracing::warn!(family_id = %row.family_id, "refresh token reuse; revoking the family");
+    refresh::revoke_family(conn, row.family_id).await?;
+    let details = serde_json::json!({ "family_id": row.family_id });
+    audit::token_replay(
+        conn,
+        audit::EventType::TokenRefreshReuse,
+        row.tenant_id,
+        row.application_id,
+        row.user_id,
+        ip,
+        details,
+    )
+    .await?;
     Ok(OAuthError::invalid_grant(
         "refresh token already used; the grant was revoked",
     ))

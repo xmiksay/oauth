@@ -3,10 +3,14 @@
 use std::net::IpAddr;
 
 use axum::http::{HeaderMap, header};
+use entity::enums::Outcome;
+use sea_orm::ConnectionTrait;
+use uuid::Uuid;
 
-use super::{AuthnResult, Outcome, ip::ClientIp};
+use super::{AuthnResult, Outcome as StepOutcome, ip::ClientIp};
 use crate::{
     app::AppState,
+    audit,
     oidc::{error::ErrorCode, params::AuthRequest, redirect},
     tenancy::Tenant,
 };
@@ -37,6 +41,31 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// Records a sign-in attempt (`reason` is a fixed code, never input).
+    /// Rate-limited attempts are not recorded: they cost an attacker
+    /// nothing, so logging them would let anyone grow the table.
+    pub async fn audit_sign_in(
+        &self,
+        conn: &impl ConnectionTrait,
+        user_id: Option<Uuid>,
+        outcome: Outcome,
+        details: serde_json::Value,
+    ) -> anyhow::Result<()> {
+        audit::record(
+            conn,
+            audit::Event {
+                tenant_id: self.tenant.id,
+                actor: audit::Actor::User(user_id),
+                event_type: audit::EventType::SignIn,
+                target: user_id.map(audit::Target::User),
+                outcome,
+                ip: self.ip,
+                details,
+            },
+        )
+        .await
+    }
+
     pub fn issuer(&self) -> String {
         self.state.config.issuer(&self.tenant.slug)
     }
@@ -47,7 +76,7 @@ impl<'a> Ctx<'a> {
         req: &AuthRequest,
         code: ErrorCode,
         description: &str,
-    ) -> AuthnResult<Outcome> {
+    ) -> AuthnResult<StepOutcome> {
         let url = redirect::error_url(
             &req.redirect_uri,
             code,
@@ -55,7 +84,7 @@ impl<'a> Ctx<'a> {
             req.state.as_deref(),
             &self.issuer(),
         );
-        Ok(Outcome::Redirect {
+        Ok(StepOutcome::Redirect {
             url,
             cookies: Vec::new(),
         })

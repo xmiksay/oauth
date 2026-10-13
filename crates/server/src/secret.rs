@@ -25,6 +25,31 @@ pub fn random_uuid() -> anyhow::Result<Uuid> {
     Ok(uuid::Builder::from_random_bytes(bytes).into_uuid())
 }
 
+/// `len` characters drawn uniformly from `alphabet` (at most 256 symbols)
+/// using AWS-LC's RNG — for codes and passwords humans type.
+pub fn random_string(alphabet: &[u8], len: usize) -> anyhow::Result<String> {
+    let n = alphabet.len();
+    if n == 0 || n > 256 {
+        return Err(anyhow!("alphabet must have 1-256 symbols"));
+    }
+    // Rejection sampling: bytes below the largest multiple of `n` map
+    // uniformly onto the alphabet.
+    let limit = 256 - 256 % n;
+    let mut out = String::with_capacity(len);
+    let mut buf = [0u8; 64];
+    while out.len() < len {
+        rand::fill(&mut buf).map_err(|_| anyhow!("generating random string"))?;
+        out.extend(
+            buf.iter()
+                .filter(|&&b| usize::from(b) < limit)
+                .filter_map(|&b| alphabet.get(usize::from(b) % n))
+                .map(|&c| char::from(c))
+                .take(len - out.len()),
+        );
+    }
+    Ok(out)
+}
+
 /// SHA-256 of a secret, as stored in the database. Bearer secrets carry 256
 /// bits of entropy, so an unsalted fast hash is enough to make a leaked table
 /// useless.
@@ -50,6 +75,16 @@ mod tests {
                 .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
         );
         assert_ne!(a, random_token().unwrap());
+    }
+
+    #[test]
+    fn random_strings_use_the_alphabet() {
+        let s = random_string(b"ab", 200).unwrap();
+        assert_eq!(s.len(), 200);
+        assert!(s.contains('a') && s.contains('b'));
+        assert!(s.bytes().all(|b| b == b'a' || b == b'b'));
+        assert!(random_string(b"", 3).is_err());
+        assert_eq!(random_string(b"x", 0).unwrap(), "");
     }
 
     #[test]

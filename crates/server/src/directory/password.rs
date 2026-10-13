@@ -64,20 +64,7 @@ pub async fn verify(password: &str, phc: &str) -> anyhow::Result<bool> {
 
 /// Random alphanumeric password (~143 bits) for bootstrap / admin resets.
 pub fn generate_one_time() -> anyhow::Result<String> {
-    let mut out = String::with_capacity(ONE_TIME_PASSWORD_LEN);
-    let mut buf = [0u8; 64];
-    while out.len() < ONE_TIME_PASSWORD_LEN {
-        rand::fill(&mut buf).map_err(|_| anyhow!("generating password"))?;
-        // Rejection sampling: 248 = 4 * 62, so accepted bytes map uniformly.
-        out.extend(
-            buf.iter()
-                .filter(|&&b| b < 248)
-                .filter_map(|&b| ALPHABET.get(usize::from(b % 62)))
-                .map(|&c| char::from(c))
-                .take(ONE_TIME_PASSWORD_LEN - out.len()),
-        );
-    }
-    Ok(out)
+    crate::secret::random_string(ALPHABET, ONE_TIME_PASSWORD_LEN)
 }
 
 #[cfg(test)]

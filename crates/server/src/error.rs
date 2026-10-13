@@ -3,7 +3,7 @@
 
 use axum::{
     Json,
-    http::StatusCode,
+    http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
 use serde_json::json;
@@ -12,11 +12,19 @@ use serde_json::json;
 pub enum AppError {
     #[error("bad request: {0}")]
     BadRequest(String),
+    /// Missing, invalid or expired bearer token (or one for another audience).
+    #[error("unauthorized: {0}")]
+    Unauthorized(String),
+    /// Authenticated, but not allowed to do this.
+    #[error("forbidden: {0}")]
+    Forbidden(String),
     #[error("not found")]
     NotFound,
     /// The resource already exists (e.g. duplicate slug or email).
     #[error("conflict: {0}")]
     Conflict(String),
+    #[error("too many attempts")]
+    RateLimited { retry_after: u64 },
     #[error("service unavailable")]
     Unavailable,
     #[error(transparent)]
@@ -31,8 +39,11 @@ impl AppError {
     fn status_and_code(&self) -> (StatusCode, &'static str) {
         match self {
             Self::BadRequest(_) => (StatusCode::BAD_REQUEST, "invalid_request"),
+            Self::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "invalid_token"),
+            Self::Forbidden(_) => (StatusCode::FORBIDDEN, "forbidden"),
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
             Self::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
+            Self::RateLimited { .. } => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
             Self::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "temporarily_unavailable"),
             Self::Database(_) | Self::Internal(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "server_error")
@@ -42,8 +53,12 @@ impl AppError {
 
     fn client_message(&self) -> String {
         match self {
-            Self::BadRequest(msg) | Self::Conflict(msg) => msg.clone(),
+            Self::BadRequest(msg)
+            | Self::Conflict(msg)
+            | Self::Unauthorized(msg)
+            | Self::Forbidden(msg) => msg.clone(),
             Self::NotFound => "resource not found".into(),
+            Self::RateLimited { .. } => "too many attempts; retry later".into(),
             Self::Unavailable => "service temporarily unavailable".into(),
             Self::Database(_) | Self::Internal(_) => "internal server error".into(),
         }
@@ -59,7 +74,23 @@ impl IntoResponse for AppError {
             tracing::error!(error = ?self, "request failed");
         }
         let body = json!({ "error": code, "error_description": self.client_message() });
-        (status, Json(body)).into_response()
+        let mut response = (status, Json(body)).into_response();
+        match self {
+            // RFC 6750 §3: a bearer-protected resource names the scheme it wants.
+            Self::Unauthorized(_) => {
+                response.headers_mut().insert(
+                    header::WWW_AUTHENTICATE,
+                    HeaderValue::from_static("Bearer error=\"invalid_token\""),
+                );
+            }
+            Self::RateLimited { retry_after } => {
+                response
+                    .headers_mut()
+                    .insert(header::RETRY_AFTER, HeaderValue::from(retry_after));
+            }
+            _ => {}
+        }
+        response
     }
 }
 
@@ -103,6 +134,18 @@ mod tests {
         assert_eq!(status, StatusCode::CONFLICT);
         assert_eq!(body["error"], "conflict");
         assert_eq!(body["error_description"], "slug taken");
+
+        let (status, body) = render(AppError::Forbidden("no".into())).await;
+        assert_eq!(
+            (status, body["error"].as_str()),
+            (StatusCode::FORBIDDEN, Some("forbidden"))
+        );
+        let resp = AppError::Unauthorized("expired".into()).into_response();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            resp.headers()[header::WWW_AUTHENTICATE],
+            "Bearer error=\"invalid_token\""
+        );
 
         let (status, _) = render(AppError::NotFound).await;
         assert_eq!(status, StatusCode::NOT_FOUND);

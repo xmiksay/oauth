@@ -5,8 +5,9 @@ use axum::{
     extract::{Path, State},
     http::HeaderMap,
 };
-use entity::enums::LoginStage;
+use entity::enums::{LoginStage, Outcome as AuditOutcome};
 use serde::Deserialize;
+use serde_json::json;
 
 use super::{
     AuthnError, AuthnResult, JsonBody, Outcome, complete::proceed, ctx::Ctx, ip::ClientIp,
@@ -52,6 +53,13 @@ async fn second_factor(
     };
     if !ok {
         metrics::login("mfa_failed");
+        let factor = match factor {
+            Factor::Totp => "totp",
+            Factor::Recovery => "recovery_code",
+        };
+        let details = json!({ "reason": "mfa_failed", "factor": factor });
+        ctx.audit_sign_in(conn, Some(user.id), AuditOutcome::Failure, details)
+            .await?;
         return Err(AuthnError::InvalidCode);
     }
     tx.row.amr = MFA_AMR.iter().map(|s| (*s).to_owned()).collect();

@@ -63,7 +63,7 @@ fn form_params(
 }
 
 /// The token of an `Authorization: Bearer …` header (RFC 6750 §2.1).
-fn bearer(headers: &HeaderMap) -> Option<&str> {
+pub(crate) fn bearer(headers: &HeaderMap) -> Option<&str> {
     let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
     let (scheme, token) = value.split_once(' ')?;
     let token = token.trim();

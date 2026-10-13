@@ -6,9 +6,14 @@ use axum::{
     extract::{Path, State},
     http::HeaderMap,
 };
-use entity::{app_scopes, applications, enums::LoginStage, users};
+use entity::{
+    app_scopes, applications,
+    enums::{LoginStage, Outcome as AuditOutcome},
+    users,
+};
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, TransactionTrait};
 use serde::Deserialize;
+use serde_json::json;
 use uuid::Uuid;
 
 use super::{
@@ -174,6 +179,13 @@ async fn finish(ctx: &Ctx<'_>, tx: LoadedTx, from: LoginStage) -> AuthnResult<Ou
             )
             .await?;
             cookies.push(cookie::set(config, Kind::Session, slug, &token)?);
+            let details = json!({
+                "session_id": created.id,
+                "application_id": tx.row.application_id,
+                "amr": created.amr,
+            });
+            ctx.audit_sign_in(&txn, Some(user_id), AuditOutcome::Success, details)
+                .await?;
             created
         }
     };
@@ -226,8 +238,15 @@ pub async fn consent(
                 "approve every listed scope or decline".into(),
             ));
         }
-        consent::store_user_grant(conn, tenant.id, client.id, resource.id, user.id, pending)
-            .await?;
+        consent::store_grant(
+            conn,
+            tenant.id,
+            client.id,
+            resource.id,
+            Some(user.id),
+            pending,
+        )
+        .await?;
     }
     proceed(&ctx, tx, LoginStage::Consent, None, &user, true).await
 }

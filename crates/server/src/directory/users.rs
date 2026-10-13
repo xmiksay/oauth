@@ -28,7 +28,7 @@ pub struct NewUser<'a> {
 
 /// Minimal shape check; deliverability is proven by verification (M1b), not
 /// by a regex.
-fn normalize_email(raw: &str) -> Result<String, DirectoryError> {
+pub fn normalize_email(raw: &str) -> Result<String, DirectoryError> {
     let email = raw.trim();
     // First, so the error below never echoes control characters back.
     reject_control_chars(email, "email address")?;
@@ -117,6 +117,27 @@ pub async fn set_password(
     new_password: &str,
     must_change_password: bool,
 ) -> Result<(), DirectoryError> {
+    set_password_keeping(
+        conn,
+        tenant_id,
+        user_id,
+        new_password,
+        must_change_password,
+        None,
+    )
+    .await
+}
+
+/// [`set_password`], sparing `keep_session` (and its tokens): a user who
+/// changes their own password stays signed in where they did it.
+pub async fn set_password_keeping(
+    conn: &impl ConnectionTrait,
+    tenant_id: Uuid,
+    user_id: Uuid,
+    new_password: &str,
+    must_change_password: bool,
+    keep_session: Option<Uuid>,
+) -> Result<(), DirectoryError> {
     password::validate(new_password)?;
     let hash = password::hash(new_password).await?;
     let result = users::Entity::update_many()
@@ -134,29 +155,36 @@ pub async fn set_password(
     if result.rows_affected == 0 {
         return Err(DirectoryError::NotFound);
     }
-    revoke_credentials(conn, tenant_id, user_id).await?;
+    revoke_credentials(conn, tenant_id, user_id, keep_session).await?;
     Ok(())
 }
 
-/// A new password invalidates everything obtained with the old one: the
-/// user's browser sessions, refresh-token families and opaque access tokens
-/// (JWTs can't be recalled; they expire).
-async fn revoke_credentials(
+/// Signs the user out everywhere — used by password changes and resets,
+/// disabling, and explicit "revoke sessions": deletes their browser
+/// sessions and revokes their refresh-token families and opaque access
+/// tokens (JWTs can't be recalled; they expire). `keep_session` spares one
+/// session with the refresh families started in it and their opaque tokens.
+pub async fn revoke_credentials(
     conn: &impl ConnectionTrait,
     tenant_id: Uuid,
     user_id: Uuid,
+    keep_session: Option<Uuid>,
 ) -> anyhow::Result<()> {
     for sql in [
-        "DELETE FROM sessions WHERE tenant_id = $1 AND user_id = $2",
+        "DELETE FROM sessions WHERE tenant_id = $1 AND user_id = $2 \
+         AND ($3::uuid IS NULL OR id <> $3)",
         "UPDATE refresh_tokens SET revoked_at = now() \
-         WHERE tenant_id = $1 AND user_id = $2 AND revoked_at IS NULL",
+         WHERE tenant_id = $1 AND user_id = $2 AND revoked_at IS NULL \
+         AND ($3::uuid IS NULL OR session_id <> $3)",
         "UPDATE opaque_access_tokens SET revoked_at = now() \
-         WHERE tenant_id = $1 AND user_id = $2 AND revoked_at IS NULL",
+         WHERE tenant_id = $1 AND user_id = $2 AND revoked_at IS NULL \
+         AND ($3::uuid IS NULL OR family_id IS NULL OR family_id NOT IN \
+              (SELECT family_id FROM refresh_tokens WHERE tenant_id = $1 AND session_id = $3))",
     ] {
         conn.execute_raw(Statement::from_sql_and_values(
             conn.get_database_backend(),
             sql,
-            [tenant_id.into(), user_id.into()],
+            [tenant_id.into(), user_id.into(), keep_session.into()],
         ))
         .await
         .context("revoking the user's sessions and tokens")?;

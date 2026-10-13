@@ -35,7 +35,7 @@ Spawned by `serve::run_with` after migrations; stop on the shutdown token
 
 | Job | Every | Does |
 |---|---|---|
-| `sweeper` | 60 s | `DELETE … WHERE expires_at < now()` on `login_transactions`, `authorization_codes`, `sessions`, `refresh_tokens`, `opaque_access_tokens`, `rate_limit_buckets` (readers already ignore expired rows; this bounds growth) |
+| `sweeper` | 60 s | `DELETE … WHERE expires_at < now()` on `login_transactions`, `authorization_codes`, `sessions`, `refresh_tokens`, `opaque_access_tokens`, `rate_limit_buckets` (readers already ignore expired rows; this bounds growth), and `audit_events` older than their tenant's `audit_retention_days` |
 | `rotation` | 5 min | Per (tenant, alg), each tenant in its own transaction (one failing tenant doesn't block the others) while the run's lock transaction holds the leader lock: `KEY_PREPUBLISH_HOURS` before the active key is `KEY_ROTATION_DAYS` old, publish a `next` key (in JWKS, not signing); once it has been published that long, retire the active key (`expires_at` = now + the tenant's longest access-token TTL, min 1 h, + 1 h) and activate the next one — retire first, in one transaction, because the partial unique indexes allow one active key per (tenant, alg) per statement. Runs on an explicit `now` (tests move the clock) |
 
 ## HTTP surface (current)
@@ -56,6 +56,7 @@ Issuer of tenant `{t}` = `{PUBLIC_URL}/{t}`. Unknown or disabled tenants are
 | `POST /{t}/oauth2/revoke` (RFC 7009) | app | `oidc::revoke` |
 | `GET /{t}/oauth2/logout` (RP-initiated), `POST` (confirmation page, CSRF-checked) | app | `oidc::logout` |
 | `GET /{t}/api/authn/tx/{id}`, `POST …/{password,totp,recovery,change-password,consent}` — login JSON API, contract in [api/authn.md](api/authn.md) | app | `authn` |
+| `/api/v1/tenants[/{t}]` (system Global Admins), `/api/v1/tenants/{t}/settings` (the tenant's own Global Admins), `/api/v1/tenants/{t}/{users,groups,directory-roles,applications,role-assignments,consents,audit-events}[/…]`, `/api/v1/tenants/{t}/me[/…]` — management REST API, bearer tokens for the tenant's `management-api`; contract in [api/management.md](api/management.md) | app | `api` |
 | `/{tenant}/{login,logout,myaccount,admin}[/…]` → `index.html` | app | `spa` |
 | any other path → static file from `WEB_DIST_DIR`, else 404 | app | `spa` |
 | `GET /metrics` — Prometheus text format | metrics | `metrics` |
@@ -86,15 +87,10 @@ Implemented:
 | `authn` | Login JSON API + CSRF guard (`AuthnError`, `JsonBody`), `cookie` (session + tx-binding cookies), `ctx`, `tx` (login transactions + browser binding + view), `password`, `mfa` (TOTP / recovery), `complete` (next step, consent, session + code), `session` (cookie), `totp` (RFC 6238 via AWS-LC HMAC, sealed secret, replay-protected step), `recovery`, `rate_limit`, `ip` |
 | `consent` | Pure evaluation (granted / needs user / needs admin) + grant lookup / merge-upsert |
 | `tokens` | Issuance (`issue_delegated`, `issue_app_only`), `inspect` (access-token resolution incl. user-disabled check), `claims` (pure builders), `jwt` (sign with active key, verify against published keys + `typ`), `opaque`, `refresh` (family state machine, rotation, revocation), `code`, `principal` (groups, roles) |
-| `jobs` | `sweeper`, `rotation`, leader lock helper |
-
-Planned (see [roadmap](roadmap.md)):
-
-| Module | Responsibility |
-|---|---|
-| `api/` | Management REST `/api/v1/tenants/{t}/…` and `me/…` (incl. TOTP enrollment, recovery-code generation via `authn::totp` / `authn::recovery`) |
-| `authz` | Directory-role and app-role guards |
-| `audit` | Append-only `audit_events` |
+| `jobs` | `sweeper` (incl. audit retention), `rotation`, leader lock helper |
+| `api` | Management REST API: `auth` (`Caller` / `SystemAdmin` bearer extractors), `guard` (administrator protection, last-GlobalAdmin lock), `page` (UUIDv7 keyset pagination), `validate` (client ids, redirect / identifier URIs, scope values), `app_rules` (app lookup + row lock, built-in protection, credential protection of privileged apps, lifetime and per-app caps), `extract` (JSON-error extractors), one module per resource (`tenants`, `users`, `user_actions`, `groups`, `directory_roles`, `applications`, `apps_secrets`, `apps_scopes`, `apps_roles`, `apps_permissions`, `role_assignments`, `consents`, `audit_events`, `me`, `me_mfa`) |
+| `authz` | Pure permission matrix (directory roles, `Directory.Read.All` / `ReadWrite.All`) and administrator protection |
+| `audit` | Closed `EventType` set, `record` (on the mutation's transaction), `token_replay`, retention `sweep` |
 
 ## Cryptography
 
@@ -151,6 +147,7 @@ migration transaction). Deleting a tenant cascades to everything it owns.
 | `refresh_tokens` | `token_hash`, `family_id`, client, user, session, originating code, scopes, resource, amr, auth_time, `expires_at` (fixed per family), `rotated_at`, `revoked_at` |
 | `opaque_access_tokens` | `token_hash`, client, resource, user, originating code / family, `claims` jsonb, `expires_at`, `revoked_at` |
 | `rate_limit_buckets` | (tenant, SHA-256 of key, window start) → count, `expires_at` |
+| `audit_events` | `at`, `actor_type` user\|application\|system + `actor_id`, `event_type` (closed Rust enum `audit::EventType`, DB only checks the dotted shape so retired types stay valid history), `target_type` + `target_id`, `outcome` success\|failure, `ip`, `details` jsonb (never secrets). No FKs besides the tenant: events outlive what they mention. Indexed `(tenant_id, id DESC)` for newest-first listing, `(tenant_id, at)` for retention |
 
 `user_totp.last_used_step` (added by the OIDC migration) prevents TOTP replay.
 `applications_api_uri_is_own_client_id` (CHECK) lets an app use an
@@ -158,7 +155,6 @@ migration transaction). Deleting a tenant cascades to everything it owns.
 `api://X` always names one app (identifier URI first, then client id).
 `session_id` / `authorization_code_id` / `family_id` are plain columns, not
 FKs: sessions and codes are swept while the tokens they produced live on.
-Audit events arrive with step 4.
 
 ## Protocol
 
@@ -311,6 +307,36 @@ and `Directory.ReadWrite.All` for applications); `admin-portal` and
 `/{t}/myaccount/callback`, post-logout to the area root, 24 h refresh TTL),
 each requiring the management-api scope and pre-consented by a tenant-wide
 admin `consent_grant`.
+
+## Management API
+
+`/api/v1` — contract and permission matrix in
+[api/management.md](api/management.md). Bearer tokens only (no cookies,
+no CSRF surface): an access token of the path's tenant (JWT verified
+against its published keys, or an active opaque token), `tid` = that
+tenant, audience = the tenant's built-in `management-api`. Delegated tokens
+need `scp ∋ Directory.AccessAsUser` and a still-existing session (`sid`),
+and act through the user's directory roles (any role reads the directory;
+GlobalAdmin writes everything, UserAdmin users / groups, ApplicationAdmin
+apps / grants); app-only tokens act through their CURRENT
+`Directory.Read.All` / `Directory.ReadWrite.All` assignments (looked up
+per call, not taken from the token) and never touch directory roles or
+tenants; a tenant's GlobalAdmin edits its own `settings`. `/api/v1/tenants` is for GlobalAdmins of
+the `system` tenant. Administrators can only be modified by GlobalAdmins;
+the last enabled GlobalAdmin can't be removed (per-tenant advisory lock
+serializes the check, and role checks lock the target user row); built-in
+apps are GlobalAdmin-only and read-mostly; management-API grants, and the
+credentials / redirect URIs of apps holding them, need a GlobalAdmin.
+Refresh-token lifetimes are capped (90 days; public clients 7 days). Objects of other tenants are 404, never 403.
+
+Every mutation writes its `audit_events` row in the same transaction; the
+login API records sign-ins (success with the new session, failures with a
+reason code; rate-limited attempts are not logged) and forced password
+changes; the token endpoint records refresh-token reuse and code replay.
+Withdrawing a consent grant revokes the client's refresh families and
+opaque access tokens for the resource (one user, or everyone for an admin
+grant); deleting a scope revokes the families holding it, and refresh
+never re-mints a scope the resource no longer exposes.
 
 ## Frontend (`web/`)
 

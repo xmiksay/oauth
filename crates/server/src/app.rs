@@ -14,7 +14,7 @@ use sea_orm::DatabaseConnection;
 use tower_http::trace::{DefaultOnFailure, TraceLayer};
 use tracing::{Level, Span};
 
-use crate::{authn, config::Config, headers, health, metrics, oidc, spa};
+use crate::{api, authn, config::Config, headers, health, metrics, oidc, spa};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -52,6 +52,7 @@ pub fn router(state: AppState, web_dist: &Path) -> Router {
         .merge(health::router())
         .merge(oidc::router(state.clone()))
         .merge(authn::router(state.clone()))
+        .merge(api::router())
         .merge(spa::router(web_dist))
         // `layer` (not `route_layer`) so fallback traffic is counted too; axum
         // applies it per route, so `MatchedPath` is still visible inside.

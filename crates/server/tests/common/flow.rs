@@ -170,9 +170,11 @@ impl Fixture {
             TOTP_SECRET,
         )
         .unwrap();
-        totp::store(&self.db, user.tenant_id, user.id, sealed, true)
-            .await
-            .unwrap();
+        assert!(
+            totp::store(&self.db, user.tenant_id, user.id, sealed, true)
+                .await
+                .unwrap()
+        );
     }
 
     /// POSTs a form to a back-channel endpoint, optionally with Basic auth.

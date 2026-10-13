@@ -10,7 +10,7 @@ pub const SYSTEM_TENANT_SLUG: &str = "system";
 /// Slugs that would shadow a top-level path. WHY each exists: the backend
 /// router (`app.rs`) serves `/healthz`, `/readyz` (`health.rs`), static SPA
 /// files at the root such as `/assets/…` (`spa.rs`) and the management API
-/// under `/api/…` (M1a step 4);
+/// under `/api/…` (`api`);
 /// the Vite dev server owns `/src`, `/node_modules` and `/@…` (see
 /// `web/dev-proxy.ts`, which must not proxy them as tenants); `/metrics` and
 /// `/.well-known` are conventional root paths; `system` is the bootstrap

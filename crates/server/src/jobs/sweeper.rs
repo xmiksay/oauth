@@ -1,11 +1,13 @@
 //! TTL sweeper: deletes expired login transactions, codes, sessions, tokens
-//! and rate-limit buckets. Expired rows are already ignored by every reader;
-//! this only bounds table growth.
+//! and rate-limit buckets (expired rows are already ignored by every reader;
+//! this only bounds table growth), and audit events past their tenant's
+//! `audit_retention_days`.
 
 use anyhow::Context;
 use sea_orm::{ConnectionTrait, DatabaseConnection, TransactionTrait};
 
 use super::{SWEEPER_LOCK_KEY, try_lock};
+use crate::audit;
 
 /// Tables with an `expires_at` column, swept in this order.
 const TABLES: [&str; 6] = [
@@ -23,7 +25,7 @@ pub async fn run_once(db: &DatabaseConnection) -> anyhow::Result<Option<Vec<(&'s
     if !try_lock(&txn, SWEEPER_LOCK_KEY).await? {
         return Ok(None);
     }
-    let mut report = Vec::with_capacity(TABLES.len());
+    let mut report = Vec::with_capacity(TABLES.len() + 1);
     for table in TABLES {
         // Table names come from the constant above, never from input.
         let result = txn
@@ -32,6 +34,7 @@ pub async fn run_once(db: &DatabaseConnection) -> anyhow::Result<Option<Vec<(&'s
             .with_context(|| format!("sweeping {table}"))?;
         report.push((table, result.rows_affected()));
     }
+    report.push(("audit_events", audit::sweep(&txn).await?));
     txn.commit().await.context("committing sweep")?;
     let total: u64 = report.iter().map(|(_, n)| n).sum();
     if total > 0 {

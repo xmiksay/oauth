@@ -1,7 +1,7 @@
 //! `POST /{t}/oauth2/token`: `authorization_code`, `refresh_token`,
 //! `client_credentials`. Errors per RFC 6749 §5.2, always `no-store`.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, net::IpAddr};
 
 use anyhow::Context;
 use axum::{
@@ -11,7 +11,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::Duration;
-use entity::{applications, enums::ClientType, users};
+use entity::{applications, authorization_codes, enums::ClientType, users};
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, TransactionTrait};
 use uuid::Uuid;
 
@@ -22,6 +22,8 @@ use super::{
 };
 use crate::{
     app::AppState,
+    audit,
+    authn::ip::ClientIp,
     metrics,
     tenancy::Tenant,
     tokens::{self, Delegated, Refresh, TokenSet},
@@ -30,10 +32,11 @@ use crate::{
 pub async fn token(
     State(state): State<AppState>,
     tenant: Tenant,
+    ClientIp(ip): ClientIp,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    match handle(&state, &tenant, &headers, &body).await {
+    match handle(&state, &tenant, ip, &headers, &body).await {
         Ok((set, grant)) => {
             metrics::token_issued(grant, tokens::format_label(set.format));
             set.into_response()
@@ -48,6 +51,7 @@ pub async fn token(
 async fn handle(
     state: &AppState,
     tenant: &Tenant,
+    ip: Option<IpAddr>,
     headers: &HeaderMap,
     body: &[u8],
 ) -> OAuthResult<(TokenSet, &'static str)> {
@@ -55,11 +59,11 @@ async fn handle(
     let client = client_auth::authenticate(&state.db, tenant.id, headers, &params).await?;
     match params.get("grant_type").map(String::as_str) {
         Some("authorization_code") => Ok((
-            authorization_code(state, tenant, &client, &params).await?,
+            authorization_code(state, tenant, ip, &client, &params).await?,
             "authorization_code",
         )),
         Some("refresh_token") => Ok((
-            refresh_grant::grant(state, tenant, &client, &params).await?,
+            refresh_grant::grant(state, tenant, ip, &client, &params).await?,
             "refresh_token",
         )),
         Some("client_credentials") => Ok((
@@ -112,6 +116,7 @@ pub(super) async fn load_app(
 async fn authorization_code(
     state: &AppState,
     tenant: &Tenant,
+    ip: Option<IpAddr>,
     client: &applications::Model,
     params: &HashMap<String, String>,
 ) -> OAuthResult<TokenSet> {
@@ -129,7 +134,7 @@ async fn authorization_code(
     }
     let now = chrono::Utc::now().fixed_offset();
     if row.consumed_at.is_some() {
-        replay_detected(conn, row.id).await?;
+        replay_detected(conn, &row, ip).await?;
         return Err(OAuthError::invalid_grant("authorization code already used"));
     }
     if tokens::code::is_expired(&row, now) {
@@ -158,7 +163,7 @@ async fn authorization_code(
     // revokes what we issued — no token of a replayed code survives.
     let txn = conn.begin().await?;
     if !tokens::code::consume(&txn, row.id).await? {
-        replay_detected(&txn, row.id).await?;
+        replay_detected(&txn, &row, ip).await?;
         txn.commit().await?;
         return Err(OAuthError::invalid_grant("authorization code already used"));
     }
@@ -188,9 +193,24 @@ async fn authorization_code(
 }
 
 /// RFC 6749 §4.1.2: revoke what the code already produced.
-async fn replay_detected(conn: &impl ConnectionTrait, code_id: Uuid) -> OAuthResult<()> {
-    tracing::warn!(%code_id, "authorization code replay; revoking tokens issued from it");
-    tokens::refresh::revoke_by_code(conn, code_id).await?;
+async fn replay_detected(
+    conn: &impl ConnectionTrait,
+    code: &authorization_codes::Model,
+    ip: Option<IpAddr>,
+) -> OAuthResult<()> {
+    tracing::warn!(code_id = %code.id, "authorization code replay; revoking tokens issued from it");
+    tokens::refresh::revoke_by_code(conn, code.id).await?;
+    let details = serde_json::json!({ "authorization_code_id": code.id });
+    audit::token_replay(
+        conn,
+        audit::EventType::TokenCodeReplay,
+        code.tenant_id,
+        code.application_id,
+        code.user_id,
+        ip,
+        details,
+    )
+    .await?;
     Ok(())
 }
 

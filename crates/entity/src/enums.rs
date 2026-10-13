@@ -80,6 +80,27 @@ pub mod member_type {
     pub const APPLICATION: &str = "application";
 }
 
+/// Who performed an audited action.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter, DeriveActiveEnum)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
+pub enum ActorType {
+    #[sea_orm(string_value = "user")]
+    User,
+    #[sea_orm(string_value = "application")]
+    Application,
+    #[sea_orm(string_value = "system")]
+    System,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter, DeriveActiveEnum)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
+pub enum Outcome {
+    #[sea_orm(string_value = "success")]
+    Success,
+    #[sea_orm(string_value = "failure")]
+    Failure,
+}
+
 /// Next step of a login transaction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter, DeriveActiveEnum)]
 #[sea_orm(rs_type = "String", db_type = "Text")]

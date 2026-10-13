@@ -5,9 +5,13 @@ use axum::{
     http::HeaderMap,
 };
 use chrono::Utc;
-use entity::{enums::LoginStage, users};
+use entity::{
+    enums::{LoginStage, Outcome as AuditOutcome},
+    users,
+};
 use sea_orm::TransactionTrait;
 use serde::Deserialize;
+use serde_json::json;
 use tokio::sync::OnceCell;
 
 use super::{
@@ -16,6 +20,7 @@ use super::{
 };
 use crate::{
     app::AppState,
+    audit,
     directory::{self, password},
     metrics,
     tenancy::Tenant,
@@ -97,6 +102,19 @@ pub async fn submit(
     limit(&ctx, &account).await?;
     if !check_password(user.as_ref(), &body.password).await? {
         metrics::login("invalid_credentials");
+        let reason = if user.is_some() {
+            "invalid_password"
+        } else {
+            "unknown_account"
+        };
+        let user_id = user.as_ref().map(|u| u.id);
+        ctx.audit_sign_in(
+            conn,
+            user_id,
+            AuditOutcome::Failure,
+            json!({ "reason": reason }),
+        )
+        .await?;
         return Err(AuthnError::InvalidCredentials);
     }
     let Some(user) = user else {
@@ -104,6 +122,9 @@ pub async fn submit(
     };
     if user.disabled {
         metrics::login("disabled");
+        let details = json!({ "reason": "disabled" });
+        ctx.audit_sign_in(conn, Some(user.id), AuditOutcome::Failure, details)
+            .await?;
         return Err(AuthnError::AccountDisabled);
     }
     let has_totp = totp::confirmed(conn, tenant.id, user.id).await?.is_some();
@@ -152,6 +173,19 @@ pub async fn change(
     // no row lock is held during argon2.)
     let txn = conn.begin().await?;
     directory::set_password(&txn, tenant.id, user.id, &body.new_password, false).await?;
+    audit::record(
+        &txn,
+        audit::Event {
+            tenant_id: tenant.id,
+            actor: audit::Actor::User(Some(user.id)),
+            event_type: audit::EventType::UserPasswordChange,
+            target: Some(audit::Target::User(user.id)),
+            outcome: AuditOutcome::Success,
+            ip: ctx.ip,
+            details: json!({ "via": "sign_in" }),
+        },
+    )
+    .await?;
     txn.commit().await?;
     proceed(&ctx, tx, LoginStage::ChangePassword, None, &user, false).await
 }

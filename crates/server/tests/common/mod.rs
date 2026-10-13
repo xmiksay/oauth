@@ -4,6 +4,7 @@
 
 pub mod browser;
 pub mod flow;
+pub mod mgmt;
 pub mod seed;
 
 use std::{collections::HashMap, path::Path};

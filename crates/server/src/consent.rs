@@ -81,36 +81,42 @@ pub async fn granted_scopes(
     Ok(grants.into_iter().flat_map(|g| g.scopes).collect())
 }
 
-/// Records a user grant, merging with what the user granted before.
-pub async fn store_user_grant(
+/// Records a grant — a user's, or with `user_id = None` the tenant-wide
+/// admin grant — merging with what was granted before. Returns its id.
+pub async fn store_grant(
     conn: &impl ConnectionTrait,
     tenant_id: Uuid,
     client_app_id: Uuid,
     resource_app_id: Uuid,
-    user_id: Uuid,
+    user_id: Option<Uuid>,
     scopes: &[String],
-) -> anyhow::Result<()> {
-    conn.execute_raw(Statement::from_sql_and_values(
-        conn.get_database_backend(),
-        r"INSERT INTO consent_grants
+) -> anyhow::Result<Uuid> {
+    // `ON CONFLICT` honours the constraint's NULLS NOT DISTINCT, so the
+    // admin grant (NULL user) merges too.
+    let row = conn
+        .query_one_raw(Statement::from_sql_and_values(
+            conn.get_database_backend(),
+            r"INSERT INTO consent_grants
               (id, tenant_id, client_application_id, resource_application_id, user_id, scopes)
           VALUES ($1, $2, $3, $4, $5, $6)
           ON CONFLICT (client_application_id, resource_application_id, user_id) DO UPDATE
           SET scopes = ARRAY(
                   SELECT DISTINCT unnest(consent_grants.scopes || EXCLUDED.scopes) ORDER BY 1),
-              updated_at = now()",
-        [
-            Uuid::now_v7().into(),
-            tenant_id.into(),
-            client_app_id.into(),
-            resource_app_id.into(),
-            user_id.into(),
-            scopes.to_vec().into(),
-        ],
-    ))
-    .await
-    .context("storing consent grant")?;
-    Ok(())
+              updated_at = now()
+          RETURNING id",
+            [
+                Uuid::now_v7().into(),
+                tenant_id.into(),
+                client_app_id.into(),
+                resource_app_id.into(),
+                user_id.into(),
+                scopes.to_vec().into(),
+            ],
+        ))
+        .await
+        .context("storing consent grant")?
+        .context("consent upsert returned no row")?;
+    row.try_get("", "id").context("reading consent grant id")
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@
 //! HMAC from AWS-LC. SHA-1 is what every authenticator app implements; HMAC
 //! use of SHA-1 is not affected by its collision weakness. Secrets are
 //! sealed with `OAUTH_MASTER_KEY` (`keys::wrap::totp_aad`); enrollment lives
-//! in the `me` API (step 4) and calls [`seal_secret`] / [`store`].
+//! in the `me` API (`api::me_mfa`) and calls [`seal_secret`] / [`store`].
 
 use anyhow::Context;
 use aws_lc_rs::hmac;
@@ -10,7 +10,7 @@ use entity::user_totp;
 use sea_orm::{
     ActiveValue::Set,
     ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
-    sea_query::{Condition, Expr, OnConflict},
+    sea_query::{Condition, Expr, ExprTrait, OnConflict},
 };
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -75,15 +75,16 @@ pub fn open_secret(
     .context("unsealing TOTP secret")
 }
 
-/// Stores (or replaces) a user's sealed TOTP secret in one statement;
-/// replacing resets confirmation and replay state.
+/// Stores a user's sealed TOTP secret in one statement, replacing only an
+/// UNCONFIRMED (pending) one — so a racing enrollment can never silently
+/// swap out an active factor. `false` = a confirmed enrollment exists.
 pub async fn store(
     conn: &impl ConnectionTrait,
     tenant_id: Uuid,
     user_id: Uuid,
     secret_enc: Vec<u8>,
     confirmed: bool,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<bool> {
     let now = chrono::Utc::now().fixed_offset();
     let row = user_totp::ActiveModel {
         user_id: Set(user_id),
@@ -93,7 +94,7 @@ pub async fn store(
         confirmed_at: Set(confirmed.then_some(now)),
         last_used_step: Set(None),
     };
-    user_totp::Entity::insert(row)
+    let written = user_totp::Entity::insert(row)
         .on_conflict(
             OnConflict::column(user_totp::Column::UserId)
                 .update_columns([
@@ -102,12 +103,15 @@ pub async fn store(
                     user_totp::Column::ConfirmedAt,
                     user_totp::Column::LastUsedStep,
                 ])
+                .action_and_where(
+                    Expr::col((user_totp::Entity, user_totp::Column::ConfirmedAt)).is_null(),
+                )
                 .to_owned(),
         )
         .exec_without_returning(conn)
         .await
         .context("storing TOTP secret")?;
-    Ok(())
+    Ok(written == 1)
 }
 
 /// The user's confirmed TOTP enrollment, if any.

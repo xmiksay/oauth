@@ -17,6 +17,8 @@ use common::{
     flow::{Fixture, WEB_CB},
     seed::{add_role, assign_role},
 };
+use entity::{audit_events, enums::Outcome};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde_json::{Value, json};
 
 const TOKEN: &str = "/contoso/oauth2/token";
@@ -29,6 +31,15 @@ async fn refresh(f: &Fixture, token: &str, scope: Option<&str>) -> (StatusCode, 
     let basic = Some(("web-app", f.web_secret.as_str()));
     let (status, _, body) = f.post_form(TOKEN, &form, basic).await;
     (status, body)
+}
+
+/// The audit rows of one event type (security events of the token endpoint).
+async fn audited(f: &Fixture, event_type: &str) -> Vec<audit_events::Model> {
+    audit_events::Entity::find()
+        .filter(audit_events::Column::EventType.eq(event_type))
+        .all(&f.db)
+        .await
+        .unwrap()
 }
 
 async fn web_tokens(f: &Fixture, scope: &str) -> Value {
@@ -90,6 +101,10 @@ async fn refresh_rotation_and_reuse_revokes_family() {
         (StatusCode::BAD_REQUEST, Some("invalid_grant"))
     );
     assert_eq!(body["error_description"], "refresh token revoked");
+    let reuse = audited(&f, "token.refresh_reuse").await;
+    assert_eq!(reuse.len(), 1);
+    assert_eq!(reuse[0].actor_id, Some(f.web.id));
+    assert_eq!(reuse[0].target_id, Some(f.user.id));
 
     // Another client can't use someone else's refresh token.
     let tokens = web_tokens(&f, "openid offline_access").await;
@@ -140,6 +155,9 @@ async fn code_replay_is_rejected_and_revokes_issued_tokens() {
         json!({ "active": false }),
         "opaque token of a replayed code"
     );
+    let replays = audited(&f, "token.code_replay").await;
+    assert_eq!(replays.len(), 1);
+    assert_eq!(replays[0].outcome, Outcome::Failure);
 }
 
 #[tokio::test]

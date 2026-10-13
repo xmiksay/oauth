@@ -142,6 +142,21 @@ pub async fn resolve_delegated(
     Ok(Some(out))
 }
 
+/// The scope values `resource_id` currently exposes.
+pub async fn exposed_values(
+    conn: &impl ConnectionTrait,
+    resource_id: Uuid,
+) -> anyhow::Result<Vec<String>> {
+    Ok(app_scopes::Entity::find()
+        .filter(app_scopes::Column::ApplicationId.eq(resource_id))
+        .all(conn)
+        .await
+        .context("loading resource scopes")?
+        .into_iter()
+        .map(|s| s.value)
+        .collect())
+}
+
 /// Splits stored grant scopes (codes / refresh tokens keep OIDC scopes and
 /// bare resource values in one list) into `(oidc, resource values)`.
 pub fn split_stored(scopes: &[String]) -> (Vec<String>, Vec<String>) {

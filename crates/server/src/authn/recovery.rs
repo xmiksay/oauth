@@ -1,5 +1,5 @@
 //! Recovery codes: one-time second factor. Stored as SHA-256 of the
-//! normalized code; generation lives in the `me` API (step 4), which must
+//! normalized code; generation lives in the `me` API (`api::me_mfa`), which must
 //! hash through [`hash`] so both sides normalize alike.
 
 use anyhow::Context;

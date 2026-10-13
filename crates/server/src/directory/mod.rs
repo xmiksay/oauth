@@ -1,5 +1,5 @@
 //! Directory service: tenants, users and directory roles as plain functions
-//! over a connection or transaction. HTTP handlers (M1a step 4) map
+//! over a connection or transaction. HTTP handlers (`api`) map
 //! [`DirectoryError`] into [`AppError`].
 
 pub mod builtin_apps;
@@ -13,8 +13,14 @@ use sea_orm::{DbErr, RuntimeErr, sqlx};
 use crate::error::AppError;
 
 pub(crate) use tenants::create_system_tenant;
-pub use tenants::{NewTenant, create_tenant, find_system_tenant, find_tenant_by_slug};
-pub use users::{NewUser, assign_directory_role, create_user, find_user_by_email, set_password};
+pub use tenants::{
+    NewTenant, TenantKeys, create_tenant, find_system_tenant, find_tenant_by_slug,
+    generate_tenant_keys, insert_tenant,
+};
+pub use users::{
+    NewUser, assign_directory_role, create_user, find_user_by_email, normalize_email,
+    revoke_credentials, set_password, set_password_keeping,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum DirectoryError {
@@ -62,14 +68,19 @@ fn pg_error(err: &DbErr) -> Option<&dyn sqlx::error::DatabaseError> {
 
 /// True if `err` violated the unique index / constraint named `name`
 /// (structured SQLSTATE + constraint name, not message matching).
-fn violates_unique(err: &DbErr, name: &str) -> bool {
+pub(crate) fn violates_unique(err: &DbErr, name: &str) -> bool {
     pg_error(err).is_some_and(|e| {
         e.code().as_deref() == Some(PG_UNIQUE_VIOLATION) && e.constraint() == Some(name)
     })
 }
 
-fn violates_foreign_key(err: &DbErr) -> bool {
+pub(crate) fn violates_foreign_key(err: &DbErr) -> bool {
     pg_error(err).is_some_and(|e| e.code().as_deref() == Some(PG_FOREIGN_KEY_VIOLATION))
+}
+
+/// True if `err` violated any unique index / constraint.
+pub(crate) fn violates_any_unique(err: &DbErr) -> bool {
+    pg_error(err).is_some_and(|e| e.code().as_deref() == Some(PG_UNIQUE_VIOLATION))
 }
 
 /// Invisible formatting characters (Unicode `Cf`) usable for spoofing:
@@ -96,7 +107,7 @@ fn is_invisible_format(c: char) -> bool {
 
 /// Rejects control characters (NUL can't be stored in Postgres `text` and
 /// would surface as a 500) and invisible formatting characters (spoofing).
-fn reject_control_chars(value: &str, what: &str) -> Result<(), DirectoryError> {
+pub fn reject_control_chars(value: &str, what: &str) -> Result<(), DirectoryError> {
     if value
         .chars()
         .any(|c| c.is_control() || is_invisible_format(c))
@@ -109,7 +120,7 @@ fn reject_control_chars(value: &str, what: &str) -> Result<(), DirectoryError> {
 }
 
 /// Trims and bounds a human-readable name.
-fn display_name(raw: &str, what: &str) -> Result<String, DirectoryError> {
+pub fn display_name(raw: &str, what: &str) -> Result<String, DirectoryError> {
     let name = raw.trim();
     reject_control_chars(name, &format!("{what} display name"))?;
     if name.is_empty() || name.chars().count() > 256 {

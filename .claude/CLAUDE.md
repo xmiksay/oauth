@@ -46,7 +46,8 @@ See `.env.example` (authoritative, commented). Required: `DATABASE_URL`,
 (text|json), `RUST_LOG`, `KEY_ROTATION_DAYS` (90), `KEY_PREPUBLISH_HOURS` (48),
 `SESSION_TTL_HOURS` (24), `WEB_DIST_DIR` (web/dist), `COOKIE_SECURE` (true;
 `false` only with an `http://` `PUBLIC_URL`), `TRUSTED_PROXY_HEADER` (unset).
-Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md). Parsed and validated in
+Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md); management API:
+[docs/api/management.md](../docs/api/management.md). Env vars are parsed and validated in
 `crates/server/src/config.rs`; adding a var means updating `.env.example`,
 `deploy/k8s/deploy.yml` and this list.
 
@@ -99,12 +100,31 @@ Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md). Parse
 - Background work goes in `jobs` behind `jobs::try_lock` (per-run
   `pg_try_advisory_xact_lock`) so replicas never double-run it.
 - Resource apps must not expose scope values named like OIDC scopes
-  (`openid profile email offline_access`): stored grants keep both in one
-  list (`oidc::scope::split_stored`). Step 4's scope API must reject them.
+  (`openid profile email offline_access`, any case) or `.default`: stored
+  grants keep both in one list (`oidc::scope::split_stored`);
+  `api::validate::scope_value` rejects them.
 - `identifier_uri` `api://X` is only valid when X is the app's own
   `client_id` (DB CHECK `applications_api_uri_is_own_client_id`, scheme
-  matched case-insensitively); step 4's app API should validate it up front
-  for a friendly 400 and reject a non-lowercase `api://` scheme.
+  matched case-insensitively); `api::validate::identifier_uri` checks it up
+  front (400) and rejects a non-lowercase `api://` scheme.
+- Management API (`api`, contract [docs/api/management.md](../docs/api/management.md)):
+  handlers take the `api::Caller` extractor (bearer token of the path's
+  tenant for its `management-api`), call `caller.require(Area, Access)`
+  (matrix in `authz`) first, run the mutation in ONE transaction and record
+  its audit event on that transaction (`caller.audit(&txn, …)`). Objects of
+  other tenants are 404 (always filter by `caller.tenant_id()`); body-named
+  objects that don't exist are 400 (`guard::referenced`). Lists paginate
+  with `page::fetch` (UUIDv7 keyset). Changing a user goes through
+  `guard::ensure_can_modify_user`; removing a GlobalAdmin's effect through
+  `guard::ensure_not_last_global_admin`. App writes go through
+  `app_rules` (`writable_app`, `ensure_may_manage_credentials` for secrets
+  and redirect URIs, lifetime caps, per-app caps). Authorization
+  (`caller.require…`) comes before validation and before `BEGIN`.
+  Never trust authorization data frozen in a token: app-only roles and the
+  delegated session are re-read per call (`api::auth`).
+- Audit: event types are the closed `audit::EventType` enum (add a variant,
+  never a free string); `details` carry ids, names and changed field names
+  only — never passwords, secrets, codes or tokens.
 - Cookies are `__Host-` prefixed (`__Host-oauth_sid_{tenant}`,
   `__Host-oauth_tx`, `Path=/`) — never add a `Domain` or a narrower `Path`.
 - Writes that must be atomic with token issuance (code consume, refresh

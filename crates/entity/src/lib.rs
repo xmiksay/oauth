@@ -10,6 +10,7 @@ pub mod app_role_assignments;
 pub mod app_roles;
 pub mod app_scopes;
 pub mod applications;
+pub mod audit_events;
 pub mod authorization_codes;
 pub mod client_secrets;
 pub mod consent_grants;

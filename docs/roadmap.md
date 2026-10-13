@@ -12,7 +12,9 @@
    password / TOTP + sessions + rate limiting, consent, `authorization_code` /
    `refresh_token` / `client_credentials` grants, userinfo / introspect / revoke
    / logout, background jobs (sweeper, key rotation).
-4. **`feat/m1a-management-api`** — management + `me` API, RBAC guards, audit.
+4. **`feat/m1a-management-api`** (done) — management + `me` API
+   (`/api/v1`, [contract](api/management.md)), RBAC guards, audit log with
+   retention.
 5. **`feat/m1a-web`** — login, My Account and admin UI.
 
 ## M1b — local auth extras + domains

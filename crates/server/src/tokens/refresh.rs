@@ -135,14 +135,14 @@ const MAX_REVOKE_PASSES: usize = 4;
 async fn revoke_until_stable(
     conn: &impl ConnectionTrait,
     sql: &str,
-    id: Uuid,
+    values: &[sea_orm::Value],
 ) -> anyhow::Result<()> {
     for _ in 0..MAX_REVOKE_PASSES {
         let result = conn
             .execute_raw(Statement::from_sql_and_values(
                 conn.get_database_backend(),
                 sql,
-                [id.into()],
+                values.to_vec(),
             ))
             .await
             .context("revoking refresh tokens")?;
@@ -150,8 +150,104 @@ async fn revoke_until_stable(
             return Ok(());
         }
     }
-    tracing::warn!(%id, "refresh revocation still changing rows after {MAX_REVOKE_PASSES} passes");
+    tracing::warn!("refresh revocation still changing rows after {MAX_REVOKE_PASSES} passes");
     Ok(())
+}
+
+/// Revokes every family `families_sql` (a `SELECT family_id …` over
+/// `values`) names, and the opaque access tokens minted from them.
+async fn revoke_families_where(
+    conn: &impl ConnectionTrait,
+    families_sql: &str,
+    values: &[sea_orm::Value],
+) -> anyhow::Result<()> {
+    revoke_until_stable(
+        conn,
+        &format!(
+            "UPDATE refresh_tokens SET revoked_at = now() \
+             WHERE revoked_at IS NULL AND family_id IN ({families_sql})"
+        ),
+        values,
+    )
+    .await?;
+    conn.execute_raw(Statement::from_sql_and_values(
+        conn.get_database_backend(),
+        format!(
+            "UPDATE opaque_access_tokens SET revoked_at = now() \
+             WHERE revoked_at IS NULL AND family_id IN ({families_sql})"
+        ),
+        values.to_vec(),
+    ))
+    .await
+    .context("revoking opaque tokens of revoked families")?;
+    Ok(())
+}
+
+/// A withdrawn consent grant: revokes what `client` obtained for
+/// `resource` — for one user, or (`user_id = None`, an admin grant) for
+/// everyone. Refresh families, and every opaque access token for the pair
+/// (JWTs can't be recalled; they expire).
+pub async fn revoke_grant(
+    conn: &impl ConnectionTrait,
+    tenant_id: Uuid,
+    client_app_id: Uuid,
+    resource_app_id: Uuid,
+    user_id: Option<Uuid>,
+) -> anyhow::Result<()> {
+    const MATCH: &str = "tenant_id = $1 AND application_id = $2 \
+        AND resource_application_id = $3 AND ($4::uuid IS NULL OR user_id = $4)";
+    let values = [
+        tenant_id.into(),
+        client_app_id.into(),
+        resource_app_id.into(),
+        user_id.into(),
+    ];
+    revoke_families_where(
+        conn,
+        &format!("SELECT family_id FROM refresh_tokens WHERE {MATCH}"),
+        &values,
+    )
+    .await?;
+    conn.execute_raw(Statement::from_sql_and_values(
+        conn.get_database_backend(),
+        format!("UPDATE opaque_access_tokens SET revoked_at = now() WHERE revoked_at IS NULL AND {MATCH}"),
+        values.to_vec(),
+    ))
+    .await
+    .context("revoking opaque tokens of a withdrawn grant")?;
+    Ok(())
+}
+
+/// A deleted scope: every family of `resource_app_id` whose grant holds
+/// `value`, and their opaque access tokens.
+pub async fn revoke_by_scope(
+    conn: &impl ConnectionTrait,
+    tenant_id: Uuid,
+    resource_app_id: Uuid,
+    value: &str,
+) -> anyhow::Result<()> {
+    revoke_families_where(
+        conn,
+        "SELECT family_id FROM refresh_tokens \
+         WHERE tenant_id = $1 AND resource_application_id = $2 AND $3 = ANY(scopes)",
+        &[tenant_id.into(), resource_app_id.into(), value.into()],
+    )
+    .await
+}
+
+/// A signed-out device: the refresh families started in `session_id` and
+/// their opaque access tokens.
+pub async fn revoke_by_session(
+    conn: &impl ConnectionTrait,
+    tenant_id: Uuid,
+    session_id: Uuid,
+) -> anyhow::Result<()> {
+    revoke_families_where(
+        conn,
+        "SELECT family_id FROM refresh_tokens WHERE tenant_id = $1 AND session_id = $2",
+        &[tenant_id.into(), session_id.into()],
+    )
+    .await
 }
 
 /// Revokes every refresh token of the family and the opaque access tokens
@@ -161,7 +257,7 @@ pub async fn revoke_family(conn: &impl ConnectionTrait, family_id: Uuid) -> anyh
         conn,
         "UPDATE refresh_tokens SET revoked_at = now() \
          WHERE family_id = $1 AND revoked_at IS NULL",
-        family_id,
+        &[family_id.into()],
     )
     .await?;
     opaque::revoke_where(conn, opaque_access_tokens::Column::FamilyId.eq(family_id)).await
@@ -178,7 +274,7 @@ pub async fn revoke_by_code(conn: &impl ConnectionTrait, code_id: Uuid) -> anyho
             "UPDATE refresh_tokens SET revoked_at = now() \
              WHERE revoked_at IS NULL AND family_id IN ({FAMILIES})"
         ),
-        code_id,
+        &[code_id.into()],
     )
     .await?;
     conn.execute_raw(Statement::from_sql_and_values(
