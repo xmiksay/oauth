@@ -8,7 +8,7 @@ use entity::{
 };
 use sea_orm::{
     ActiveValue::Set,
-    ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
+    ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, Statement,
     sea_query::{Expr, ExprTrait, Func, OnConflict},
 };
 use uuid::Uuid;
@@ -133,6 +133,33 @@ pub async fn set_password(
         .context("updating password")?;
     if result.rows_affected == 0 {
         return Err(DirectoryError::NotFound);
+    }
+    revoke_credentials(conn, tenant_id, user_id).await?;
+    Ok(())
+}
+
+/// A new password invalidates everything obtained with the old one: the
+/// user's browser sessions, refresh-token families and opaque access tokens
+/// (JWTs can't be recalled; they expire).
+async fn revoke_credentials(
+    conn: &impl ConnectionTrait,
+    tenant_id: Uuid,
+    user_id: Uuid,
+) -> anyhow::Result<()> {
+    for sql in [
+        "DELETE FROM sessions WHERE tenant_id = $1 AND user_id = $2",
+        "UPDATE refresh_tokens SET revoked_at = now() \
+         WHERE tenant_id = $1 AND user_id = $2 AND revoked_at IS NULL",
+        "UPDATE opaque_access_tokens SET revoked_at = now() \
+         WHERE tenant_id = $1 AND user_id = $2 AND revoked_at IS NULL",
+    ] {
+        conn.execute_raw(Statement::from_sql_and_values(
+            conn.get_database_backend(),
+            sql,
+            [tenant_id.into(), user_id.into()],
+        ))
+        .await
+        .context("revoking the user's sessions and tokens")?;
     }
     Ok(())
 }

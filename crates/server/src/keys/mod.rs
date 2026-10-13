@@ -1,6 +1,6 @@
 //! Per-tenant token signing keys: generation, sealing at rest, loading the
 //! active key and publishing JWKS. Rotation (next → active → retired) is driven
-//! by the background job in M1a step 3; this module only provides the pieces.
+//! by `jobs::rotation`; this module only provides the pieces.
 //!
 //! RSA keys are 2048-bit: universally interoperable for RS256, NIST-acceptable
 //! through 2030, and rotated every `KEY_ROTATION_DAYS` anyway, so 3072-bit's
@@ -118,9 +118,23 @@ pub async fn insert(
     key: &GeneratedKey,
     status: KeyStatus,
 ) -> anyhow::Result<signing_keys::Model> {
-    let aad = wrap::signing_key_aad(tenant_id, &key.kid);
     let now = chrono::Utc::now().fixed_offset();
+    insert_at(conn, master_key, tenant_id, key, status, now).await
+}
+
+/// [`insert`] with an explicit creation / activation time (the rotation job
+/// runs on its own clock so it can be tested without waiting days).
+pub async fn insert_at(
+    conn: &impl ConnectionTrait,
+    master_key: &[u8; 32],
+    tenant_id: Uuid,
+    key: &GeneratedKey,
+    status: KeyStatus,
+    now: chrono::DateTime<chrono::FixedOffset>,
+) -> anyhow::Result<signing_keys::Model> {
+    let aad = wrap::signing_key_aad(tenant_id, &key.kid);
     let row = signing_keys::ActiveModel {
+        created_at: Set(now),
         id: Set(Uuid::now_v7()),
         tenant_id: Set(tenant_id),
         kid: Set(key.kid.clone()),

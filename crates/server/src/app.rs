@@ -5,32 +5,53 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 
-use axum::{Router, middleware};
+use axum::{
+    Router,
+    extract::{MatchedPath, Request},
+    middleware,
+};
 use sea_orm::DatabaseConnection;
 use tower_http::trace::{DefaultOnFailure, TraceLayer};
-use tracing::Level;
+use tracing::{Level, Span};
 
-use crate::{health, metrics, spa};
+use crate::{authn, config::Config, headers, health, metrics, oidc, spa};
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: DatabaseConnection,
+    pub config: Arc<Config>,
     /// Set once startup migrations finished; gates `/readyz`.
     pub migrated: Arc<AtomicBool>,
 }
 
 impl AppState {
-    pub fn new(db: DatabaseConnection, migrated: bool) -> Self {
+    pub fn new(db: DatabaseConnection, config: Config, migrated: bool) -> Self {
         Self {
             db,
+            config: Arc::new(config),
             migrated: Arc::new(AtomicBool::new(migrated)),
         }
     }
 }
 
+/// Request span without the query string: authorize / logout URLs carry
+/// codes, `id_token_hint`s and transaction ids that must not reach logs.
+/// The route template is used when there is one (it also hides tenant
+/// slugs and transaction ids in paths).
+fn request_span(req: &Request) -> Span {
+    let path = req
+        .extensions()
+        .get::<MatchedPath>()
+        .map_or_else(|| req.uri().path(), MatchedPath::as_str);
+    tracing::info_span!("request", method = %req.method(), path = %path)
+}
+
 pub fn router(state: AppState, web_dist: &Path) -> Router {
+    let [frame, csp, referrer] = headers::security_layers();
     Router::new()
         .merge(health::router())
+        .merge(oidc::router(state.clone()))
+        .merge(authn::router(state.clone()))
         .merge(spa::router(web_dist))
         // `layer` (not `route_layer`) so fallback traffic is counted too; axum
         // applies it per route, so `MatchedPath` is still visible inside.
@@ -38,6 +59,13 @@ pub fn router(state: AppState, web_dist: &Path) -> Router {
         // Handlers log real faults at ERROR via `AppError`; the trace layer
         // would otherwise log every 5xx (including expected `/readyz` 503s)
         // at ERROR a second time.
-        .layer(TraceLayer::new_for_http().on_failure(DefaultOnFailure::new().level(Level::WARN)))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(request_span)
+                .on_failure(DefaultOnFailure::new().level(Level::WARN)),
+        )
+        .layer(frame)
+        .layer(csp)
+        .layer(referrer)
         .with_state(state)
 }

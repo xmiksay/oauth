@@ -8,7 +8,7 @@
 2. **`feat/m1a-directory`** (done) — tenants / users / groups / directory roles
    entities + migrations, `keys` module, `oauth bootstrap` CLI, built-in apps
    (`management-api`, `admin-portal`, `my-account`) on tenant creation.
-3. **`feat/m1a-oidc`** — discovery + JWKS, authorize + login transactions +
+3. **`feat/m1a-oidc`** (done) — discovery + JWKS, authorize + login transactions +
    password / TOTP + sessions + rate limiting, consent, `authorization_code` /
    `refresh_token` / `client_credentials` grants, userinfo / introspect / revoke
    / logout, background jobs (sweeper, key rotation).

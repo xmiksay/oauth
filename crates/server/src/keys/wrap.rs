@@ -62,6 +62,16 @@ pub fn signing_key_aad(tenant_id: Uuid, kid: &str) -> Vec<u8> {
     aad
 }
 
+/// AAD for a TOTP secret: `"totp"` || tenant id || user id (raw bytes). The
+/// label keeps it from ever equalling a signing-key AAD.
+pub fn totp_aad(tenant_id: Uuid, user_id: Uuid) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(4 + 32);
+    aad.extend_from_slice(b"totp");
+    aad.extend_from_slice(tenant_id.as_bytes());
+    aad.extend_from_slice(user_id.as_bytes());
+    aad
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

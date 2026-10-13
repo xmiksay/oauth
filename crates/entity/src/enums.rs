@@ -73,8 +73,36 @@ pub enum KeyStatus {
     Retired,
 }
 
-/// Values of `app_roles.allowed_member_types` (a `text[]`; the DB CHECK also
-/// allows `user`).
+/// Values of `app_roles.allowed_member_types` (a `text[]` with a matching
+/// DB CHECK).
 pub mod member_type {
+    pub const USER: &str = "user";
     pub const APPLICATION: &str = "application";
+}
+
+/// Next step of a login transaction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter, DeriveActiveEnum)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
+pub enum LoginStage {
+    #[sea_orm(string_value = "password")]
+    Password,
+    /// Second factor: TOTP or a recovery code.
+    #[sea_orm(string_value = "mfa")]
+    Mfa,
+    #[sea_orm(string_value = "change_password")]
+    ChangePassword,
+    #[sea_orm(string_value = "consent")]
+    Consent,
+}
+
+impl LoginStage {
+    /// Wire name used by the login JSON API.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Password => "password",
+            Self::Mfa => "mfa",
+            Self::ChangePassword => "change_password",
+            Self::Consent => "consent",
+        }
+    }
 }

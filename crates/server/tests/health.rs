@@ -21,7 +21,7 @@ async fn probes_against_real_database() {
     let pg = common::start_postgres().await;
     let conn = db::connect(&pg.url).await.unwrap();
 
-    let state = AppState::new(conn, false);
+    let state = AppState::new(conn, common::test_config(&pg.url), false);
     let app = app::router(state.clone(), common::no_web_dist());
 
     assert_eq!(common::get(&app, "/healthz").await.0, StatusCode::OK);
@@ -43,7 +43,11 @@ async fn probes_against_real_database() {
 #[tokio::test]
 async fn readyz_fails_when_database_unreachable() {
     let app = app::router(
-        AppState::new(DatabaseConnection::default(), true),
+        AppState::new(
+            DatabaseConnection::default(),
+            common::test_config("postgres://unused"),
+            true,
+        ),
         common::no_web_dist(),
     );
     // Liveness must not depend on the database, or k8s restarts healthy pods

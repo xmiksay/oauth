@@ -25,6 +25,8 @@ data:
   KEY_ROTATION_DAYS: "90"
   KEY_PREPUBLISH_HOURS: "48"
   SESSION_TTL_HOURS: "24"
+  # The ingress appends the client address; its right-most entry is trusted.
+  TRUSTED_PROXY_HEADER: "X-Forwarded-For"
 ---
 apiVersion: apps/v1
 kind: Deployment

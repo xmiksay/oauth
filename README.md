@@ -29,6 +29,7 @@ make bootstrap ADMIN_EMAIL=you@example.com            # RESET=1 re-issues the pa
 
 ## Docs
 
-- [Architecture](docs/architecture.md)
+- [Architecture](docs/architecture.md) — endpoints, flows, token formats, jobs
+- [Login JSON API](docs/api/authn.md) — contract for the login SPA
 - [Roadmap](docs/roadmap.md)
 - Deployment: [`deploy/k8s/deploy.yml`](deploy/k8s/deploy.yml), `Dockerfile`

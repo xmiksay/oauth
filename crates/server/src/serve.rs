@@ -1,6 +1,6 @@
 //! `oauth serve`: startup sequence and graceful shutdown.
 
-use std::{path::Path, sync::atomic::Ordering};
+use std::{net::SocketAddr, path::Path, sync::atomic::Ordering};
 
 use anyhow::Context;
 use axum::Router;
@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     app::{self, AppState},
     config::{Config, LogFormat},
-    db, metrics,
+    db, jobs, metrics,
 };
 
 pub fn init_tracing(format: LogFormat) -> anyhow::Result<()> {
@@ -44,7 +44,7 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
             app: app_listener,
             metrics: metrics_listener,
         },
-        AppState::new(db, false),
+        AppState::new(db, config.clone(), false),
         &config.web_dist_dir,
         metrics::router(metrics_handle),
         shutdown,
@@ -69,8 +69,12 @@ pub async fn run_with(
 ) -> anyhow::Result<()> {
     // Serve before migrating: while a replica waits for the migration lock,
     // `/healthz` keeps it alive and `/readyz` keeps it out of the Service.
-    let app = axum::serve(listeners.app, app::router(state.clone(), web_dist))
-        .with_graceful_shutdown(shutdown.clone().cancelled_owned());
+    // Connect info gives handlers the peer address (rate limiting).
+    let app = axum::serve(
+        listeners.app,
+        app::router(state.clone(), web_dist).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown.clone().cancelled_owned());
     let metrics_srv = axum::serve(listeners.metrics, metrics_router)
         .with_graceful_shutdown(shutdown.clone().cancelled_owned());
     let servers = tokio::spawn({
@@ -95,6 +99,14 @@ pub async fn run_with(
         Some(Ok(())) => {
             state.migrated.store(true, Ordering::Release);
             tracing::info!("migrations applied; ready");
+            // Jobs need the schema, so they start only now.
+            let jobs = jobs::spawn(state.clone(), shutdown.clone());
+            let result = join(servers).await;
+            shutdown.cancel();
+            if let Err(err) = jobs.await {
+                tracing::warn!(error = %err, "background jobs task panicked");
+            }
+            return result;
         }
         Some(Err(err)) => {
             // Never linger unready forever: stop serving and exit non-zero.

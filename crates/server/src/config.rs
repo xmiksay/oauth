@@ -39,6 +39,12 @@ pub struct Config {
     pub key_prepublish_hours: u32,
     pub session_ttl_hours: u32,
     pub web_dist_dir: PathBuf,
+    /// `false` only for plain-http local development: drops the cookies'
+    /// `Secure` attribute and `__Host-` name prefix.
+    pub cookie_secure: bool,
+    /// Header carrying the client address set by a trusted reverse proxy
+    /// (e.g. `X-Forwarded-For`); `None` = use the socket peer address.
+    pub trusted_proxy_header: Option<String>,
 }
 
 // Hand-written so secrets never reach logs through `{:?}`.
@@ -55,6 +61,8 @@ impl fmt::Debug for Config {
             .field("key_prepublish_hours", &self.key_prepublish_hours)
             .field("session_ttl_hours", &self.session_ttl_hours)
             .field("web_dist_dir", &self.web_dist_dir)
+            .field("cookie_secure", &self.cookie_secure)
+            .field("trusted_proxy_header", &self.trusted_proxy_header)
             .finish()
     }
 }
@@ -106,6 +114,10 @@ impl Config {
             web_dist_dir: get("WEB_DIST_DIR")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("web/dist")),
+            cookie_secure: parsed("COOKIE_SECURE", get("COOKIE_SECURE"), true)?,
+            trusted_proxy_header: get("TRUSTED_PROXY_HEADER")
+                .map(|h| parse_header_name(&h))
+                .transpose()?,
         };
         config.validate()?;
         Ok(config)
@@ -129,8 +141,53 @@ impl Config {
         if u64::from(self.key_prepublish_hours) >= u64::from(self.key_rotation_days) * 24 {
             bail!("KEY_PREPUBLISH_HOURS must be shorter than KEY_ROTATION_DAYS");
         }
+        if !self.cookie_secure && self.public_url.starts_with("https://") {
+            bail!("COOKIE_SECURE=false is only allowed with an http:// PUBLIC_URL");
+        }
         Ok(())
     }
+
+    /// `scheme://host[:port]` of [`Self::public_url`]: the only `Origin`
+    /// accepted by the login JSON API.
+    pub fn public_origin(&self) -> &str {
+        let after_scheme = self.public_url.find("://").map_or(0, |i| i + 3);
+        match self
+            .public_url
+            .get(after_scheme..)
+            .and_then(|r| r.find('/'))
+        {
+            Some(slash) => self
+                .public_url
+                .get(..after_scheme + slash)
+                .unwrap_or(&self.public_url),
+            None => &self.public_url,
+        }
+    }
+
+    /// Path part of [`Self::public_url`] (empty or `/prefix`), for cookie paths.
+    pub fn public_path_prefix(&self) -> &str {
+        self.public_url
+            .get(self.public_origin().len()..)
+            .unwrap_or("")
+    }
+
+    /// OIDC issuer of a tenant.
+    pub fn issuer(&self, tenant_slug: &str) -> String {
+        format!("{}/{tenant_slug}", self.public_url)
+    }
+}
+
+/// Lower-cased HTTP header name (token characters only).
+fn parse_header_name(raw: &str) -> anyhow::Result<String> {
+    let name = raw.trim().to_ascii_lowercase();
+    let valid = !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    if !valid {
+        bail!("TRUSTED_PROXY_HEADER: `{raw}` is not a valid header name");
+    }
+    Ok(name)
 }
 
 fn parse_public_url(raw: &str) -> anyhow::Result<String> {
@@ -191,6 +248,35 @@ mod tests {
         assert_eq!(cfg.key_prepublish_hours, 48);
         assert_eq!(cfg.session_ttl_hours, 24);
         assert_eq!(cfg.web_dist_dir, PathBuf::from("web/dist"));
+        assert!(cfg.cookie_secure);
+        assert_eq!(cfg.trusted_proxy_header, None);
+    }
+
+    #[test]
+    fn public_url_parts() {
+        let mut env = base_env();
+        let cfg = parse(&env).unwrap();
+        assert_eq!(cfg.public_origin(), "https://id.example.com");
+        assert_eq!(cfg.public_path_prefix(), "");
+        assert_eq!(cfg.issuer("contoso"), "https://id.example.com/contoso");
+        env.insert("PUBLIC_URL", "http://localhost:8080/idp/".into());
+        env.insert("COOKIE_SECURE", "false".into());
+        env.insert("TRUSTED_PROXY_HEADER", " X-Forwarded-For ".into());
+        let cfg = parse(&env).unwrap();
+        assert_eq!(cfg.public_origin(), "http://localhost:8080");
+        assert_eq!(cfg.public_path_prefix(), "/idp");
+        assert!(!cfg.cookie_secure);
+        assert_eq!(cfg.trusted_proxy_header.as_deref(), Some("x-forwarded-for"));
+    }
+
+    #[test]
+    fn insecure_cookies_need_plain_http() {
+        let mut env = base_env();
+        env.insert("COOKIE_SECURE", "false".into());
+        assert!(parse(&env).is_err());
+        env.insert("TRUSTED_PROXY_HEADER", "X Forwarded".into());
+        env.insert("PUBLIC_URL", "http://localhost".into());
+        assert!(parse(&env).is_err());
     }
 
     #[test]

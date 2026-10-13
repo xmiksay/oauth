@@ -13,6 +13,8 @@ pub struct Model {
     pub secret_enc: Vec<u8>,
     pub created_at: DateTimeWithTimeZone,
     pub confirmed_at: Option<DateTimeWithTimeZone>,
+    /// Last accepted TOTP time step; a code is never accepted twice.
+    pub last_used_step: Option<i64>,
 }
 
 impl std::fmt::Debug for Model {
@@ -23,6 +25,7 @@ impl std::fmt::Debug for Model {
             .field("secret_enc", &"<redacted>")
             .field("created_at", &self.created_at)
             .field("confirmed_at", &self.confirmed_at)
+            .field("last_used_step", &self.last_used_step)
             .finish()
     }
 }

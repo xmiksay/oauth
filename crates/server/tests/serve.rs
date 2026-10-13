@@ -63,7 +63,7 @@ async fn serves_before_migrating_and_turns_ready_after() {
     let (listeners, addr) = listeners().await;
     let shutdown = CancellationToken::new();
     let server = tokio::spawn({
-        let state = AppState::new(conn.clone(), false);
+        let state = AppState::new(conn.clone(), common::test_config(&pg.url), false);
         let shutdown = shutdown.clone();
         async move {
             serve::run_with(
@@ -119,7 +119,7 @@ async fn migration_failure_stops_the_server_with_an_error() {
         Duration::from_secs(20),
         serve::run_with(
             listeners,
-            AppState::new(conn, false),
+            AppState::new(conn, common::test_config(&url), false),
             common::no_web_dist(),
             Router::new(),
             shutdown.clone(),

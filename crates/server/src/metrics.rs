@@ -16,6 +16,28 @@ use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 
 pub const HTTP_REQUESTS_TOTAL: &str = "http_requests_total";
 pub const HTTP_REQUEST_DURATION: &str = "http_request_duration_seconds";
+pub const LOGINS_TOTAL: &str = "oauth_logins_total";
+pub const TOKENS_ISSUED_TOTAL: &str = "oauth_tokens_issued_total";
+pub const TOKEN_ERRORS_TOTAL: &str = "oauth_token_errors_total";
+
+// Label values below are `&'static str` from closed sets on purpose: callers
+// cannot pass request data, so cardinality stays bounded.
+
+/// `outcome`: success | invalid_credentials | mfa_failed | disabled | rate_limited.
+pub fn login(outcome: &'static str) {
+    metrics::counter!(LOGINS_TOTAL, "outcome" => outcome).increment(1);
+}
+
+/// `grant`: authorization_code | refresh_token | client_credentials;
+/// `format`: jwt | opaque.
+pub fn token_issued(grant: &'static str, format: &'static str) {
+    metrics::counter!(TOKENS_ISSUED_TOTAL, "grant" => grant, "format" => format).increment(1);
+}
+
+/// `error`: an RFC 6749 §5.2 error code (`oidc::error::ErrorCode`).
+pub fn token_error(error: &'static str) {
+    metrics::counter!(TOKEN_ERRORS_TOTAL, "error" => error).increment(1);
+}
 
 /// Installs the global recorder. Call once per process; tests skip it, in which
 /// case the `metrics` macros are no-ops.

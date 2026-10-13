@@ -10,11 +10,17 @@ pub mod app_role_assignments;
 pub mod app_roles;
 pub mod app_scopes;
 pub mod applications;
+pub mod authorization_codes;
 pub mod client_secrets;
 pub mod consent_grants;
 pub mod directory_role_assignments;
 pub mod group_members;
 pub mod groups;
+pub mod login_transactions;
+pub mod opaque_access_tokens;
+pub mod rate_limit_buckets;
+pub mod refresh_tokens;
+pub mod sessions;
 pub mod signing_keys;
 pub mod tenants;
 pub mod user_recovery_codes;
@@ -61,6 +67,7 @@ mod tests {
                     secret_enc: bytes.clone(),
                     created_at: now(),
                     confirmed_at: None,
+                    last_used_step: None,
                 }
             ),
             format!(

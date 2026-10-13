@@ -24,7 +24,11 @@ use tower::ServiceExt;
 async fn requests_are_counted_with_bounded_labels() {
     let handle = metrics::install().unwrap();
     let app = app::router(
-        AppState::new(DatabaseConnection::default(), true),
+        AppState::new(
+            DatabaseConnection::default(),
+            common::test_config("postgres://unused"),
+            true,
+        ),
         common::no_web_dist(),
     );
     common::get(&app, "/healthz").await;
@@ -38,7 +42,23 @@ async fn requests_are_counted_with_bounded_labels() {
         .unwrap();
     app.clone().oneshot(custom).await.unwrap();
 
+    metrics::login("success");
+    metrics::token_issued("authorization_code", "jwt");
+    metrics::token_error("invalid_grant");
+
     let (status, body) = common::get(&metrics::router(handle), "/metrics").await;
+    assert!(
+        body.contains(r#"oauth_logins_total{outcome="success"} 1"#),
+        "{body}"
+    );
+    assert!(
+        body.contains(r#"oauth_tokens_issued_total{grant="authorization_code",format="jwt"} 1"#),
+        "{body}"
+    );
+    assert!(
+        body.contains(r#"oauth_token_errors_total{error="invalid_grant"} 1"#),
+        "{body}"
+    );
     assert_eq!(status, StatusCode::OK);
     assert!(
         body.contains(r#"http_requests_total{method="GET",path="/healthz",status="200"} 2"#),

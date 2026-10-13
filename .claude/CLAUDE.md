@@ -44,7 +44,9 @@ See `.env.example` (authoritative, commented). Required: `DATABASE_URL`,
 `PUBLIC_URL`, `OAUTH_MASTER_KEY` (32 bytes base64). Optional with defaults:
 `LISTEN_ADDR` (0.0.0.0:8080), `METRICS_ADDR` (0.0.0.0:9090), `LOG_FORMAT`
 (text|json), `RUST_LOG`, `KEY_ROTATION_DAYS` (90), `KEY_PREPUBLISH_HOURS` (48),
-`SESSION_TTL_HOURS` (24), `WEB_DIST_DIR` (web/dist). Parsed and validated in
+`SESSION_TTL_HOURS` (24), `WEB_DIST_DIR` (web/dist), `COOKIE_SECURE` (true;
+`false` only with an `http://` `PUBLIC_URL`), `TRUSTED_PROXY_HEADER` (unset).
+Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md). Parsed and validated in
 `crates/server/src/config.rs`; adding a var means updating `.env.example`,
 `deploy/k8s/deploy.yml` and this list.
 
@@ -86,7 +88,30 @@ See `.env.example` (authoritative, commented). Required: `DATABASE_URL`,
   hashes / sealed keys and `bootstrap::OneTimePassword` hand-write a
   redacting `Debug`. SeaORM still derives `Debug` on every `ActiveModel`, so
   never log (`?`/`{:?}`) an `ActiveModel` of `users`, `user_totp`,
-  `user_recovery_codes`, `client_secrets` or `signing_keys`.
+  `user_recovery_codes`, `client_secrets`, `signing_keys`, `sessions`,
+  `authorization_codes`, `refresh_tokens` or `opaque_access_tokens`.
+- Bearer values (cookies, codes, tokens) come from `secret::random_token`
+  and are stored only as `secret::hash`; unguessable handles from
+  `secret::random_uuid` (not UUIDv7).
+- Protocol errors: `oidc::error::OAuthError` (RFC 6749 JSON); login API:
+  `authn::AuthnError`. Never redirect to a `redirect_uri` before it matched
+  the client's registration.
+- Background work goes in `jobs` behind `jobs::try_lock` (per-run
+  `pg_try_advisory_xact_lock`) so replicas never double-run it.
+- Resource apps must not expose scope values named like OIDC scopes
+  (`openid profile email offline_access`): stored grants keep both in one
+  list (`oidc::scope::split_stored`). Step 4's scope API must reject them.
+- `identifier_uri` `api://X` is only valid when X is the app's own
+  `client_id` (DB CHECK `applications_api_uri_is_own_client_id`, scheme
+  matched case-insensitively); step 4's app API should validate it up front
+  for a friendly 400 and reject a non-lowercase `api://` scheme.
+- Cookies are `__Host-` prefixed (`__Host-oauth_sid_{tenant}`,
+  `__Host-oauth_tx`, `Path=/`) — never add a `Domain` or a narrower `Path`.
+- Writes that must be atomic with token issuance (code consume, refresh
+  rotation, login completion) run in one DB transaction; keep new service
+  code generic over `ConnectionTrait` so it can join one.
+- Never log request query strings (they carry codes / hints / tx ids);
+  `app::request_span` logs the route template.
 - Each file ≤ 400 lines. Backend changes ship with unit tests (`#[cfg(test)]`)
   and integration tests (`crates/server/tests/`, in-process router + testcontainers).
 - Branches `feat/m1a-*` per roadmap step, ff-only onto `main`; `make lint` and
