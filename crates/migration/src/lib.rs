@@ -24,6 +24,7 @@ mod m20261013_000003_signing_keys;
 mod m20261013_000004_oidc;
 mod m20261013_000005_audit;
 mod m20261014_000006_email;
+mod m20261014_000007_webauthn;
 
 pub struct Migrator;
 
@@ -37,6 +38,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261013_000004_oidc::Migration),
             Box::new(m20261013_000005_audit::Migration),
             Box::new(m20261014_000006_email::Migration),
+            Box::new(m20261014_000007_webauthn::Migration),
         ]
     }
 }

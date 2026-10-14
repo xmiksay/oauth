@@ -33,7 +33,7 @@ Spawned by `serve::run_with` after migrations; stop on the shutdown token (a run
 
 | Job | Every | Does |
 |---|---|---|
-| `sweeper` | 60 s | `DELETE … WHERE expires_at < now()` on `login_transactions`, `authorization_codes`, `sessions`, `refresh_tokens`, `opaque_access_tokens`, `rate_limit_buckets`, `outbox`, `email_tokens`, `known_devices` (readers already ignore expired rows; this bounds growth), and `audit_events` older than their tenant's `audit_retention_days` |
+| `sweeper` | 60 s | `DELETE … WHERE expires_at < now()` on `login_transactions`, `authorization_codes`, `sessions`, `refresh_tokens`, `opaque_access_tokens`, `rate_limit_buckets`, `outbox`, `email_tokens`, `known_devices`, `webauthn_challenges` (readers already ignore expired rows; this bounds growth), and `audit_events` older than their tenant's `audit_retention_days` |
 | `rotation` | 5 min | Per (tenant, alg), each tenant in its own transaction (one failing tenant doesn't block the others) while the run's lock transaction holds the leader lock: `KEY_PREPUBLISH_HOURS` before the active key is `KEY_ROTATION_DAYS` old, publish a `next` key (in JWKS, not signing); once it has been published that long, retire the active key (`expires_at` = now + the tenant's longest access-token TTL, min 1 h, + 1 h) and activate the next one — retire first, in one transaction, because the partial unique indexes allow one active key per (tenant, alg) per statement. Runs on an explicit `now` (tests move the clock) |
 | `outbox` | 10 s | Only with SMTP configured. Claim-then-send: a short transaction (holding the job lock) leases up to 8 due `email` messages (`attempts + 1`, `next_attempt_at = now + 10 min`, `SKIP LOCKED`; 8 × 60 s + 30 s skew margin < 10 min is a compile-time check), then each is sent outside any transaction (60 s per send) — never starting a send that could end within 30 s of the lease's end, skipping a row whose lease was taken over — and recorded with its own statement fenced on the claimed `(attempts, next_attempt_at)`: sent / backoff 1 m, 5 m, 30 m, 2 h, then 6 h / dead after 8 attempts or a permanent rejection (bodies of sent and dead rows dropped, enforced by a CHECK), times taken at the outcome. Rows a run stops before (shutdown — checked between messages — or the deadline) are released (due now, attempt undone); after a crash they retry after the lease. A message past its `expires_at` is never attempted again. Each job run is its own task, so a panic is logged and the loop goes on. Logs carry id, kind and error kind only. Explicit clock. Details in [email.md](email.md#delivery) |
 
@@ -69,8 +69,8 @@ proxy sits in front; the server ignores the forwarded host either way).
 | `POST /oauth2/introspect` (RFC 7662) | app | `oidc::introspect` |
 | `POST /oauth2/revoke` (RFC 7009) | app | `oidc::revoke` |
 | `GET /oauth2/logout` (RP-initiated), `POST` (confirmation page, CSRF-checked) | app | `oidc::logout` |
-| `GET /api/authn/tx/{id}`, `POST …/{password,totp,recovery,change-password,consent}` — login JSON API, contract in [api/authn.md](api/authn.md) | app | `authn` |
-| `POST /api/authn/password-reset`, `POST /api/authn/email/{verify,reset,invite}` — email links (the token is the credential), same contract | app | `authn::{reset,email}` |
+| `GET /api/authn/tx/{id}`, `POST …/{password,totp,recovery,passkey/options,passkey,change-password,consent}` — login JSON API, contract in [api/authn.md](api/authn.md) | app | `authn` |
+| `POST /api/authn/password-reset`, `POST /api/authn/email/{verify,reset,invite,invite/passkey/options,invite/passkey}` — email links (the token is the credential), same contract | app | `authn::{reset,email}` |
 | `/api/v1/{settings,users,groups,directory-roles,applications,role-assignments,consents,audit-events}[/…]`, `/api/v1/me[/…]`, and on the system host only `/api/v1/tenants[/{slug}]` (system Global Admins) — management REST API, bearer tokens for the host tenant's `management-api`; contract in [api/management.md](api/management.md) | app | `api` |
 | `/{login,logout,myaccount,admin}[/…]` → `index.html` (incl. the public link pages `/login/reset`, `/login/invite`, `/myaccount/verify-email`) | app | `spa` |
 | any other path → static file from `WEB_DIST_DIR`, else 404 | app | `spa` |
@@ -101,11 +101,13 @@ Implemented:
 | `oidc` | Protocol endpoints; `params` (duplicate-rejecting form/query parsing, `AuthRequest`), `pkce`, `redirect` (matching + building), `scope` (parsing, resource resolution), `client_auth`, `error` (`OAuthError`, RFC 6749 JSON + `WWW-Authenticate`, `no-store`) |
 | `mail` | `Mailer` trait (`Email`, `MailError` transient/permanent) + `SmtpMailer` (lettre, rustls on AWS-LC, webpki roots, 15 s command timeout); `templates` (plain-text link messages and security notices); `outbox` (`enqueue` on the caller's transaction, body sealed, backoff schedule); `tokens` (email link tokens: issue voids the user's older ones of that purpose, atomic single-use `consume` scoped to the tenant); `links::send` (token + message + outbox row) |
 | `notify` | Security notices (`notify::event`, `email_changed` to the old address) honouring `notification_prefs` (no row = on); email only to a verified address |
-| `authn` | Login JSON API + CSRF guard (`AuthnError`, `JsonBody`), `cookie` (session, tx-binding and device cookies), `device` (known devices + new sign-in notice), `reset` (password-reset request / completion), `email` (verify / invite link redemption), `ctx`, `tx` (login transactions + browser binding + view), `password`, `mfa` (TOTP / recovery), `complete` (next step, consent, session + code), `session` (cookie), `totp` (RFC 6238 via AWS-LC HMAC, sealed secret, replay-protected step), `recovery`, `rate_limit`, `ip` |
+| `authn` | Login JSON API + CSRF guard (`AuthnError`, `JsonBody`), `passkey` (passkey sign-in), `invite_passkey` (invitation accepted with a passkey), `cookie` (session, tx-binding and device cookies), `device` (known devices + new sign-in notice), `reset` (password-reset request / completion), `email` (verify / invite link redemption), `ctx`, `tx` (login transactions + browser binding + view), `password`, `mfa` (TOTP / recovery), `complete` (next step, consent, session + code), `session` (cookie), `totp` (RFC 6238 via AWS-LC HMAC, sealed secret, replay-protected step), `recovery`, `rate_limit`, `ip` |
 | `consent` | Pure evaluation (granted / needs user / needs admin) + grant lookup / merge-upsert |
 | `tokens` | Issuance (`issue_delegated`, `issue_app_only`), `inspect` (access-token resolution incl. user-disabled check), `claims` (pure builders), `jwt` (sign with active key, verify against published keys + `typ`), `opaque`, `refresh` (family state machine, rotation, revocation), `code`, `principal` (groups, roles) |
 | `jobs` | `sweeper` (incl. audit retention), `rotation`, `outbox` (email delivery), leader lock helper |
-| `api` | Management REST API: `auth` (`Caller` / `SystemAdmin` bearer extractors), `guard` (administrator protection, last-GlobalAdmin lock), `page` (UUIDv7 keyset pagination), `validate` (client ids, redirect / identifier URIs, scope values), `app_rules` (app lookup + row lock, built-in protection, credential protection of privileged apps, lifetime and per-app caps), `extract` (JSON-error extractors), one module per resource (`tenants`, `users`, `user_actions`, `user_invite`, `groups`, `directory_roles`, `applications`, `apps_secrets`, `apps_scopes`, `apps_roles`, `apps_permissions`, `role_assignments`, `consents`, `audit_events`, `me`, `me_mfa`, `me_email`) |
+| `api` | Management REST API: `auth` (`Caller` / `SystemAdmin` bearer extractors), `guard` (administrator protection, last-GlobalAdmin lock), `page` (UUIDv7 keyset pagination), `validate` (client ids, redirect / identifier URIs, scope values), `app_rules` (app lookup + row lock, built-in protection, credential protection of privileged apps, lifetime and per-app caps), `extract` (JSON-error extractors), one module per resource (`tenants`, `users`, `user_actions`, `user_invite`, `groups`, `directory_roles`, `applications`, `apps_secrets`, `apps_scopes`, `apps_roles`, `apps_permissions`, `role_assignments`, `consents`, `audit_events`, `me`, `me_mfa`, `me_email`, `me_passkeys`, `user_passkeys`), `reauth` (password-or-passkey re-authentication) |
+| `webauthn` | Own WebAuthn verifier on AWS-LC + `ciborium`: `cbor`, `authdata`, `cose`, `client_data`, `register`, `assert` — see [passkeys.md](passkeys.md) |
+| `passkey` | Passkey ceremonies over the DB: `challenge` (single-use, 5 min), `store` (credentials, user handle, last-method rule), `wire` (browser JSON, options) |
 | `authz` | Pure permission matrix (directory roles, `Directory.Read.All` / `ReadWrite.All`) and administrator protection |
 | `audit` | Closed `EventType` set, `record` (on the mutation's transaction), `token_replay`, retention `sweep` |
 
@@ -123,6 +125,7 @@ for the database TLS connection; that is the TLS stack's choice, not ours.)
 | TOTP | HMAC-SHA-1 (AWS-LC), 6 digits, 30 s, ±1 step, last used step stored (no replay) |
 | PKCE | S256 only, required for every client |
 | `kid` | RFC 7638 JWK thumbprint (SHA-256) |
+| Passkeys | WebAuthn assertions verified with AWS-LC (ES256 P-256, EdDSA Ed25519, RS256 ≥ 2048 bits); challenges stored as SHA-256 — [passkeys.md](passkeys.md) |
 | Passwords | argon2id (`argon2` crate), OWASP params m = 19 MiB, t = 2, p = 1; salt and one-time passwords from AWS-LC's RNG |
 
 The `rsa` crate (RUSTSEC-2023-0071, Marvin timing attack) is deliberately
@@ -146,7 +149,8 @@ migration transaction). Deleting a tenant cascades to everything it owns.
 | Table | Notes |
 |---|---|
 | `tenants` | `slug` unique (`^[a-z0-9][a-z0-9-]{1,62}$`, reserved list in `directory::slug`), `is_system` (at most one), `disabled`, `audit_retention_days` |
-| `users` | `user_type` member\|guest, `email` unique per tenant on `lower(email)` (casing kept), `password_hash` (argon2id PHC, nullable), `must_change_password`, `disabled`, `first_device_at` (first sign-in device recorded) |
+| `users` | `user_type` member\|guest, `email` unique per tenant on `lower(email)` (casing kept), `password_hash` (argon2id PHC, nullable), `must_change_password`, `disabled`, `first_device_at` (first sign-in device recorded), `webauthn_handle` (random 32-byte WebAuthn user handle) |
+| `webauthn_credentials` · `webauthn_challenges` | passkeys (credential id unique per tenant, COSE key, counter, backup flags) and single-use 5-min ceremony challenges — [passkeys.md](passkeys.md) |
 | `user_totp` · `user_recovery_codes` | sealed TOTP secret + `confirmed_at`; SHA-256 code hashes + `used_at` |
 | `groups` · `group_members` | static groups; members are users |
 | `directory_role_assignments` | (user, role) unique; role GlobalAdmin\|ApplicationAdmin\|UserAdmin |
@@ -258,7 +262,8 @@ need no consent (grants are keyed by a resource app).
 | ID token | JWT signed with the **client** app's `signing_alg`, `typ: JWT`, 1 h | `aud = client_id`, `azp`, `nonce`, `auth_time`, `amr`, `sid`, `oid`, `tid`, `at_hash`, `ver`, plus `name preferred_username` (profile) and `email email_verified` (email) |
 | Refresh | opaque, rotating | — |
 
-`amr`: `["pwd"]`, or `["pwd","otp","mfa"]` after a TOTP or recovery code.
+`amr`: `["pwd"]`, `["pwd","otp","mfa"]` after a TOTP or recovery code, `["pwd","hwk"|"swk","mfa"]`
+after a passkey as second factor, `["hwk"|"swk","user","mfa"]` for a passwordless passkey sign-in.
 Opaque access tokens store the same claim set as `claims` jsonb. JWT
 verification (userinfo, introspection, `id_token_hint`) accepts only keys the
 tenant still publishes and checks `typ`, so ID tokens can't pose as access
@@ -367,6 +372,10 @@ never re-mints a scope the resource no longer exposes.
 ## Email
 
 Optional; flows, links, tokens and notices in [email.md](email.md).
+
+## Passkeys
+
+WebAuthn verifier, state, flows and policy in [passkeys.md](passkeys.md).
 
 ## Frontend (`web/`)
 

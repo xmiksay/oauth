@@ -3,6 +3,8 @@ import { computed, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useTenantStore } from '@/stores/tenant'
 import { authn } from '@/api/authn'
+import { ApiError } from '@/api/client'
+import { PasskeyCancelled, createPasskey, passkeysSupported } from '@/webauthn'
 import { PASSWORD_MIN, passwordProblem } from '@/lib/format'
 import AuthCard from '@/components/AuthCard.vue'
 import ErrorAlert from '@/components/ErrorAlert.vue'
@@ -18,7 +20,9 @@ const password = ref('')
 const confirm = ref('')
 const busy = ref(false)
 const error = ref<string | null>(token ? null : INVALID_LINK)
-const done = ref(false)
+const done = ref<'password' | 'passkey' | null>(null)
+const cancelled = ref(false)
+const offerPasskey = props.mode === 'invite' && passkeysSupported()
 // A dead link can't be retried, so the form goes away with it.
 const dead = computed(() => error.value === INVALID_LINK)
 
@@ -40,6 +44,12 @@ const text = computed(() =>
       },
 )
 
+const doneText = computed(() =>
+  done.value === 'passkey'
+    ? 'Your passkey is created and your email address is verified. Return to the application and sign in with your passkey.'
+    : text.value.done,
+)
+
 async function submit() {
   if (!token || busy.value) return
   error.value = passwordProblem(password.value, confirm.value)
@@ -49,13 +59,32 @@ async function submit() {
     await (props.mode === 'reset'
       ? authn.resetPassword(token, password.value)
       : authn.acceptInvite(token, password.value))
-    done.value = true
+    done.value = 'password'
   } catch (err) {
     error.value = linkError(err)
   } finally {
     busy.value = false
     password.value = ''
     confirm.value = ''
+  }
+}
+
+async function createInstead() {
+  if (!token || busy.value) return
+  busy.value = true
+  error.value = null
+  cancelled.value = false
+  try {
+    const credential = await createPasskey(await authn.invitePasskeyOptions(token))
+    await authn.acceptInviteWithPasskey(token, credential)
+    done.value = 'passkey'
+  } catch (err) {
+    if (err instanceof PasskeyCancelled) cancelled.value = true
+    else if (err instanceof ApiError && err.code === 'invalid_request')
+      error.value = "That passkey couldn't be registered."
+    else error.value = typeof err === 'string' ? err : linkError(err)
+  } finally {
+    busy.value = false
   }
 }
 </script>
@@ -71,7 +100,7 @@ async function submit() {
       aria-live="polite"
     >
       <p class="text-sm">
-        {{ text.done }}
+        {{ doneText }}
       </p>
       <RouterLink
         :to="{ name: 'myaccount' }"
@@ -137,6 +166,25 @@ async function submit() {
       >
         {{ text.submit }}
       </button>
+      <template v-if="offerPasskey">
+        <p class="muted text-center text-xs">
+          or
+        </p>
+        <button
+          type="button"
+          class="btn w-full"
+          :disabled="busy"
+          @click="createInstead"
+        >
+          Create a passkey instead
+        </button>
+        <p
+          role="status"
+          class="muted text-sm"
+        >
+          {{ cancelled ? 'Passkey creation was cancelled.' : '' }}
+        </p>
+      </template>
     </form>
   </AuthCard>
 </template>

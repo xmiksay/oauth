@@ -49,7 +49,13 @@ export interface User {
 
 export interface UserDetail extends User {
   directory_roles: DirectoryRole[]
-  mfa: { totp: boolean; totp_pending: boolean; recovery_codes_remaining: number }
+  /** `passkeys`: how many passkeys the user has registered. */
+  mfa: {
+    totp: boolean
+    totp_pending: boolean
+    recovery_codes_remaining: number
+    passkeys: number
+  }
 }
 
 /** `GET` / `PATCH me`: the caller's own `UserDetail` plus what the server offers. */
@@ -241,3 +247,70 @@ export interface TotpEnrollment {
 export interface RecoveryCodes {
   recovery_codes: string[]
 }
+
+export interface Passkey {
+  id: string
+  name: string
+  created_at: string
+  last_used_at: string | null
+  backup_eligible: boolean
+  /** Synced to a cloud keychain (else bound to one device). */
+  backup_state: boolean
+  transports: string[]
+  aaguid: string
+}
+
+// WebAuthn wire shapes: every binary value is base64url without padding.
+
+export interface PasskeyDescriptor {
+  type: 'public-key'
+  id: string
+  transports?: string[]
+}
+
+/** Server reply that starts a registration (`navigator.credentials.create`). */
+export interface PasskeyCreationOptions {
+  publicKey: {
+    challenge: string
+    rp: { id?: string; name: string }
+    user: { id: string; name: string; displayName: string }
+    pubKeyCredParams: { type: 'public-key'; alg: number }[]
+    timeout?: number
+    attestation?: AttestationConveyancePreference
+    authenticatorSelection?: AuthenticatorSelectionCriteria
+    excludeCredentials?: PasskeyDescriptor[]
+  }
+}
+
+/** Server reply that starts an assertion (`navigator.credentials.get`). */
+export interface PasskeyRequestOptions {
+  publicKey: {
+    challenge: string
+    rpId?: string
+    timeout?: number
+    userVerification?: UserVerificationRequirement
+    allowCredentials?: PasskeyDescriptor[]
+  }
+}
+
+export interface PasskeyRegistration {
+  id: string
+  rawId: string
+  type: 'public-key'
+  response: { clientDataJSON: string; attestationObject: string; transports: string[] }
+}
+
+export interface PasskeyAssertion {
+  id: string
+  rawId: string
+  type: 'public-key'
+  response: {
+    clientDataJSON: string
+    authenticatorData: string
+    signature: string
+    userHandle: string | null
+  }
+}
+
+/** Re-authentication for sensitive `me/…` calls: exactly one of the two. */
+export type Reauth = { password: string } | { passkey: PasskeyAssertion }

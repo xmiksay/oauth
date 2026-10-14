@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useAuthStore } from '@/stores/auth'
+import { ApiError } from '@/api/client'
 import { users } from '@/api/directory'
 import type { UserDetail } from '@/api/types'
 import { useAction } from '@/composables/useAction'
@@ -14,6 +15,7 @@ import ConfirmButton from '@/components/ConfirmButton.vue'
 import SecretOnceDialog from '@/components/SecretOnceDialog.vue'
 import UserRoles from './UserRoles.vue'
 import UserSessions from './UserSessions.vue'
+import UserPasskeys from './UserPasskeys.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -28,8 +30,9 @@ const loader = useAction()
 const saver = useAction()
 const saved = ref(false)
 const actionNote = ref<string | null>(null)
-// Bumped after actions that end sessions so the sessions card reloads.
+// Bumped after actions that end sessions / remove passkeys so those cards reload.
 const sessionsVersion = ref(0)
+const passkeysVersion = ref(0)
 
 async function load() {
   const u = await loader.run(() => users.get(id))
@@ -72,7 +75,15 @@ async function remove() {
 }
 
 async function resetMfa() {
-  await users.resetMfa(id)
+  try {
+    await users.resetMfa(id)
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 409) {
+      throw 'Set a password first (reset password) — removing their passkeys would lock them out.'
+    }
+    throw err
+  }
+  passkeysVersion.value++
   await load()
 }
 
@@ -117,9 +128,13 @@ async function revokeSessions() {
         <span
           v-if="!user.has_password"
           class="badge"
-        >No password yet</span>
+        >{{ user.mfa.passkeys ? 'Passkey only' : 'No password yet' }}</span>
         <span class="badge">{{ user.email_verified ? 'Email verified' : 'Email unverified' }}</span>
         <span class="badge">MFA: {{ user.mfa.totp ? 'authenticator app' : 'none' }}</span>
+        <span
+          v-if="user.mfa.passkeys"
+          class="badge"
+        >Passkeys: {{ user.mfa.passkeys }}</span>
         <span class="badge">{{ user.user_type }}</span>
       </p>
       <div
@@ -138,7 +153,7 @@ async function revokeSessions() {
           :action="() => setDisabled(!user?.disabled)"
         />
         <ConfirmButton
-          v-if="!user.has_password && me?.features.email"
+          v-if="!user.has_password && !user.mfa.passkeys && me?.features.email"
           label="Resend invitation"
           title="Resend invitation?"
           :message="`A new invitation link is emailed to ${user.email}. The previous link stops working.`"
@@ -153,8 +168,8 @@ async function revokeSessions() {
         <ConfirmButton
           label="Reset MFA"
           title="Reset MFA?"
-          message="The user's authenticator app and recovery codes are removed. They can set up a new one in My Account."
-          :disabled="!user.mfa.totp && !user.mfa.totp_pending"
+          message="The user's authenticator app, recovery codes and passkeys are removed. They can set up new ones in My Account."
+          :disabled="!user.mfa.totp && !user.mfa.totp_pending && !user.mfa.passkeys"
           :action="resetMfa"
         />
         <ConfirmButton
@@ -248,6 +263,13 @@ async function revokeSessions() {
         </form>
         <UserRoles :user-id="id" />
       </div>
+      <UserPasskeys
+        :key="passkeysVersion"
+        :user-id="id"
+        :can-write="canWriteUsers"
+        class="mt-4"
+        @changed="load"
+      />
       <UserSessions
         :key="sessionsVersion"
         :user-id="id"

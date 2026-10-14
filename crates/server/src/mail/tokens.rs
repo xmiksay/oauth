@@ -76,6 +76,26 @@ pub async fn consume(
     Ok(rows.into_iter().next())
 }
 
+/// The live, unused token `token` of this tenant with one of `purposes`,
+/// without consuming it (a multi-step redemption looks before it leaps;
+/// the final step still goes through [`consume`]).
+pub async fn peek(
+    conn: &impl ConnectionTrait,
+    tenant_id: Uuid,
+    token: &str,
+    purposes: &[EmailTokenPurpose],
+) -> anyhow::Result<Option<email_tokens::Model>> {
+    email_tokens::Entity::find()
+        .filter(email_tokens::Column::TenantId.eq(tenant_id))
+        .filter(email_tokens::Column::TokenHash.eq(secret::hash(token)))
+        .filter(email_tokens::Column::Purpose.is_in(purposes.iter().copied()))
+        .filter(email_tokens::Column::ConsumedAt.is_null())
+        .filter(email_tokens::Column::ExpiresAt.gt(chrono::Utc::now().fixed_offset()))
+        .one(conn)
+        .await
+        .context("looking up email token")
+}
+
 /// Deletes the user's unused tokens of `purposes` (e.g. every link sent to
 /// an address that is no longer the user's).
 pub async fn invalidate(

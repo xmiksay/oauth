@@ -4,10 +4,11 @@ import { storeToRefs } from 'pinia'
 import { useAuthStore } from '@/stores/auth'
 import { ApiError } from '@/api/client'
 import { me as meApi } from '@/api/me'
+import type { Reauth } from '@/api/types'
 import { useAction } from '@/composables/useAction'
 import ErrorAlert from '@/components/ErrorAlert.vue'
 import StatusNote from '@/components/StatusNote.vue'
-import PasswordPrompt from './PasswordPrompt.vue'
+import ReauthPrompt from './ReauthPrompt.vue'
 
 /** The sign-in address: verification status, a new verification link, and changing it. */
 const auth = useAuthStore()
@@ -39,11 +40,11 @@ function openChange() {
   changing.value = true
 }
 
-async function changeEmail(password: string) {
+async function changeEmail(reauth: Reauth) {
   const address = newEmail.value.trim()
   if (!address) throw 'Enter the new email address.'
   try {
-    await meApi.changeEmail(address, password)
+    await meApi.changeEmail(address, reauth)
   } catch (err) {
     if (err instanceof ApiError && err.status === 409) {
       throw 'That email address is already used by another account.'
@@ -99,7 +100,7 @@ async function changeEmail(password: string) {
         Change email
       </button>
     </div>
-    <PasswordPrompt
+    <ReauthPrompt
       :open="changing"
       title="Change email"
       message="We'll send a link to the new address. Your sign-in email changes when you open it."
@@ -122,6 +123,6 @@ async function changeEmail(password: string) {
           autofocus
         >
       </div>
-    </PasswordPrompt>
+    </ReauthPrompt>
   </section>
 </template>

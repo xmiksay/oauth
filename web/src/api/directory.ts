@@ -8,6 +8,7 @@ import type {
   Items,
   PageQuery,
   Paged,
+  Passkey,
   Session,
   User,
   UserDetail,
@@ -46,6 +47,8 @@ export const users = {
   /** Re-sends the invitation; the previous link stops working. */
   resendInvite: (id: string) => t.post<void>(p`users/${id}/invite`),
   sessions: (id: string) => t.get<Items<Session>>(p`users/${id}/sessions`),
+  passkeys: (id: string) => t.get<Items<Passkey>>(p`users/${id}/passkeys`),
+  removePasskey: (id: string, passkeyId: string) => t.del(p`users/${id}/passkeys/${passkeyId}`),
   revokeSessions: (id: string) => t.post<void>(p`users/${id}/revoke-sessions`),
 }
 

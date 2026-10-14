@@ -22,6 +22,14 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   "Forgot password?": a detour form (`ForgotPasswordForm`, email prefilled) that
   `POST`s `/api/authn/password-reset` and always shows the same "if an account
   exists…" sentence; "Back to sign in" returns to the untouched transaction.
+  The step view's `factors`
+  decides which methods a step shows. With `passkey` in it and WebAuthn in the
+  browser, the password step offers "Sign in with a passkey" plus autofill
+  (conditional mediation, email field `autocomplete="username webauthn"`), and the
+  MFA step "Use a passkey". The server keeps only the newest challenge per tx, so
+  the button aborts the pending autofill `get()` (AbortController) and fetches fresh
+  options; the autofill restarts (fresh options) whenever the password step is idle
+  again, and fails silently. A dismissed dialog is a soft note, never an error.
 - **Email links** (`areas/email`): `/login/reset`, `/login/invite` (choose a
   password → `POST /api/authn/email/reset|invite`) and `/myaccount/verify-email`
   (`POST /api/authn/email/verify`). They are **public** routes — no `meta.area`,
@@ -33,18 +41,37 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   The verify page waits for a "Confirm email address" click instead of POSTing on
   load, because mail link scanners open links and would consume the token.
   `invalid_token` → "This link is invalid, has expired or was already used." and
-  the form goes away.
+  the form goes away. The invite page also offers "Create a passkey instead"
+  (`…/invite/passkey/options` → `create()` → `…/invite/passkey`).
 - **Logout** (`areas/logout`): the RP-initiated-logout confirmation page
   (`POST /oauth2/logout`) and the `?signed_out=1` view.
 - **My Account email & notifications**: the Profile page's `EmailSection` shows the
   verified badge, "Send verification link" (`POST me/verify-email`) and "Change
-  email" (new address + current password via `PasswordPrompt`'s slot →
+  email" (new address + re-authentication via `ReauthPrompt`'s slot →
   `POST me/email`; the change applies when the link sent to the new address is
   opened) — both only when `GET me` reports `features.email`. `/myaccount/notifications`
   edits `GET/PUT me/notifications` (Telegram column only when that channel exists;
   notifications go only to a verified address). In the admin center, "New user"
   can send an invitation (`invite: true`, no password) when `features.email`, and a
   user without a password gets "Resend invitation" (`POST users/{id}/invite`).
+- **Passkeys** (`src/webauthn`): hand-rolled base64url and JSON ⇄ WebAuthn
+  conversion (no `parseCreationOptionsFromJSON`), `createPasskey` / `getPasskey`;
+  `NotAllowedError` / `AbortError` become `PasskeyCancelled`, which `ErrorAlert`
+  renders as a plain note. Sensitive `me/…` calls take a `Reauth` (`{password}` or
+  `{passkey}`): `ReauthPrompt` offers the password when `has_password` and a
+  passkey (`me/reauth/options` → `get()`) when `mfa.passkeys > 0`. Security info
+  lists passkeys (synced = `backup_state`), renames inline, removes after re-auth,
+  and adds in two dialogs — re-auth → creation options, then a separate "Create
+  passkey" click, since a browser may allow only one WebAuthn call per user gesture.
+  Only a dismissed browser dialog keeps that second dialog open: any server answer
+  closes it (the challenge is spent; retrying would orphan a credential on the
+  authenticator) and the user re-authenticates for fresh options. A user with a
+  passkey but no password shows as "Passkey only" in the admin center, without
+  "Resend invitation".
+  A passkey-only user's Password card becomes "Set a password" (passkey re-auth, no
+  current-password field). The admin user detail has a Passkeys card (remove per
+  passkey); Reset MFA also removes passkeys, and both explain the server's 409 for a
+  user without a password.
 - **Admin / My Account**: the tenant's built-in public clients `admin-portal`
   / `my-account` (code + PKCE via `oidc-client-ts`, scope
   `openid offline_access api://management-api/Directory.AccessAsUser`, authority

@@ -13,7 +13,7 @@ use zeroize::Zeroizing;
 use super::{
     Caller,
     extract::{Json, Path},
-    guard::{ensure_can_modify_user, find_user},
+    guard::{ensure_can_modify_user, find_user, lock_user},
     ts,
 };
 use crate::{
@@ -21,8 +21,8 @@ use crate::{
     audit::{EventType, Target},
     authz::{Access, Area},
     directory::{self, password},
-    error::AppResult,
-    notify,
+    error::{AppError, AppResult},
+    notify, passkey,
 };
 
 pub fn session_view(s: &sessions::Model, current: Option<Uuid>) -> Value {
@@ -156,8 +156,11 @@ pub async fn reset_password(
     })))
 }
 
-/// Removes TOTP and recovery codes: the user signs in with the password
-/// only and may enroll again.
+/// Removes TOTP, recovery codes and passkeys: the user signs in with the
+/// password only and may enroll again. A user WITHOUT a password who has
+/// passkeys is refused (409): their passkeys are their only way in, so
+/// an administrator resets the password first (`reset-password`, a
+/// one-time password the user must change) and then the MFA.
 pub async fn reset_mfa(
     State(state): State<AppState>,
     caller: Caller,
@@ -166,9 +169,19 @@ pub async fn reset_mfa(
     caller.require(Area::Directory, Access::Write)?;
     let tenant_id = caller.tenant_id();
     let txn = state.db.begin().await?;
-    let user = find_user(&txn, tenant_id, id).await?;
+    // Locked, so a concurrent password change can't slip past the check.
+    let user = lock_user(&txn, tenant_id, id).await?;
     ensure_can_modify_user(&txn, &caller, id).await?;
+    let passkeys = passkey::store::count(&txn, tenant_id, id).await?;
+    if passkeys > 0 && user.password_hash.is_none() {
+        return Err(AppError::Conflict(
+            "the user has no password, so removing their passkeys would lock them out: \
+             reset their password first"
+                .into(),
+        ));
+    }
     delete_mfa(&txn, tenant_id, id).await?;
+    passkey::store::remove_all(&txn, tenant_id, id).await?;
     let facts = notify::change("second factors removed by an administrator");
     notify::event(
         &txn,
@@ -184,7 +197,7 @@ pub async fn reset_mfa(
             &txn,
             EventType::UserMfaReset,
             Some(Target::User(id)),
-            Value::Null,
+            json!({ "passkeys_removed": passkeys }),
         )
         .await?;
     txn.commit().await?;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { mount } from '@vue/test-utils'
 import PasswordStep from './PasswordStep.vue'
+import MfaStep from './MfaStep.vue'
 import ChangePasswordStep from './ChangePasswordStep.vue'
 import ConsentStep from './ConsentStep.vue'
 import type { TxView } from '@/api/authn'
@@ -19,10 +20,48 @@ describe('PasswordStep', () => {
     expect(w.find('button[type=submit]').attributes('disabled')).toBeDefined()
   })
 
+  it('offers a passkey only when asked to, and emits it', async () => {
+    const plain = mount(PasswordStep, { props: { locked: false } })
+    expect(plain.findAll('button').map((b) => b.text())).toEqual(['Sign in'])
+    const w = mount(PasswordStep, { props: { locked: false, passkey: true } })
+    expect(w.find('#login-email').attributes('autocomplete')).toBe('username webauthn')
+    await w.findAll('button').find((b) => b.text() === 'Sign in with a passkey')?.trigger('click')
+    expect(w.emitted('passkey')).toHaveLength(1)
+    expect(w.emitted('submit')).toBeUndefined()
+  })
+
   it('labels its inputs for assistive tech and password managers', () => {
     const w = mount(PasswordStep, { props: { locked: false } })
     expect(w.find('label[for=login-email]').exists()).toBe(true)
     expect(w.find('#login-password').attributes('autocomplete')).toBe('current-password')
+  })
+})
+
+describe('MfaStep', () => {
+  const buttons = (w: ReturnType<typeof mount>) => w.findAll('button').map((b) => b.text())
+
+  it('toggles between code kinds only when the user has both', async () => {
+    const both = mount(MfaStep, {
+      props: { locked: false, factors: ['totp', 'recovery'], passkeys: true },
+    })
+    expect(buttons(both)).toEqual(['Verify', 'Use a recovery code instead'])
+    const totpOnly = mount(MfaStep, { props: { locked: false, factors: ['totp'], passkeys: true } })
+    expect(buttons(totpOnly)).toEqual(['Verify'])
+  })
+
+  it('offers a passkey next to the code and emits it', async () => {
+    const w = mount(MfaStep, {
+      props: { locked: false, factors: ['totp', 'passkey'], passkeys: true },
+    })
+    expect(w.find('#mfa-code').exists()).toBe(true)
+    await w.findAll('button').find((b) => b.text() === 'Use a passkey')?.trigger('click')
+    expect(w.emitted('passkey')).toHaveLength(1)
+  })
+
+  it('explains a passkey-only user on a browser without passkeys', () => {
+    const w = mount(MfaStep, { props: { locked: false, factors: ['passkey'], passkeys: false } })
+    expect(w.findAll('button')).toHaveLength(0)
+    expect(w.find('[role=alert]').text()).toMatch(/can't use passkeys/)
   })
 })
 
@@ -48,6 +87,7 @@ describe('ConsentStep', () => {
   const view: TxView = {
     tx: 't',
     step: 'consent',
+    factors: [],
     tenant: { slug: 'c', display_name: 'Contoso' },
     client: { client_id: 'shop', display_name: 'Shop' },
     user: { email: 'ann@example.com', display_name: 'Ann' },

@@ -20,11 +20,14 @@ mod guard;
 mod me;
 mod me_email;
 mod me_mfa;
+mod me_passkeys;
 pub mod page;
+mod reauth;
 mod role_assignments;
 mod tenants;
 mod user_actions;
 mod user_invite;
+mod user_passkeys;
 mod users;
 pub mod validate;
 
@@ -76,6 +79,14 @@ pub fn router() -> Router<AppState> {
         .route(
             &format!("{T}/users/{{id}}/reset-mfa"),
             post(user_actions::reset_mfa),
+        )
+        .route(
+            &format!("{T}/users/{{id}}/passkeys"),
+            get(user_passkeys::list),
+        )
+        .route(
+            &format!("{T}/users/{{id}}/passkeys/{{passkey_id}}"),
+            delete(user_passkeys::remove),
         )
         .route(
             &format!("{T}/users/{{id}}/sessions"),
@@ -187,6 +198,16 @@ pub fn router() -> Router<AppState> {
             &format!("{me}/recovery-codes"),
             post(me_mfa::regenerate_recovery_codes),
         )
+        .route(
+            &format!("{me}/passkeys"),
+            get(me_passkeys::list).post(me_passkeys::finish),
+        )
+        .route(&format!("{me}/passkeys/options"), post(me_passkeys::begin))
+        .route(
+            &format!("{me}/passkeys/{{id}}"),
+            patch(me_passkeys::rename).delete(me_passkeys::remove),
+        )
+        .route(&format!("{me}/reauth/options"), post(reauth::options))
         .route(&format!("{me}/sessions"), get(me::sessions))
         .route(
             &format!("{me}/sessions/revoke-all"),

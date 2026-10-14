@@ -125,6 +125,12 @@ impl PublicUrl {
         )
     }
 
+    /// `{slug}.host`: a tenant's WebAuthn RP ID (its host without the port;
+    /// each tenant host is its own RP, so passkeys never cross tenants).
+    pub fn tenant_rp_id(&self, slug: &str) -> String {
+        format!("{slug}.{}", self.host)
+    }
+
     /// The apex DNS name (lower case, no port).
     pub fn host(&self) -> &str {
         &self.host
@@ -190,6 +196,7 @@ mod tests {
         assert_eq!(u.tenant_origin("acme"), "https://acme.id.example.com");
         let u = url("http://localhost:5173");
         assert_eq!(u.tenant_origin("acme"), "http://acme.localhost:5173");
+        assert_eq!(u.tenant_rp_id("acme"), "acme.localhost");
         assert!(!u.is_https());
         // Default ports are dropped: browsers never send them.
         assert_eq!(url("https://x.test:443").origin(), "https://x.test");

@@ -32,7 +32,7 @@ async function mountPage(over: Partial<Me> = {}) {
     created_at: '',
     updated_at: '',
     directory_roles: [],
-    mfa: { totp: false, totp_pending: false, recovery_codes_remaining: 0 },
+    mfa: { totp: false, totp_pending: false, recovery_codes_remaining: 0, passkeys: 0 },
     features: { email: true },
     ...over,
   })

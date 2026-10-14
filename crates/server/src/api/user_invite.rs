@@ -18,7 +18,7 @@ use crate::{
     authz::{Access, Area},
     error::{AppError, AppResult},
     mail::{links, tokens},
-    notify,
+    notify, passkey,
 };
 
 /// 400 unless the server can send email.
@@ -30,6 +30,13 @@ pub fn require_email(state: &AppState) -> AppResult<()> {
             "email delivery is not configured on this server".into(),
         ))
     }
+}
+
+/// Whether the user can sign in already (a password or a passkey): such a
+/// user is past the invitation stage.
+async fn has_sign_in_method(conn: &impl ConnectionTrait, user: &users::Model) -> AppResult<bool> {
+    Ok(user.password_hash.is_some()
+        || passkey::store::count(conn, user.tenant_id, user.id).await? > 0)
 }
 
 /// Mails a 7-day invitation link (voiding any earlier one) and audits it.
@@ -55,7 +62,8 @@ pub async fn send_invite(
 /// After an admin changed `before`'s address (now `user.email`): links sent
 /// to the old address die; the new one gets a verification link — or, for
 /// a user who never set a password, a fresh invitation (the old one went to
-/// the old address) — and the old one a notice if it was verified.
+/// the old address) — and the old one a notice if it was verified. A user
+/// with a passkey but no password gets the verification link.
 pub async fn email_replaced(
     state: &AppState,
     caller: &Caller,
@@ -65,7 +73,7 @@ pub async fn email_replaced(
 ) -> AppResult<()> {
     tokens::invalidate(conn, user.tenant_id, user.id, &tokens::ALL).await?;
     if state.config.email_enabled() {
-        if user.password_hash.is_none() {
+        if !has_sign_in_method(conn, user).await? {
             send_invite(state, caller, conn, user, true).await?;
         } else {
             let purpose = EmailTokenPurpose::Verify;
@@ -80,7 +88,8 @@ pub async fn email_replaced(
     Ok(())
 }
 
-/// Re-sends the invitation of a user who has not set a password yet.
+/// Re-sends the invitation of a user who has neither a password nor a
+/// passkey yet.
 pub async fn resend(
     State(state): State<AppState>,
     caller: Caller,
@@ -93,9 +102,9 @@ pub async fn resend(
     // and the new link.
     let user = lock_user(&txn, caller.tenant_id(), id).await?;
     ensure_can_modify_user(&txn, &caller, id).await?;
-    if user.password_hash.is_some() {
+    if has_sign_in_method(&txn, &user).await? {
         return Err(AppError::Conflict(
-            "the user already has a password; use a password reset instead".into(),
+            "the user already has a password or passkey; use a password reset instead".into(),
         ));
     }
     send_invite(&state, &caller, &txn, &user, true).await?;

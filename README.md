@@ -61,7 +61,9 @@ against the tenant's origin, so `PUBLIC_URL` must name the origin the browser
 uses. The built-in apps' redirect URIs follow `PUBLIC_URL` (rewritten for every
 tenant at each server start), so switching between Vite and backend-only only
 needs a restart. `make web-test` runs the vitest suite; `make lint` includes
-eslint + vue-tsc.
+eslint + vue-tsc (`make lint-rust` / `make lint-web` run one half). Passkeys work on
+`http://*.localhost` (browsers treat localhost as a secure context; RP ID =
+the tenant host without the port).
 
 ## Docs
 
@@ -70,5 +72,6 @@ eslint + vue-tsc.
 - [Login JSON API](docs/api/authn.md) — contract for the login SPA
 - [Management API](docs/api/management.md) — `/api/v1` REST contract for the admin / My Account SPAs and service apps ([`me`](docs/api/me.md))
 - [Email](docs/email.md) — verification, password reset, invitations, security notices
+- [Passkeys](docs/passkeys.md) — WebAuthn verifier, passwordless / MFA sign-in, re-authentication
 - [Roadmap](docs/roadmap.md)
 - Deployment: [`deploy/k8s/deploy.yml`](deploy/k8s/deploy.yml), `Dockerfile`

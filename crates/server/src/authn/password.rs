@@ -22,7 +22,7 @@ use crate::{
     app::AppState,
     audit,
     directory::{self, password},
-    metrics, notify,
+    metrics, notify, passkey,
     tenancy::Tenant,
 };
 
@@ -127,8 +127,9 @@ pub async fn submit(
             .await?;
         return Err(AuthnError::AccountDisabled);
     }
-    let has_totp = totp::confirmed(conn, tenant.id, user.id).await?.is_some();
-    let next = if has_totp {
+    let has_second_factor = totp::confirmed(conn, tenant.id, user.id).await?.is_some()
+        || passkey::store::count(conn, tenant.id, user.id).await? > 0;
+    let next = if has_second_factor {
         Some(LoginStage::Mfa)
     } else if user.must_change_password {
         Some(LoginStage::ChangePassword)

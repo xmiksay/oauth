@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import { createPinia } from 'pinia'
-import { mockFetch } from '@/test/helpers'
+import { CREATION_OPTIONS, REGISTRATION_JSON, domError, mockFetch, stubWebAuthn } from '@/test/helpers'
 import PasswordLinkPage from './PasswordLinkPage.vue'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -32,6 +32,11 @@ async function fill(w: ReturnType<typeof mount>, pw: string, confirm = pw) {
   await w.find('#link-password').setValue(pw)
   await w.find('#link-confirm').setValue(confirm)
   await w.find('form').trigger('submit')
+  await flushPromises()
+}
+
+async function passkeyInstead(w: ReturnType<typeof mount>) {
+  await w.findAll('button').find((b) => b.text() === 'Create a passkey instead')?.trigger('click')
   await flushPromises()
 }
 
@@ -88,6 +93,50 @@ describe('PasswordLinkPage', () => {
 
   it('treats a link without a token as invalid', async () => {
     const { w } = await mountAt('/login/invite')
+    expect(w.find('[role=alert]').text()).toMatch(/invalid, has expired/)
+    expect(w.find('form').exists()).toBe(false)
+  })
+
+  it('offers a passkey only on invitations, and only where the browser has WebAuthn', async () => {
+    const instead = (w: ReturnType<typeof mount>) => w.text().includes('Create a passkey instead')
+    expect(instead((await mountAt('/login/invite#token=t')).w)).toBe(false)
+    stubWebAuthn()
+    expect(instead((await mountAt('/login/invite#token=t')).w)).toBe(true)
+    expect(instead((await mountAt('/login/reset#token=t')).w)).toBe(false)
+  })
+
+  it('accepts an invitation with a new passkey', async () => {
+    const { create } = stubWebAuthn()
+    const calls = mockFetch({ body: CREATION_OPTIONS }, { status: 204 })
+    const { w } = await mountAt('/login/invite#token=inv-tok')
+    await passkeyInstead(w)
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(calls.map((c) => [c.url, c.body])).toEqual([
+      ['/api/authn/email/invite/passkey/options', { token: 'inv-tok' }],
+      ['/api/authn/email/invite/passkey', { token: 'inv-tok', credential: REGISTRATION_JSON }],
+    ])
+    expect(w.find('h1').text()).toBe('Your account is ready')
+    expect(w.text()).toContain('sign in with your passkey')
+  })
+
+  it('maps passkey failures: dead link, rejected credential, dismissed dialog', async () => {
+    const { create } = stubWebAuthn()
+    mockFetch(
+      { body: CREATION_OPTIONS },
+      { status: 400, body: { error: 'invalid_request', error_description: 'bad attestation' } },
+      { body: CREATION_OPTIONS },
+      { status: 400, body: { error: 'invalid_token' } },
+    )
+    const { w } = await mountAt('/login/invite#token=t')
+    await passkeyInstead(w)
+    expect(w.find('[role=alert]').text()).toBe("That passkey couldn't be registered.")
+
+    create.mockRejectedValueOnce(domError('NotAllowedError'))
+    await passkeyInstead(w)
+    expect(w.find('[role=alert]').exists()).toBe(false)
+    expect(w.find('[role=status]').text()).toBe('Passkey creation was cancelled.')
+
+    await passkeyInstead(w)
     expect(w.find('[role=alert]').text()).toMatch(/invalid, has expired/)
     expect(w.find('form').exists()).toBe(false)
   })

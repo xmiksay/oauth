@@ -1,12 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api/client'
 import type { LoginStep, TxView } from '@/api/authn'
-import { useLoginFlow, type LoginDeps } from './useLoginFlow'
+import { PasskeyCancelled } from '@/webauthn'
+import { ASSERTION_JSON, REQUEST_OPTIONS, domError } from '@/test/helpers'
+import {
+  PASSKEY_CANCELLED,
+  PASSKEY_FAILED,
+  useLoginFlow,
+  type LoginDeps,
+} from './useLoginFlow'
 
 function view(step: LoginStep, extra: Partial<TxView> = {}): TxView {
   return {
     tx: 'tx-1',
     step,
+    factors: step === 'password' ? ['password'] : step === 'mfa' ? ['totp', 'recovery'] : [],
     tenant: { slug: 'contoso', display_name: 'Contoso' },
     client: { client_id: 'shop', display_name: 'Shop' },
     user: step === 'password' ? null : { email: 'ann@example.com', display_name: 'Ann' },
@@ -28,10 +36,131 @@ function deps() {
     changePassword: vi.fn(),
     consent: vi.fn(),
     signOut: vi.fn(),
+    passkeyOptions: vi.fn(),
+    passkey: vi.fn(),
   }
   const navigate = vi.fn()
-  return { api, navigate, deps: { api, navigate } as unknown as LoginDeps }
+  const passkeys = { conditional: vi.fn(async () => false), get: vi.fn() }
+  return { api, navigate, passkeys, deps: { api, navigate, passkeys } as unknown as LoginDeps }
 }
+
+const passkeyView = () => view('password', { factors: ['password', 'passkey'] })
+
+/** A `get` that stays pending until its signal aborts (like a conditional request). */
+function pendingUntilAborted(...args: unknown[]) {
+  const signal = (args[1] as { signal?: AbortSignal } | undefined)?.signal
+  return new Promise((_, reject) =>
+    signal?.addEventListener('abort', () => reject(domError('AbortError'))),
+  )
+}
+
+describe('useLoginFlow passkeys', () => {
+  it('signs in with a passkey: fresh options, assertion, step POST', async () => {
+    const d = deps()
+    d.api.get.mockResolvedValue(passkeyView())
+    d.api.passkeyOptions.mockResolvedValue(REQUEST_OPTIONS)
+    d.passkeys.get.mockResolvedValue(ASSERTION_JSON)
+    d.api.passkey.mockResolvedValue({ redirect: 'https://shop/cb?code=c' })
+    const flow = useLoginFlow('tx-1', d.deps)
+    await flow.load()
+    await flow.passkey()
+    expect(d.api.passkeyOptions).toHaveBeenCalledWith('tx-1')
+    expect(d.passkeys.get).toHaveBeenCalledWith(REQUEST_OPTIONS)
+    expect(d.api.passkey).toHaveBeenCalledWith('tx-1', ASSERTION_JSON)
+    expect(d.navigate).toHaveBeenCalledWith('https://shop/cb?code=c')
+  })
+
+  it('says the passkey (not the password) failed on invalid_credentials', async () => {
+    const d = deps()
+    d.api.get.mockResolvedValue(view('mfa', { factors: ['passkey'] }))
+    d.api.passkeyOptions.mockResolvedValue(REQUEST_OPTIONS)
+    d.passkeys.get.mockResolvedValue(ASSERTION_JSON)
+    d.api.passkey.mockRejectedValue(err(401, 'invalid_credentials'))
+    const flow = useLoginFlow('tx-1', d.deps)
+    await flow.load()
+    await flow.passkey()
+    expect(flow.error.value).toBe(PASSKEY_FAILED)
+  })
+
+  it('shows a soft note, not an error, when the dialog is dismissed', async () => {
+    const d = deps()
+    d.api.get.mockResolvedValue(passkeyView())
+    d.api.passkeyOptions.mockResolvedValue(REQUEST_OPTIONS)
+    d.passkeys.get.mockRejectedValue(new PasskeyCancelled())
+    const flow = useLoginFlow('tx-1', d.deps)
+    await flow.load()
+    await flow.passkey()
+    expect([flow.error.value, flow.notice.value]).toEqual([null, PASSKEY_CANCELLED])
+    expect(d.api.passkey).not.toHaveBeenCalled()
+  })
+
+  it('submits a passkey picked from the autofill', async () => {
+    const d = deps()
+    d.api.get.mockResolvedValue(passkeyView())
+    d.passkeys.conditional.mockResolvedValue(true)
+    d.api.passkeyOptions.mockResolvedValue(REQUEST_OPTIONS)
+    d.passkeys.get.mockResolvedValue(ASSERTION_JSON)
+    d.api.passkey.mockResolvedValue({ redirect: 'https://shop/cb' })
+    const flow = useLoginFlow('tx-1', d.deps)
+    await flow.load()
+    await flow.startConditional()
+    expect(d.passkeys.get).toHaveBeenCalledWith(REQUEST_OPTIONS, {
+      mediation: 'conditional',
+      signal: expect.any(AbortSignal),
+    })
+    expect(d.api.passkey).toHaveBeenCalledWith('tx-1', ASSERTION_JSON)
+  })
+
+  it('aborts the autofill request before the modal one and refetches options', async () => {
+    const d = deps()
+    d.api.get.mockResolvedValue(passkeyView())
+    d.passkeys.conditional.mockResolvedValue(true)
+    d.api.passkeyOptions.mockResolvedValue(REQUEST_OPTIONS)
+    d.passkeys.get.mockImplementationOnce(pendingUntilAborted).mockResolvedValueOnce(ASSERTION_JSON)
+    d.api.passkey.mockResolvedValue(view('consent'))
+    const flow = useLoginFlow('tx-1', d.deps)
+    await flow.load()
+    const autofill = flow.startConditional()
+    await vi.waitFor(() => expect(d.passkeys.get).toHaveBeenCalledTimes(1))
+    const signal = d.passkeys.get.mock.calls[0]?.[1]?.signal as AbortSignal
+    await flow.passkey()
+    await autofill
+    expect(signal.aborted).toBe(true)
+    expect(d.api.passkeyOptions).toHaveBeenCalledTimes(2)
+    expect(d.api.passkey).toHaveBeenCalledTimes(1)
+    expect([flow.error.value, flow.notice.value, flow.view.value?.step]).toEqual([
+      null,
+      null,
+      'consent',
+    ])
+  })
+
+  it('offers no autofill without the passkey factor or browser support', async () => {
+    const d = deps()
+    d.api.get.mockResolvedValue(view('password'))
+    const flow = useLoginFlow('tx-1', d.deps)
+    await flow.load()
+    await flow.startConditional()
+    expect(d.passkeys.conditional).not.toHaveBeenCalled()
+
+    d.api.get.mockResolvedValue(passkeyView())
+    await flow.load()
+    await flow.startConditional()
+    expect(d.passkeys.conditional).toHaveBeenCalled()
+    expect(d.api.passkeyOptions).not.toHaveBeenCalled()
+  })
+
+  it('stays quiet when the autofill options cannot be fetched', async () => {
+    const d = deps()
+    d.api.get.mockResolvedValue(passkeyView())
+    d.passkeys.conditional.mockResolvedValue(true)
+    d.api.passkeyOptions.mockRejectedValue(err(429, 'rate_limited', 5))
+    const flow = useLoginFlow('tx-1', d.deps)
+    await flow.load()
+    await flow.startConditional()
+    expect([flow.error.value, flow.retryIn.value]).toEqual([null, 0])
+  })
+})
 
 beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())

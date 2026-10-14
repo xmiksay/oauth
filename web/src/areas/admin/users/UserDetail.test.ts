@@ -1,0 +1,86 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
+import { createMemoryHistory, createRouter } from 'vue-router'
+import { ApiError } from '@/api/client'
+import type { UserDetail } from '@/api/types'
+import { fakeMe, fakePasskey } from '@/test/helpers'
+
+const users = {
+  get: vi.fn(),
+  resetMfa: vi.fn(),
+  passkeys: vi.fn(),
+  sessions: vi.fn(),
+}
+const directoryRoles = { list: vi.fn() }
+vi.mock('@/api/directory', () => ({ users, directoryRoles }))
+
+const { default: UserDetailPage } = await import('./UserDetail.vue')
+const { useAuthStore } = await import('@/stores/auth')
+
+const passkeyOnly: UserDetail = {
+  ...fakeMe({ id: 'u1', email: 'bob@example.com', has_password: false }),
+  mfa: { totp: false, totp_pending: false, recovery_codes_remaining: 0, passkeys: 1 },
+}
+
+async function mountPage() {
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  useAuthStore().setMe(fakeMe({ directory_roles: ['UserAdmin'] }))
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/admin/users', name: 'admin-users', component: UserDetailPage },
+      { path: '/admin/users/:id', component: UserDetailPage },
+    ],
+  })
+  await router.push('/admin/users/u1')
+  const w = mount(UserDetailPage, { global: { plugins: [pinia, router] }, attachTo: document.body })
+  await flushPromises()
+  return w
+}
+
+const button = (w: ReturnType<typeof mount>, text: string) =>
+  w.findAll('button').filter((b) => b.text() === text)
+
+beforeEach(() => {
+  document.body.innerHTML = ''
+  Object.values(users).forEach((f) => f.mockReset())
+  users.get.mockResolvedValue(passkeyOnly)
+  users.passkeys.mockResolvedValue({ items: [fakePasskey()] })
+  users.sessions.mockResolvedValue({ items: [] })
+  directoryRoles.list.mockResolvedValue({ items: [], next_cursor: null })
+})
+
+describe('UserDetail passkeys', () => {
+  it('treats a passkey-only user as signed up: no invitation to resend', async () => {
+    const w = await mountPage()
+    expect(w.text()).toContain('Passkey only')
+    expect(w.text()).not.toContain('No password yet')
+    expect(button(w, 'Resend invitation')).toHaveLength(0)
+  })
+
+  it('offers to resend the invitation to a user with neither password nor passkey', async () => {
+    users.get.mockResolvedValue({ ...passkeyOnly, mfa: { ...passkeyOnly.mfa, passkeys: 0 } })
+    const w = await mountPage()
+    expect(w.text()).toContain('No password yet')
+    expect(button(w, 'Resend invitation')).toHaveLength(1)
+  })
+
+  it('shows the passkeys card and counts passkeys as MFA to reset', async () => {
+    const w = await mountPage()
+    expect(w.text()).toContain('Passkeys: 1')
+    expect(users.passkeys).toHaveBeenCalledWith('u1')
+    expect(button(w, 'Reset MFA')[0]?.attributes('disabled')).toBeUndefined()
+  })
+
+  it('explains why MFA cannot be reset for a passkey-only user', async () => {
+    users.resetMfa.mockRejectedValue(new ApiError(409, { error: 'conflict' }))
+    const w = await mountPage()
+    await button(w, 'Reset MFA')[0]?.trigger('click')
+    expect(w.text()).toContain('recovery codes and passkeys are removed')
+    await button(w, 'Reset MFA')[1]?.trigger('click')
+    await flushPromises()
+    expect(w.find('[role=alert]').text()).toMatch(/Set a password first \(reset password\)/)
+  })
+})

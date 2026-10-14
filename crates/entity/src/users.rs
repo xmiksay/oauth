@@ -23,6 +23,9 @@ pub struct Model {
     /// When the user's first sign-in device was recorded; `None` = never
     /// signed in (no "new sign-in" notice for the very first one).
     pub first_device_at: Option<DateTimeWithTimeZone>,
+    /// Random 32-byte WebAuthn user handle (passkeys never carry the user
+    /// id); generated at the first passkey registration.
+    pub webauthn_handle: Option<Vec<u8>>,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
 }
@@ -40,6 +43,7 @@ impl std::fmt::Debug for Model {
             .field("must_change_password", &self.must_change_password)
             .field("disabled", &self.disabled)
             .field("first_device_at", &self.first_device_at)
+            .field("webauthn_handle", &"<redacted>")
             .field("created_at", &self.created_at)
             .field("updated_at", &self.updated_at)
             .finish()
