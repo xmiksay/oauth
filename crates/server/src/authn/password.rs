@@ -6,7 +6,7 @@ use axum::{
 };
 use chrono::Utc;
 use entity::{
-    enums::{LoginStage, Outcome as AuditOutcome},
+    enums::{LoginStage, NotifyEvent, Outcome as AuditOutcome},
     users,
 };
 use sea_orm::TransactionTrait;
@@ -22,7 +22,7 @@ use crate::{
     app::AppState,
     audit,
     directory::{self, password},
-    metrics,
+    metrics, notify,
     tenancy::Tenant,
 };
 
@@ -184,6 +184,16 @@ pub async fn change(
             ip: ctx.ip,
             details: json!({ "via": "sign_in" }),
         },
+    )
+    .await?;
+    let facts = notify::change("changed at sign-in");
+    notify::event(
+        &txn,
+        &state.config,
+        &tenant,
+        &user,
+        NotifyEvent::PasswordChanged,
+        &facts,
     )
     .await?;
     txn.commit().await?;

@@ -18,7 +18,7 @@ import UserSessions from './UserSessions.vue'
 const route = useRoute()
 const router = useRouter()
 const id = String(route.params.id)
-const { canWriteUsers } = storeToRefs(useAuthStore())
+const { canWriteUsers, me } = storeToRefs(useAuthStore())
 
 const user = ref<UserDetail | null>(null)
 const name = ref('')
@@ -27,6 +27,7 @@ const oneTime = ref<string[] | null>(null)
 const loader = useAction()
 const saver = useAction()
 const saved = ref(false)
+const actionNote = ref<string | null>(null)
 // Bumped after actions that end sessions so the sessions card reloads.
 const sessionsVersion = ref(0)
 
@@ -75,6 +76,12 @@ async function resetMfa() {
   await load()
 }
 
+async function resendInvite() {
+  actionNote.value = null
+  await users.resendInvite(id)
+  actionNote.value = `Invitation sent to ${user.value?.email}. Earlier invitation links no longer work.`
+}
+
 async function revokeSessions() {
   await users.revokeSessions(id)
   sessionsVersion.value++
@@ -107,6 +114,11 @@ async function revokeSessions() {
           v-if="user.must_change_password"
           class="badge"
         >Must change password</span>
+        <span
+          v-if="!user.has_password"
+          class="badge"
+        >No password yet</span>
+        <span class="badge">{{ user.email_verified ? 'Email verified' : 'Email unverified' }}</span>
         <span class="badge">MFA: {{ user.mfa.totp ? 'authenticator app' : 'none' }}</span>
         <span class="badge">{{ user.user_type }}</span>
       </p>
@@ -124,6 +136,13 @@ async function revokeSessions() {
           "
           :danger="!user.disabled"
           :action="() => setDisabled(!user?.disabled)"
+        />
+        <ConfirmButton
+          v-if="!user.has_password && me?.features.email"
+          label="Resend invitation"
+          title="Resend invitation?"
+          :message="`A new invitation link is emailed to ${user.email}. The previous link stops working.`"
+          :action="resendInvite"
         />
         <ConfirmButton
           label="Reset password"
@@ -152,6 +171,10 @@ async function revokeSessions() {
           :action="remove"
         />
       </div>
+      <StatusNote
+        :message="actionNote"
+        class="-mt-4 mb-4"
+      />
       <div class="grid gap-4 xl:grid-cols-2">
         <form
           class="card space-y-4"
@@ -187,6 +210,14 @@ async function revokeSessions() {
               :disabled="!canWriteUsers"
               required
             >
+            <p
+              v-if="canWriteUsers"
+              class="hint"
+            >
+              Changing it marks the address unverified{{
+                me?.features.email ? ' and emails a verification link to it' : ''
+              }}.
+            </p>
           </div>
           <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
             <dt class="muted">

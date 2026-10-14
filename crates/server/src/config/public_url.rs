@@ -125,6 +125,11 @@ impl PublicUrl {
         )
     }
 
+    /// The apex DNS name (lower case, no port).
+    pub fn host(&self) -> &str {
+        &self.host
+    }
+
     /// Classifies a request authority (`Host` header value). Matching is
     /// exact apart from ASCII case (DNS names are case-insensitive) and a
     /// spelled-out default port (the same origin): a trailing dot or another

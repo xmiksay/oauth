@@ -196,6 +196,7 @@ pub async fn view(state: &AppState, tenant: &Tenant, tx: &LoadedTx) -> AuthnResu
         "client": { "client_id": client.client_id, "display_name": client.display_name },
         "user": user.map(|u| json!({ "email": u.email, "display_name": u.display_name })),
         "consent": consent,
+        "features": { "password_reset": state.config.email_enabled() },
     }))
 }
 

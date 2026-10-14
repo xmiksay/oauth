@@ -33,8 +33,8 @@ build: web-build ## Build the SPA and the release binary
 run: ## Run `oauth serve` locally (loads .env; needs `make dev-db`)
 	$(DOTENV) cargo run -- serve
 
-dev-db: ## Start the dev Postgres 17 (docker compose)
-	docker compose up -d --wait postgres
+dev-db: ## Start the dev Postgres 17 and Mailpit (docker compose)
+	docker compose up -d --wait postgres mailpit
 
 web-dev: ## Run the Vite dev server (proxies API to the backend)
 	$(NVM) $(NPM) run dev

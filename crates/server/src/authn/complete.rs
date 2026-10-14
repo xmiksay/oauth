@@ -20,6 +20,7 @@ use super::{
     AuthnError, AuthnResult, JsonBody, Outcome,
     cookie::{self, Kind},
     ctx::Ctx,
+    device,
     ip::ClientIp,
     session::{self, NewSession},
     tx::{self, LoadedTx},
@@ -132,14 +133,19 @@ pub async fn proceed(
             tx.row.stage = LoginStage::Consent;
             Ok(Outcome::Step(tx::view(ctx.state, ctx.tenant, &tx).await?))
         }
-        Decision::Granted => finish(ctx, tx, from).await,
+        Decision::Granted => finish(ctx, tx, from, user).await,
     }
 }
 
 /// Claims the transaction, creates (or reuses) the session and issues the
 /// code — atomically, so a failure leaves neither a half-made session nor a
 /// burnt transaction behind.
-async fn finish(ctx: &Ctx<'_>, tx: LoadedTx, from: LoginStage) -> AuthnResult<Outcome> {
+async fn finish(
+    ctx: &Ctx<'_>,
+    tx: LoadedTx,
+    from: LoginStage,
+    user: &users::Model,
+) -> AuthnResult<Outcome> {
     let config = &ctx.state.config;
     let txn = ctx.state.db.begin().await?;
     // Claim the transaction first: a concurrent duplicate gets no second code.
@@ -157,7 +163,11 @@ async fn finish(ctx: &Ctx<'_>, tx: LoadedTx, from: LoginStage) -> AuthnResult<Ou
             }
         },
         None => {
-            let user_id = tx.row.user_id.ok_or(AuthnError::WrongStep)?;
+            let user_id = tx
+                .row
+                .user_id
+                .filter(|id| *id == user.id)
+                .ok_or(AuthnError::WrongStep)?;
             let auth_time = tx.row.auth_time.ok_or(AuthnError::WrongStep)?;
             // A fresh sign-in (prompt=login, max_age, another account)
             // replaces whatever session this browser had.
@@ -178,6 +188,7 @@ async fn finish(ctx: &Ctx<'_>, tx: LoadedTx, from: LoginStage) -> AuthnResult<Ou
             )
             .await?;
             cookies.push(cookie::set(config, Kind::Session, &token)?);
+            cookies.push(device::on_sign_in(&txn, ctx, user).await?);
             let details = json!({
                 "session_id": created.id,
                 "application_id": tx.row.application_id,

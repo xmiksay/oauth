@@ -2,12 +2,13 @@
 import { ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useAuthStore } from '@/stores/auth'
-import { users } from '@/api/directory'
+import { users, type CreatedUser } from '@/api/directory'
 import type { User } from '@/api/types'
 import { usePagedList } from '@/composables/usePagedList'
 import { formatDate } from '@/lib/format'
 import PageHeader from '@/components/PageHeader.vue'
 import ListShell from '@/components/ListShell.vue'
+import StatusNote from '@/components/StatusNote.vue'
 import SecretOnceDialog from '@/components/SecretOnceDialog.vue'
 import CreateUserDialog from './CreateUserDialog.vue'
 
@@ -15,10 +16,17 @@ const { canWriteUsers } = storeToRefs(useAuthStore())
 const list = usePagedList<User>(users.list)
 const creating = ref(false)
 const oneTime = ref<string[] | null>(null)
+const invited = ref<string | null>(null)
 
-function created(password: string | null) {
+function startCreate() {
+  invited.value = null
+  creating.value = true
+}
+
+function created(res: CreatedUser) {
   creating.value = false
-  if (password) oneTime.value = [password]
+  invited.value = res.invite_sent ? `Invitation sent to ${res.user.email}.` : null
+  if (res.one_time_password) oneTime.value = [res.one_time_password]
   list.reload()
 }
 </script>
@@ -36,12 +44,16 @@ function created(password: string | null) {
         <button
           type="button"
           class="btn btn-primary"
-          @click="creating = true"
+          @click="startCreate"
         >
           New user
         </button>
       </template>
     </PageHeader>
+    <StatusNote
+      :message="invited"
+      class="mb-2"
+    />
     <ListShell
       :list="list"
       search-label="Search by name or email"

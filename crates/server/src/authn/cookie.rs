@@ -1,4 +1,4 @@
-//! The two cookies of the sign-in flow. Both use the `__Host-` prefix: the
+//! The cookies of the sign-in flow. All use the `__Host-` prefix: the
 //! browser then insists on `Secure`, `Path=/` and no `Domain`, so a sibling
 //! subdomain can't plant ("toss") a cookie that shadows ours.
 //!
@@ -7,6 +7,9 @@
 //! - `__Host-oauth_tx`: binds login transactions to the browser that
 //!   started them. Each `/authorize` refreshes its `Max-Age`; it is never
 //!   cleared explicitly, so parallel sign-ins in several tabs work.
+//!
+//! - `__Host-oauth_dev`: a random per-browser device id (1 year), so a
+//!   sign-in from a browser the user never used can be notified.
 //!
 //! All `HttpOnly`, `SameSite=Lax` (sent on the relying party's top-level GET
 //! to `/authorize`, not on cross-site POSTs). With `COOKIE_SECURE=false`
@@ -23,13 +26,18 @@ use crate::config::Config;
 pub enum Kind {
     Session,
     TxBinding,
+    Device,
 }
+
+/// Lifetime of the device cookie (and of its `known_devices` row).
+pub const DEVICE_TTL_DAYS: i64 = 365;
 
 pub fn name(config: &Config, kind: Kind) -> String {
     let prefix = if config.cookie_secure { "__Host-" } else { "" };
     match kind {
         Kind::Session => format!("{prefix}oauth_sid"),
         Kind::TxBinding => format!("{prefix}oauth_tx"),
+        Kind::Device => format!("{prefix}oauth_dev"),
     }
 }
 
@@ -46,6 +54,7 @@ pub fn set(config: &Config, kind: Kind, value: &str) -> anyhow::Result<HeaderVal
     let max_age = match kind {
         Kind::Session => i64::from(config.session_ttl_hours) * 3600,
         Kind::TxBinding => TX_TTL_MINUTES * 60,
+        Kind::Device => DEVICE_TTL_DAYS * 86_400,
     };
     build(config, kind, value, max_age)
 }
@@ -109,6 +118,11 @@ mod tests {
         assert_eq!(
             v.to_str().unwrap(),
             "__Host-oauth_tx=b; Path=/; Max-Age=900; HttpOnly; SameSite=Lax; Secure"
+        );
+        let v = set(&c, Kind::Device, "d").unwrap();
+        assert_eq!(
+            v.to_str().unwrap(),
+            "__Host-oauth_dev=d; Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax; Secure"
         );
         let cleared = clear(&c, Kind::Session).unwrap();
         assert_eq!(

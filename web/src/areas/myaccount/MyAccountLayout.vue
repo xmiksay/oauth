@@ -14,6 +14,7 @@ const tabs = [
   { to: { name: 'myaccount-security' }, label: 'Security info' },
   { to: { name: 'myaccount-sessions' }, label: 'Devices & sessions' },
   { to: { name: 'myaccount-apps' }, label: 'App permissions' },
+  { to: { name: 'myaccount-notifications' }, label: 'Notifications' },
 ]
 </script>
 

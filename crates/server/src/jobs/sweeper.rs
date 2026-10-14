@@ -1,5 +1,6 @@
-//! TTL sweeper: deletes expired login transactions, codes, sessions, tokens
-//! and rate-limit buckets (expired rows are already ignored by every reader;
+//! TTL sweeper: deletes expired login transactions, codes, sessions,
+//! tokens, rate-limit buckets, outbox messages, email tokens and known
+//! devices (expired rows are already ignored by every reader;
 //! this only bounds table growth), and audit events past their tenant's
 //! `audit_retention_days`.
 
@@ -10,13 +11,16 @@ use super::{SWEEPER_LOCK_KEY, try_lock};
 use crate::audit;
 
 /// Tables with an `expires_at` column, swept in this order.
-const TABLES: [&str; 6] = [
+const TABLES: [&str; 9] = [
     "login_transactions",
     "authorization_codes",
     "sessions",
     "refresh_tokens",
     "opaque_access_tokens",
     "rate_limit_buckets",
+    "outbox",
+    "email_tokens",
+    "known_devices",
 ];
 
 /// Rows deleted per table; `None` if another replica holds the lock.

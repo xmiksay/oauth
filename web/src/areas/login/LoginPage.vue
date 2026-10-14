@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useTenantStore } from '@/stores/tenant'
@@ -8,6 +8,7 @@ import PasswordStep from './PasswordStep.vue'
 import MfaStep from './MfaStep.vue'
 import ChangePasswordStep from './ChangePasswordStep.vue'
 import ConsentStep from './ConsentStep.vue'
+import ForgotPasswordForm from './ForgotPasswordForm.vue'
 import { useLoginFlow } from './useLoginFlow'
 
 const route = useRoute()
@@ -20,7 +21,16 @@ const { phase, view, error, locked, rateLimited, retryIn } = flow
 onMounted(flow.load)
 onUnmounted(flow.dispose)
 
+// The reset request is a detour within the password step; the tx stays untouched.
+const forgot = ref(false)
+const email = ref('')
+function toggleForgot(show: boolean, typed: string) {
+  email.value = typed
+  forgot.value = show
+}
+
 const title = computed(() => {
+  if (forgot.value && view.value?.step === 'password') return 'Reset your password'
   switch (view.value?.step) {
     case 'mfa':
       return 'Verify your identity'
@@ -36,7 +46,7 @@ const title = computed(() => {
 const subtitle = computed(() => {
   const v = view.value
   if (!v) return null
-  if (v.step === 'password') return `to continue to ${v.client.display_name}`
+  if (v.step === 'password') return forgot.value ? null : `to continue to ${v.client.display_name}`
   return v.user ? v.user.email : null
 })
 </script>
@@ -98,6 +108,11 @@ const subtitle = computed(() => {
         Try again
       </button>
     </div>
+    <ForgotPasswordForm
+      v-else-if="view?.step === 'password' && forgot"
+      :initial-email="email"
+      @back="(typed) => toggleForgot(false, typed)"
+    />
     <template v-else-if="view">
       <div
         v-if="rateLimited"
@@ -124,7 +139,10 @@ const subtitle = computed(() => {
       <PasswordStep
         v-if="view.step === 'password'"
         :locked="locked"
+        :can-reset="view.features.password_reset"
+        :initial-email="email"
         @submit="flow.password"
+        @forgot="(typed) => toggleForgot(true, typed)"
       />
       <MfaStep
         v-else-if="view.step === 'mfa'"

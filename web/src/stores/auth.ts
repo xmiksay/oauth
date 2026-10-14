@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref, shallowRef } from 'vue'
 import type { User, UserManager } from 'oidc-client-ts'
 import { createUserManager, type SpaArea } from '@/auth/oidc'
-import type { DirectoryRole, UserDetail } from '@/api/types'
+import type { DirectoryRole, Me } from '@/api/types'
 
 interface ReturnState {
   returnTo?: string
@@ -24,7 +24,7 @@ export const useAuthStore = defineStore('auth', () => {
   // The tenant is the page's host (`stores/tenant`), fixed for the page's lifetime.
   const area = ref<SpaArea | null>(null)
   const user = shallowRef<User | null>(null)
-  const me = ref<UserDetail | null>(null)
+  const me = ref<Me | null>(null)
   /** Set when re-authentication can't fix a 401 (shown instead of looping). */
   const fatal = ref<string | null>(null)
   let manager: UserManager | null = null
@@ -181,7 +181,7 @@ export const useAuthStore = defineStore('auth', () => {
     return `oauth.reauth:${area.value}`
   }
 
-  function setMe(detail: UserDetail | null) {
+  function setMe(detail: Me | null) {
     me.value = detail
   }
 

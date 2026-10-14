@@ -3,12 +3,14 @@
 
 mod env;
 mod public_url;
+mod smtp;
 
 use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr};
 
 use anyhow::bail;
 
 pub use public_url::{HostKind, PublicUrl};
+pub use smtp::SmtpConfig;
 
 const MASTER_KEY_LEN: usize = 32;
 
@@ -51,6 +53,8 @@ pub struct Config {
     /// Header carrying the client address set by a trusted reverse proxy
     /// (e.g. `X-Forwarded-For`); `None` = use the socket peer address.
     pub trusted_proxy_header: Option<String>,
+    /// Outgoing mail; `None` hides every email feature.
+    pub smtp: Option<SmtpConfig>,
 }
 
 // Hand-written so secrets never reach logs through `{:?}`.
@@ -69,6 +73,7 @@ impl fmt::Debug for Config {
             .field("web_dist_dir", &self.web_dist_dir)
             .field("cookie_secure", &self.cookie_secure)
             .field("trusted_proxy_header", &self.trusted_proxy_header)
+            .field("smtp", &self.smtp)
             .finish()
     }
 }
@@ -102,6 +107,11 @@ impl Config {
     /// accepts, and the base of its SPA URLs.
     pub fn tenant_origin(&self, tenant_slug: &str) -> String {
         self.public_url.tenant_origin(tenant_slug)
+    }
+
+    /// Whether email can be sent (verification, reset, invites, notices).
+    pub fn email_enabled(&self) -> bool {
+        self.smtp.is_some()
     }
 
     /// OIDC issuer of a tenant (= its origin, no path).

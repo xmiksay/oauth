@@ -19,6 +19,13 @@ export interface TxView {
     resource: { display_name: string; audience: string }
     scopes: ConsentScope[]
   } | null
+  features: { password_reset: boolean }
+}
+
+export interface EmailVerified {
+  /** `change`: the link confirmed a new sign-in address. */
+  purpose: 'verify' | 'change'
+  email: string
 }
 
 export interface Redirect {
@@ -50,4 +57,12 @@ export const authn = {
       approve ? { approve: true, scopes } : { approve: false },
     ),
   signOut: () => api.post<{ signed_out: boolean }>('/oauth2/logout', {}),
+  // Email-link endpoints: not tied to a transaction; the link's token authorizes them.
+  requestPasswordReset: (email: string) =>
+    api.post<{ accepted: boolean }>('/api/authn/password-reset', { email }),
+  verifyEmail: (token: string) => api.post<EmailVerified>('/api/authn/email/verify', { token }),
+  resetPassword: (token: string, newPassword: string) =>
+    api.post<void>('/api/authn/email/reset', { token, new_password: newPassword }),
+  acceptInvite: (token: string, newPassword: string) =>
+    api.post<void>('/api/authn/email/invite', { token, new_password: newPassword }),
 }

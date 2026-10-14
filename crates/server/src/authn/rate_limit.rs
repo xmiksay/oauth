@@ -38,6 +38,27 @@ pub const AUTHORIZE_PER_IP: Limit = Limit {
     window_secs: 300,
 };
 
+/// Password-reset requests from one IP within one tenant.
+pub const RESET_PER_IP: Limit = Limit {
+    max: 10,
+    window_secs: 900,
+};
+/// Password-reset requests naming one email address (known or not).
+pub const RESET_PER_EMAIL: Limit = Limit {
+    max: 3,
+    window_secs: 900,
+};
+/// Email-link redemptions (verify, reset, invite) from one IP.
+pub const LINK_PER_IP: Limit = Limit {
+    max: 30,
+    window_secs: 300,
+};
+/// Self-service mails (verification, email change) one account may request.
+pub const MAIL_PER_ACCOUNT: Limit = Limit {
+    max: 5,
+    window_secs: 900,
+};
+
 /// Start of the window containing `now` (unix seconds).
 pub fn window_start(now: i64, window_secs: i64) -> i64 {
     now.div_euclid(window_secs) * window_secs
@@ -75,8 +96,12 @@ pub fn user_key(user_id: Uuid) -> String {
 /// nothing about whether an account exists. The email must not contain
 /// control characters (the password step rejects those up front).
 pub async fn email_key(conn: &impl ConnectionTrait, email: &str) -> anyhow::Result<String> {
-    // Exactly the lookup's normalisation (trim + Postgres lower()); callers
-    // reject control characters before resolving the account at all.
+    Ok(format!("acct-email:{}", lowered_email(conn, email).await?))
+}
+
+/// An email as the user lookup normalises it (trim + Postgres `lower()`);
+/// callers reject control characters before resolving the account at all.
+pub async fn lowered_email(conn: &impl ConnectionTrait, email: &str) -> anyhow::Result<String> {
     let email = email.trim().to_owned();
     let row = conn
         .query_one_raw(Statement::from_sql_and_values(
@@ -87,8 +112,7 @@ pub async fn email_key(conn: &impl ConnectionTrait, email: &str) -> anyhow::Resu
         .await
         .context("normalizing email for rate limiting")?
         .context("lower() returned no row")?;
-    let lowered: String = row.try_get("", "email").context("reading lowered email")?;
-    Ok(format!("acct-email:{lowered}"))
+    row.try_get("", "email").context("reading lowered email")
 }
 
 /// Counts one attempt. `Err(retry_after_secs)` when over the limit.

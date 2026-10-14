@@ -12,7 +12,7 @@ AWS-LC, the crypto provider — no cmake needed), Node 22 (`.nvmrc`) and Docker.
 cp .env.example .env
 sed -i "s|^OAUTH_MASTER_KEY=.*|OAUTH_MASTER_KEY=$(openssl rand -base64 32)|" .env
 npm ci --prefix web
-make dev-db        # Postgres 17 on 127.0.0.1:5432
+make dev-db        # Postgres 17 on 127.0.0.1:5432 + Mailpit (inbox http://localhost:8025)
 make run           # backend on :8080, metrics on :9090/metrics
 make web-dev       # (second terminal) SPA on http://*.localhost:5173
 ```
@@ -68,6 +68,7 @@ eslint + vue-tsc.
 - [Architecture](docs/architecture.md) — endpoints, flows, token formats, jobs
 - [Frontend](docs/frontend.md) — the SPA: areas, auth state, API layer
 - [Login JSON API](docs/api/authn.md) — contract for the login SPA
-- [Management API](docs/api/management.md) — `/api/v1` REST contract for the admin / My Account SPAs and service apps
+- [Management API](docs/api/management.md) — `/api/v1` REST contract for the admin / My Account SPAs and service apps ([`me`](docs/api/me.md))
+- [Email](docs/email.md) — verification, password reset, invitations, security notices
 - [Roadmap](docs/roadmap.md)
 - Deployment: [`deploy/k8s/deploy.yml`](deploy/k8s/deploy.yml), `Dockerfile`

@@ -18,8 +18,33 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   form locked for `Retry-After` seconds; wrong credentials get one generic
   message. The page renders no external links (the `tx` id stays in this
   browser; the server also sends `Referrer-Policy: no-referrer`).
+  When the step view's `features.password_reset` is set, the password step offers
+  "Forgot password?": a detour form (`ForgotPasswordForm`, email prefilled) that
+  `POST`s `/api/authn/password-reset` and always shows the same "if an account
+  exists…" sentence; "Back to sign in" returns to the untouched transaction.
+- **Email links** (`areas/email`): `/login/reset`, `/login/invite` (choose a
+  password → `POST /api/authn/email/reset|invite`) and `/myaccount/verify-email`
+  (`POST /api/authn/email/verify`). They are **public** routes — no `meta.area`,
+  so the guard never starts a sign-in (`/myaccount/verify-email` is a top-level
+  static route that outranks the signed-in `/myaccount` subtree). `useLinkToken`
+  reads `#token=` (the fragment: never sent to any server) once and immediately
+  `router.replace`s it out of the URL; the
+  token lives only in component state — never in a store or browser storage.
+  The verify page waits for a "Confirm email address" click instead of POSTing on
+  load, because mail link scanners open links and would consume the token.
+  `invalid_token` → "This link is invalid, has expired or was already used." and
+  the form goes away.
 - **Logout** (`areas/logout`): the RP-initiated-logout confirmation page
   (`POST /oauth2/logout`) and the `?signed_out=1` view.
+- **My Account email & notifications**: the Profile page's `EmailSection` shows the
+  verified badge, "Send verification link" (`POST me/verify-email`) and "Change
+  email" (new address + current password via `PasswordPrompt`'s slot →
+  `POST me/email`; the change applies when the link sent to the new address is
+  opened) — both only when `GET me` reports `features.email`. `/myaccount/notifications`
+  edits `GET/PUT me/notifications` (Telegram column only when that channel exists;
+  notifications go only to a verified address). In the admin center, "New user"
+  can send an invitation (`invite: true`, no password) when `features.email`, and a
+  user without a password gets "Resend invitation" (`POST users/{id}/invite`).
 - **Admin / My Account**: the tenant's built-in public clients `admin-portal`
   / `my-account` (code + PKCE via `oidc-client-ts`, scope
   `openid offline_access api://management-api/Directory.AccessAsUser`, authority

@@ -3,7 +3,10 @@
 # Prerequisite (not created here, holds secrets): a Secret named `oauth-secrets`
 #   kubectl create secret generic oauth-secrets \
 #     --from-literal=DATABASE_URL='postgres://user:pass@host:5432/oauth' \
-#     --from-literal=OAUTH_MASTER_KEY="$(openssl rand -base64 32)"
+#     --from-literal=OAUTH_MASTER_KEY="$(openssl rand -base64 32)" \
+#     --from-literal=SMTP_URL='smtps://user:pass@smtp.example.com'
+# The SMTP_URL line is optional (email, together with SMTP_FROM below): drop
+# it and the trailing `\` above it to run without email.
 # Back up OAUTH_MASTER_KEY: losing it makes stored signing keys unreadable.
 #
 # First admin (after the rollout is ready; idempotent, prints a one-time password
@@ -47,6 +50,10 @@ data:
   SESSION_TTL_HOURS: "24"
   # The ingress appends the client address; its right-most entry is trusted.
   TRUSTED_PROXY_HEADER: "X-Forwarded-For"
+  # Email (verification, password reset, invitations, security notices) needs
+  # SMTP_URL in `oauth-secrets` AND this From address; set both or neither
+  # (one without the other fails startup). The display name is the tenant's.
+  # SMTP_FROM: "noreply@id.example.com"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -70,8 +77,9 @@ spec:
     spec:
       # The server never talks to the Kubernetes API.
       automountServiceAccountToken: false
-      # preStop sleep (5s) + connection draining after SIGTERM.
-      terminationGracePeriodSeconds: 30
+      # preStop sleep (5 s) + connection draining after SIGTERM + an outbox
+      # send in flight (bounded at 60 s) finishing before the pod is killed.
+      terminationGracePeriodSeconds: 75
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001

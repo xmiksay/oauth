@@ -197,9 +197,10 @@ GlobalAdmins (`disabled` here → 400, unknown field).
 | Method & path | Body | Response |
 |---|---|---|
 | `GET users` *paged* `?search=` (email, name) | – | `User`s |
-| `POST users` | `{ email, display_name, password?, must_change_password? (default true) }` | 201 `{ user, one_time_password }` — generated (24 chars, must change) when `password` is omitted, else `null` |
+| `POST users` | `{ email, display_name, password?, must_change_password? (default true), invite? }` | 201 `{ user, one_time_password, invite_sent }` — password generated (24 chars, must change) when `password` is omitted, else `null`. `invite: true` (only with email configured, else 400; not with `password` / `must_change_password`): no password, a 7-day invitation link is mailed instead. With email configured a non-invited user gets a verification link |
 | `GET users/{id}` | – | `UserDetail` |
-| `PATCH users/{id}` | `{ display_name?, email?, disabled? }` | `User` (409 if the email is taken) |
+| `PATCH users/{id}` | `{ display_name?, email?, disabled? }` | `User` (409 if the email is taken). A new email resets `email_verified`, voids links sent to the old address, mails a verification link — or, for a user without a password, a new invitation — (email configured) and notifies the old address if it was verified |
+| `POST users/{id}/invite` | – | 204: re-sends the invitation, the older link stops working (409 if the user has a password, 400 email not configured) |
 | `DELETE users/{id}` | – | 204 (sessions, tokens, memberships, roles, grants cascade) |
 | `POST users/{id}/reset-password` | `{ password?, must_change_password? (default true) }` (send `{}` to generate) | `{ one_time_password, must_change_password }` |
 | `POST users/{id}/reset-mfa` | – | 204: TOTP and recovery codes deleted |
@@ -345,6 +346,8 @@ exclusive, RFC 3339) → `AuditEvent`s.
 | `user.create`, `user.update`, `user.delete`, `user.password_reset`, `user.mfa_reset`, `user.sessions_revoke` | admin or app → user | create: `email`, `password` (`generated` / `set_by_admin`); update: `fields`, `disabled`; delete: `email`; reset: `must_change_password`, `generated` |
 | `user.password_change` | user → self | `via`: `sign_in` (forced change) / `me` |
 | `user.profile_update`, `user.session_revoke`, `user.mfa.totp_enroll`, `user.mfa.totp_remove`, `user.mfa.recovery_codes_regenerate` | user → self | `fields` / `session_id` |
+| `user.invite` | admin → user | `email`, `resend` |
+| `user.email_verify_request`, `user.email_verify`, `user.email_change_request`, `user.email_change_complete`, `user.password_reset_request`, `user.password_reset_complete`, `user.invite_accept`, `user.notification_prefs_update` | user → self (link redemptions: by the link's user, with the caller's IP) | `email` / `new_email` / `events` |
 | `group.create`, `group.update`, `group.delete`, `group.member_add`, `group.member_remove` | → group | `display_name`, `fields`, `user_id` |
 | `directory_role.assign`, `directory_role.unassign` | → user | `role`, `assignment_id` |
 | `application.create`, `application.update`, `application.delete`, `application.secret_add`, `application.secret_remove`, `application.scope_add`, `application.scope_update`, `application.scope_remove`, `application.role_add`, `application.role_update`, `application.role_remove`, `application.permission_add`, `application.permission_remove` | → application | `client_id`, `fields`, `secret_id`, `scope_id`/`role_id` + `value`, `permission_id` |
@@ -356,45 +359,6 @@ sign-in attempts are not logged (they cost an attacker nothing). Events are
 deleted after the tenant's `audit_retention_days` (default 90) by the
 sweeper job.
 
-## Me (delegated token of any user of the tenant)
+## Me
 
-| Method & path | Body | Response |
-|---|---|---|
-| `GET me` | – | `UserDetail` |
-| `PATCH me` | `{ display_name }` | `UserDetail` |
-| `POST me/change-password` | `{ current_password, new_password }` | 204 |
-| `POST me/totp` | `{ password }` | `{ secret, otpauth_uri, digits: 6, period: 30, algorithm: "SHA1" }` |
-| `POST me/totp/confirm` | `{ code }` | `{ recovery_codes: [10 × "xxxx-xxxx-xxxx"] }` |
-| `DELETE me/totp` | `{ password }` | 204: TOTP and recovery codes removed |
-| `POST me/recovery-codes` | `{ password }` | `{ recovery_codes }` (replaces all) |
-| `GET me/sessions` | – | `{ items: Session[] }` (`current` marks the token's session) |
-| `DELETE me/sessions/{id}` | – | 204 |
-| `POST me/sessions/revoke-all` | – | 204 |
-| `GET me/consents` | – | `{ items: [ConsentGrant + client: {id, client_id, display_name}, resource: {…}] }` (own grants only) |
-| `DELETE me/consents/{id}` | – | 204 |
-
-- **Security info changes need the current password** (`POST me/totp`,
-  `DELETE me/totp`, `POST me/recovery-codes`; also `change-password`): a
-  stolen access token alone can't add, remove or read out a factor. Wrong
-  password → 403; attempts count against the same per-account rate limit
-  as sign-in (429 + `Retry-After`).
-- TOTP enrollment is two-step. `POST me/totp` stores a pending secret
-  (replacing an earlier pending one; 409 if a confirmed TOTP exists — remove
-  it first; the store itself never overwrites a confirmed factor, so a
-  racing enrollment also gets 409) and returns it once (base32, plus an `otpauth://` URI with the
-  tenant's display name as issuer). Sign-in ignores it until
-  `POST me/totp/confirm` with a current code (400 invalid code, 409 nothing
-  pending), which activates it and returns 10 new recovery codes, shown once.
-  From then on sign-in asks for a TOTP or recovery code.
-- `change-password` follows the sign-in password rules (new ≠ current) and
-  ends every **other** session of the user with their refresh / opaque
-  access tokens; the session the calling token belongs to (and the refresh
-  tokens issued in it) survives, so the SPA keeps working. Admin resets,
-  `revoke-sessions` and the sign-in forced change end all sessions.
-- `DELETE me/sessions/{id}` signs that device out: the session and the
-  refresh-token families started in it (with their opaque access tokens).
-  `revoke-all` = every session including the caller's (its management
-  token stops working immediately).
-- `DELETE me/consents/{id}` deletes the user's own grant and revokes the
-  client's refresh / opaque tokens for that resource and user. Tenant-wide
-  admin grants are not listed and not revocable here.
+`/api/v1/me…` (self-service, any user's delegated token): see [me.md](me.md).

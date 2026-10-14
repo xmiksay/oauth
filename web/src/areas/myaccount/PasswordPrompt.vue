@@ -4,7 +4,10 @@ import ModalDialog from '@/components/ModalDialog.vue'
 import ErrorAlert from '@/components/ErrorAlert.vue'
 import { passwordError } from './passwordError'
 
-/** Re-asks for the current password before a security-info change, then runs `action`. */
+/**
+ * Re-asks for the current password before a security-info change, then runs `action`.
+ * The default slot adds fields above the password (their state stays with the caller).
+ */
 const props = defineProps<{
   open: boolean
   title: string
@@ -55,6 +58,7 @@ async function submit() {
       <p class="text-sm">
         {{ message }}
       </p>
+      <slot />
       <div>
         <label
           class="label"

@@ -3,7 +3,7 @@
 use anyhow::Context;
 use entity::{
     directory_role_assignments,
-    enums::{DirectoryRole, UserType},
+    enums::{DirectoryRole, EmailTokenPurpose, UserType},
     users,
 };
 use sea_orm::{
@@ -12,6 +12,8 @@ use sea_orm::{
     sea_query::{Expr, ExprTrait, Func, OnConflict},
 };
 use uuid::Uuid;
+
+use crate::mail::tokens;
 
 use super::{
     DirectoryError, display_name, password, reject_control_chars, violates_foreign_key,
@@ -129,7 +131,8 @@ pub async fn set_password(
 }
 
 /// [`set_password`], sparing `keep_session` (and its tokens): a user who
-/// changes their own password stays signed in where they did it.
+/// changes their own password stays signed in where they did it. Either
+/// way pending reset and invitation links stop working.
 pub async fn set_password_keeping(
     conn: &impl ConnectionTrait,
     tenant_id: Uuid,
@@ -156,6 +159,9 @@ pub async fn set_password_keeping(
         return Err(DirectoryError::NotFound);
     }
     revoke_credentials(conn, tenant_id, user_id, keep_session).await?;
+    // A new password supersedes pending reset / invitation links.
+    let superseded = [EmailTokenPurpose::Reset, EmailTokenPurpose::Invite];
+    tokens::invalidate(conn, tenant_id, user_id, &superseded).await?;
     Ok(())
 }
 

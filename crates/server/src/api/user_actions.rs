@@ -1,7 +1,7 @@
 //! Admin actions on a user: password reset, MFA reset, sessions.
 
 use axum::{extract::State, http::StatusCode};
-use entity::{sessions, user_recovery_codes, user_totp};
+use entity::{enums::NotifyEvent, sessions, user_recovery_codes, user_totp};
 use sea_orm::{
     ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, TransactionTrait,
 };
@@ -22,6 +22,7 @@ use crate::{
     authz::{Access, Area},
     directory::{self, password},
     error::AppResult,
+    notify,
 };
 
 pub fn session_view(s: &sessions::Model, current: Option<Uuid>) -> Value {
@@ -123,9 +124,19 @@ pub async fn reset_password(
     let chosen = ChosenPassword::new(body.password, body.must_change_password)?;
     let tenant_id = caller.tenant_id();
     let txn = state.db.begin().await?;
-    find_user(&txn, tenant_id, id).await?;
+    let user = find_user(&txn, tenant_id, id).await?;
     ensure_can_modify_user(&txn, &caller, id).await?;
     directory::set_password(&txn, tenant_id, id, &chosen.value, chosen.must_change).await?;
+    let facts = notify::change("reset by an administrator");
+    notify::event(
+        &txn,
+        &state.config,
+        &caller.tenant,
+        &user,
+        NotifyEvent::PasswordChanged,
+        &facts,
+    )
+    .await?;
     let details = json!({
         "must_change_password": chosen.must_change,
         "generated": chosen.generated,
@@ -155,9 +166,19 @@ pub async fn reset_mfa(
     caller.require(Area::Directory, Access::Write)?;
     let tenant_id = caller.tenant_id();
     let txn = state.db.begin().await?;
-    find_user(&txn, tenant_id, id).await?;
+    let user = find_user(&txn, tenant_id, id).await?;
     ensure_can_modify_user(&txn, &caller, id).await?;
     delete_mfa(&txn, tenant_id, id).await?;
+    let facts = notify::change("second factors removed by an administrator");
+    notify::event(
+        &txn,
+        &state.config,
+        &caller.tenant,
+        &user,
+        NotifyEvent::MfaChanged,
+        &facts,
+    )
+    .await?;
     caller
         .audit(
             &txn,

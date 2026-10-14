@@ -55,11 +55,24 @@ pub struct Fixture {
     pub web_secret: String,
     /// Public client with a loopback redirect.
     pub spa: applications::Model,
+    /// The app's detached work (`AppState::tasks`).
+    pub tasks: tokio_util::task::TaskTracker,
+    /// Its cap on detached work (`AppState::detached`).
+    pub detached: std::sync::Arc<tokio::sync::Semaphore>,
 }
 
 impl Fixture {
     pub async fn new() -> Self {
-        let (pg, db, config) = super::migrated_db().await;
+        Self::build(&[]).await
+    }
+
+    /// A fixture whose server can send email (SMTP configured).
+    pub async fn with_email() -> Self {
+        Self::build(&super::SMTP_ENV).await
+    }
+
+    async fn build(env: &[(&'static str, &str)]) -> Self {
+        let (pg, db, config) = super::migrated_db_with(env).await;
         let tenant = directory::create_tenant(
             &db,
             &config,
@@ -137,10 +150,10 @@ impl Fixture {
         .await;
         assign_role(&db, &orders, approver, Some(group), None).await;
 
-        let app = app::router(
-            AppState::new(db.clone(), config.clone(), true),
-            super::no_web_dist(),
-        );
+        let state = AppState::new(db.clone(), config.clone(), true);
+        let tasks = state.tasks.clone();
+        let detached = state.detached.clone();
+        let app = app::router(state, super::no_web_dist());
         Self {
             _pg: pg,
             db,
@@ -155,6 +168,8 @@ impl Fixture {
             web,
             web_secret,
             spa,
+            tasks,
+            detached,
         }
     }
 

@@ -101,6 +101,48 @@ pub enum Outcome {
     Failure,
 }
 
+/// Delivery channel of an outbox message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter, DeriveActiveEnum)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
+pub enum Channel {
+    #[sea_orm(string_value = "email")]
+    Email,
+    #[sea_orm(string_value = "telegram")]
+    Telegram,
+}
+
+/// What an email link token proves / allows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter, DeriveActiveEnum)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
+pub enum EmailTokenPurpose {
+    /// Verifies the user's current address.
+    #[sea_orm(string_value = "verify")]
+    Verify,
+    #[sea_orm(string_value = "reset")]
+    Reset,
+    #[sea_orm(string_value = "invite")]
+    Invite,
+    /// Verifies `new_email` and makes it the user's address.
+    #[sea_orm(string_value = "change")]
+    Change,
+}
+
+/// Security notices a user can opt out of, per channel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter, DeriveActiveEnum)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
+pub enum NotifyEvent {
+    #[sea_orm(string_value = "password_changed")]
+    PasswordChanged,
+    #[sea_orm(string_value = "mfa_changed")]
+    MfaChanged,
+    #[sea_orm(string_value = "email_changed")]
+    EmailChanged,
+    #[sea_orm(string_value = "new_sign_in")]
+    NewSignIn,
+    #[sea_orm(string_value = "token_reuse")]
+    TokenReuse,
+}
+
 /// Next step of a login transaction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter, DeriveActiveEnum)]
 #[sea_orm(rs_type = "String", db_type = "Text")]

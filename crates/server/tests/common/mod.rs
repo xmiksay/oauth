@@ -4,6 +4,7 @@
 
 pub mod browser;
 pub mod flow;
+pub mod mail;
 pub mod mgmt;
 pub mod seed;
 
@@ -91,7 +92,16 @@ pub fn default_host(req: &mut Request<Body>) {
 /// Config pointing at `db_url` with a fixed master key and `public_url`
 /// (normally [`PUBLIC_URL`]); `Err` when the config is rejected.
 pub fn try_config(db_url: &str, public_url: &str) -> anyhow::Result<Config> {
-    let env = HashMap::from([
+    config_with(db_url, public_url, &[])
+}
+
+/// [`try_config`] plus `extra` variables.
+pub fn config_with(
+    db_url: &str,
+    public_url: &str,
+    extra: &[(&'static str, &str)],
+) -> anyhow::Result<Config> {
+    let mut env = HashMap::from([
         ("DATABASE_URL", db_url.to_owned()),
         ("PUBLIC_URL", public_url.to_owned()),
         // 32 bytes of 0x2a.
@@ -100,8 +110,16 @@ pub fn try_config(db_url: &str, public_url: &str) -> anyhow::Result<Config> {
             "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=".to_owned(),
         ),
     ]);
+    env.extend(extra.iter().map(|(k, v)| (*k, (*v).to_owned())));
     Config::from_lookup(|k| env.get(k).cloned())
 }
+
+/// SMTP settings for email-enabled fixtures (nothing listens there: tests
+/// deliver through a capturing mailer).
+pub const SMTP_ENV: [(&str, &str); 2] = [
+    ("SMTP_URL", "smtp://127.0.0.1:1"),
+    ("SMTP_FROM", "noreply@id.example.test"),
+];
 
 pub fn test_config(db_url: &str, public_url: &str) -> Config {
     try_config(db_url, public_url).expect("test config")
@@ -109,9 +127,15 @@ pub fn test_config(db_url: &str, public_url: &str) -> Config {
 
 /// Fresh Postgres, migrated, plus a config pointing at it.
 pub async fn migrated_db() -> (TestDb, DatabaseConnection, Config) {
+    migrated_db_with(&[]).await
+}
+
+pub async fn migrated_db_with(
+    extra: &[(&'static str, &str)],
+) -> (TestDb, DatabaseConnection, Config) {
     let pg = start_postgres().await;
     let conn = oauth_server::db::connect(&pg.url).await.expect("connect");
     oauth_server::db::migrate(&conn).await.expect("migrate");
-    let config = test_config(&pg.url, PUBLIC_URL);
+    let config = config_with(&pg.url, PUBLIC_URL, extra).expect("test config");
     (pg, conn, config)
 }

@@ -32,6 +32,7 @@ async function mountList(roles: ('UserAdmin' | 'ApplicationAdmin')[] = ['UserAdm
     ...user(0),
     directory_roles: roles,
     mfa: { totp: false, totp_pending: false, recovery_codes_remaining: 0 },
+    features: { email: false },
   })
   const router = createRouter({
     history: createMemoryHistory(),
@@ -100,13 +101,31 @@ describe('UsersList', () => {
     list.mockResolvedValue({ items: [], next_cursor: null })
     const w = await mountList()
     const { default: CreateUserDialog } = await import('./CreateUserDialog.vue')
-    w.findComponent(CreateUserDialog).vm.$emit('created', 'one-time-pw-123')
+    w.findComponent(CreateUserDialog).vm.$emit('created', {
+      user: user(9),
+      one_time_password: 'one-time-pw-123',
+      invite_sent: false,
+    })
     await flushPromises()
     expect(w.find('[data-testid=secret-values]').text()).toBe('one-time-pw-123')
     await w.findAll('button').find((b) => b.text() === 'Done')?.trigger('click')
     await flushPromises()
     expect(w.find('[data-testid=secret-values]').exists()).toBe(false)
     expect(w.html()).not.toContain('one-time-pw-123')
+  })
+
+  it('confirms an invitation instead of showing a password', async () => {
+    list.mockResolvedValue({ items: [], next_cursor: null })
+    const w = await mountList()
+    const { default: CreateUserDialog } = await import('./CreateUserDialog.vue')
+    w.findComponent(CreateUserDialog).vm.$emit('created', {
+      user: user(9),
+      one_time_password: null,
+      invite_sent: true,
+    })
+    await flushPromises()
+    expect(w.find('[role=status]').text()).toBe('Invitation sent to user9@example.com.')
+    expect(w.find('[data-testid=secret-values]').exists()).toBe(false)
   })
 
   it('shows a permission message on 403', async () => {

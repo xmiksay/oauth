@@ -46,13 +46,33 @@ the API answers with a `redirect`, which the SPA follows
   "consent": {
     "resource": { "display_name": "Orders API", "audience": "api://orders" },
     "scopes": [{ "value": "Orders.Read", "description": "Read your orders" }]
-  }
+  },
+  "features": { "password_reset": true }
 }
 ```
 
 `user` is `null` until the password step succeeded; `consent` is `null`
 unless `step` is `consent` (it then lists only the scopes awaiting approval —
-previously granted ones are not repeated).
+previously granted ones are not repeated). `features.password_reset` is
+true when the server can send email (show "Forgot password?").
+
+## Email links (no transaction)
+
+Same CSRF rules and error shape; no tx cookie needed — the token from the
+link is the credential. Flows in [../email.md](../email.md).
+
+| `POST` | Body | Response |
+|---|---|---|
+| `/api/authn/password-reset` | `{ "email" }` | `202 { "accepted": true }` for every well-formed address, known or not, answered before the account is even looked up (a link goes only to an enabled user with a verified address or a pending invitation). `404 not_found` when email isn't configured |
+| `/api/authn/email/reset` | `{ "token", "new_password" }` | `204`; the password is set, every session and refresh / opaque token of the user ends, MFA stays required |
+| `/api/authn/email/invite` | `{ "token", "new_password" }` | `204`; first password set, address verified |
+| `/api/authn/email/verify` | `{ "token" }` | `200 { "purpose": "verify" \| "change", "email" }`; `409 conflict` when a changed-to address was taken meanwhile |
+
+Links carry the token in the fragment (`…#token=…`); the SPA posts it. A
+token works once, before it expires, on the host of the tenant that issued
+it, for an enabled user whose address is still the one it was sent to (an
+invitation also only while no password is set); anything else is
+`400 invalid_token` (never distinguished). Password rules as for `change-password`.
 
 ## Final response
 
@@ -90,6 +110,8 @@ earlier session of this browser (e.g. after `prompt=login`).
 | Status | `error` | When |
 |---|---|---|
 | 400 | `invalid_request` | Malformed JSON / missing fields; wrong `Content-Type`; an email containing control characters (rejected before any lookup or rate-limit bucket); consent approval not listing every shown scope; `change-password` with a password outside 12–256 chars or equal to the current one |
+| 400 | `invalid_token` | Email link token unknown, expired, used, of another tenant, or its user disabled |
+| 409 | `conflict` | Email change: the new address was taken meanwhile |
 | 401 | `invalid_credentials` | Wrong email or password, or unknown email — never distinguished (unknown accounts are verified against a dummy argon2 hash to equalise timing) |
 | 401 | `invalid_code` | Wrong / reused TOTP code or recovery code |
 | 403 | `account_disabled` | Correct password, but the user is disabled |
@@ -109,6 +131,17 @@ successes too. IPv6 clients are bucketed per /64.
 | client IP, per tenant | 30 / 5 min | `password`, `totp`, `recovery`, `change-password` |
 | account, per tenant | 10 / 15 min | same; keyed by user id once the email resolves, else by the trimmed, lower-cased email |
 | client IP, per tenant | 60 / 5 min | `/oauth2/authorize` requests that create a login transaction → `429` JSON (`rate_limited`), not a redirect |
+| client IP, per tenant | 10 / 15 min | `password-reset` |
+| email address, per tenant | 3 / 15 min | `password-reset`; keyed by the trimmed, lower-cased address whether or not it exists |
+| client IP, per tenant | 30 / 5 min | `email/{verify,reset,invite}` |
+
+## Device cookie
+
+Every new sign-in sets `__Host-oauth_dev=<random>; Path=/; Max-Age=31536000;
+HttpOnly; SameSite=Lax; Secure` (reused while present). The server keeps
+SHA-256 over user id ‖ value (`known_devices`); a sign-in from a browser
+unknown for that user queues a "new sign-in" notice, except on the user's
+first sign-in ever.
 
 ## Session cookie
 

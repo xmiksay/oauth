@@ -33,8 +33,9 @@ Spawned by `serve::run_with` after migrations; stop on the shutdown token (a run
 
 | Job | Every | Does |
 |---|---|---|
-| `sweeper` | 60 s | `DELETE … WHERE expires_at < now()` on `login_transactions`, `authorization_codes`, `sessions`, `refresh_tokens`, `opaque_access_tokens`, `rate_limit_buckets` (readers already ignore expired rows; this bounds growth), and `audit_events` older than their tenant's `audit_retention_days` |
+| `sweeper` | 60 s | `DELETE … WHERE expires_at < now()` on `login_transactions`, `authorization_codes`, `sessions`, `refresh_tokens`, `opaque_access_tokens`, `rate_limit_buckets`, `outbox`, `email_tokens`, `known_devices` (readers already ignore expired rows; this bounds growth), and `audit_events` older than their tenant's `audit_retention_days` |
 | `rotation` | 5 min | Per (tenant, alg), each tenant in its own transaction (one failing tenant doesn't block the others) while the run's lock transaction holds the leader lock: `KEY_PREPUBLISH_HOURS` before the active key is `KEY_ROTATION_DAYS` old, publish a `next` key (in JWKS, not signing); once it has been published that long, retire the active key (`expires_at` = now + the tenant's longest access-token TTL, min 1 h, + 1 h) and activate the next one — retire first, in one transaction, because the partial unique indexes allow one active key per (tenant, alg) per statement. Runs on an explicit `now` (tests move the clock) |
+| `outbox` | 10 s | Only with SMTP configured. Claim-then-send: a short transaction (holding the job lock) leases up to 8 due `email` messages (`attempts + 1`, `next_attempt_at = now + 10 min`, `SKIP LOCKED`; 8 × 60 s + 30 s skew margin < 10 min is a compile-time check), then each is sent outside any transaction (60 s per send) — never starting a send that could end within 30 s of the lease's end, skipping a row whose lease was taken over — and recorded with its own statement fenced on the claimed `(attempts, next_attempt_at)`: sent / backoff 1 m, 5 m, 30 m, 2 h, then 6 h / dead after 8 attempts or a permanent rejection (bodies of sent and dead rows dropped, enforced by a CHECK), times taken at the outcome. Rows a run stops before (shutdown — checked between messages — or the deadline) are released (due now, attempt undone); after a crash they retry after the lease. A message past its `expires_at` is never attempted again. Each job run is its own task, so a panic is logged and the loop goes on. Logs carry id, kind and error kind only. Explicit clock. Details in [email.md](email.md#delivery) |
 
 ## HTTP surface (current)
 
@@ -69,8 +70,9 @@ proxy sits in front; the server ignores the forwarded host either way).
 | `POST /oauth2/revoke` (RFC 7009) | app | `oidc::revoke` |
 | `GET /oauth2/logout` (RP-initiated), `POST` (confirmation page, CSRF-checked) | app | `oidc::logout` |
 | `GET /api/authn/tx/{id}`, `POST …/{password,totp,recovery,change-password,consent}` — login JSON API, contract in [api/authn.md](api/authn.md) | app | `authn` |
+| `POST /api/authn/password-reset`, `POST /api/authn/email/{verify,reset,invite}` — email links (the token is the credential), same contract | app | `authn::{reset,email}` |
 | `/api/v1/{settings,users,groups,directory-roles,applications,role-assignments,consents,audit-events}[/…]`, `/api/v1/me[/…]`, and on the system host only `/api/v1/tenants[/{slug}]` (system Global Admins) — management REST API, bearer tokens for the host tenant's `management-api`; contract in [api/management.md](api/management.md) | app | `api` |
-| `/{login,logout,myaccount,admin}[/…]` → `index.html` | app | `spa` |
+| `/{login,logout,myaccount,admin}[/…]` → `index.html` (incl. the public link pages `/login/reset`, `/login/invite`, `/myaccount/verify-email`) | app | `spa` |
 | any other path → static file from `WEB_DIST_DIR`, else 404 | app | `spa` |
 | `GET /metrics` — Prometheus text format | metrics | `metrics` |
 
@@ -82,9 +84,9 @@ Implemented:
 
 | Module | Responsibility |
 |---|---|
-| `config` | Env parsing + validation (`env.rs`, `Config::from_lookup` for tests); `PublicUrl` (`public_url.rs`: origin-only `PUBLIC_URL`, `tenant_origin`, `host_kind`); redacting `Debug` |
+| `config` | Env parsing + validation (`env.rs`, `Config::from_lookup` for tests); `PublicUrl` (`public_url.rs`: origin-only `PUBLIC_URL`, `tenant_origin`, `host_kind`); `SmtpConfig` (`smtp.rs`: optional `SMTP_URL` + `SMTP_FROM`, both or neither, URL redacted); redacting `Debug` |
 | `error` | `AppError` → JSON `{error, error_description}`; 5xx causes logged, never leaked |
-| `app` | `AppState { db, migrated }` and router assembly (trace + metrics layers) |
+| `app` | `AppState { db, config, migrated, tasks, detached }` (`tasks`: `TaskTracker` of work handlers leave running after answering, awaited at shutdown; `detached`: `Semaphore` capping it at 64 in flight) and router assembly (trace + metrics layers) |
 | `db` | Pool connect; `migrate()` in one transaction holding `pg_advisory_xact_lock`; `migrate_and_reconcile()` (startup) adds `builtin_apps::reconcile_all` to it |
 | `health` | `/healthz`, `/readyz` |
 | `metrics` | Global Prometheus recorder, `/metrics` router, `http_requests_total` + `http_request_duration_seconds`. Labels are bounded: `path` = route template (fallback → `unmatched`), `method` = standard verb or `other` |
@@ -97,11 +99,13 @@ Implemented:
 | `tenancy` | `resolve_host` middleware (host → active tenant, apex redirect, else 404) and the `Tenant` extractor reading its result |
 | `secret` | Random bearer secrets (256-bit, base64url), random UUIDv4 handles, SHA-256 storage hash, constant-time compare |
 | `oidc` | Protocol endpoints; `params` (duplicate-rejecting form/query parsing, `AuthRequest`), `pkce`, `redirect` (matching + building), `scope` (parsing, resource resolution), `client_auth`, `error` (`OAuthError`, RFC 6749 JSON + `WWW-Authenticate`, `no-store`) |
-| `authn` | Login JSON API + CSRF guard (`AuthnError`, `JsonBody`), `cookie` (session + tx-binding cookies), `ctx`, `tx` (login transactions + browser binding + view), `password`, `mfa` (TOTP / recovery), `complete` (next step, consent, session + code), `session` (cookie), `totp` (RFC 6238 via AWS-LC HMAC, sealed secret, replay-protected step), `recovery`, `rate_limit`, `ip` |
+| `mail` | `Mailer` trait (`Email`, `MailError` transient/permanent) + `SmtpMailer` (lettre, rustls on AWS-LC, webpki roots, 15 s command timeout); `templates` (plain-text link messages and security notices); `outbox` (`enqueue` on the caller's transaction, body sealed, backoff schedule); `tokens` (email link tokens: issue voids the user's older ones of that purpose, atomic single-use `consume` scoped to the tenant); `links::send` (token + message + outbox row) |
+| `notify` | Security notices (`notify::event`, `email_changed` to the old address) honouring `notification_prefs` (no row = on); email only to a verified address |
+| `authn` | Login JSON API + CSRF guard (`AuthnError`, `JsonBody`), `cookie` (session, tx-binding and device cookies), `device` (known devices + new sign-in notice), `reset` (password-reset request / completion), `email` (verify / invite link redemption), `ctx`, `tx` (login transactions + browser binding + view), `password`, `mfa` (TOTP / recovery), `complete` (next step, consent, session + code), `session` (cookie), `totp` (RFC 6238 via AWS-LC HMAC, sealed secret, replay-protected step), `recovery`, `rate_limit`, `ip` |
 | `consent` | Pure evaluation (granted / needs user / needs admin) + grant lookup / merge-upsert |
 | `tokens` | Issuance (`issue_delegated`, `issue_app_only`), `inspect` (access-token resolution incl. user-disabled check), `claims` (pure builders), `jwt` (sign with active key, verify against published keys + `typ`), `opaque`, `refresh` (family state machine, rotation, revocation), `code`, `principal` (groups, roles) |
-| `jobs` | `sweeper` (incl. audit retention), `rotation`, leader lock helper |
-| `api` | Management REST API: `auth` (`Caller` / `SystemAdmin` bearer extractors), `guard` (administrator protection, last-GlobalAdmin lock), `page` (UUIDv7 keyset pagination), `validate` (client ids, redirect / identifier URIs, scope values), `app_rules` (app lookup + row lock, built-in protection, credential protection of privileged apps, lifetime and per-app caps), `extract` (JSON-error extractors), one module per resource (`tenants`, `users`, `user_actions`, `groups`, `directory_roles`, `applications`, `apps_secrets`, `apps_scopes`, `apps_roles`, `apps_permissions`, `role_assignments`, `consents`, `audit_events`, `me`, `me_mfa`) |
+| `jobs` | `sweeper` (incl. audit retention), `rotation`, `outbox` (email delivery), leader lock helper |
+| `api` | Management REST API: `auth` (`Caller` / `SystemAdmin` bearer extractors), `guard` (administrator protection, last-GlobalAdmin lock), `page` (UUIDv7 keyset pagination), `validate` (client ids, redirect / identifier URIs, scope values), `app_rules` (app lookup + row lock, built-in protection, credential protection of privileged apps, lifetime and per-app caps), `extract` (JSON-error extractors), one module per resource (`tenants`, `users`, `user_actions`, `user_invite`, `groups`, `directory_roles`, `applications`, `apps_secrets`, `apps_scopes`, `apps_roles`, `apps_permissions`, `role_assignments`, `consents`, `audit_events`, `me`, `me_mfa`, `me_email`) |
 | `authz` | Pure permission matrix (directory roles, `Directory.Read.All` / `ReadWrite.All`) and administrator protection |
 | `audit` | Closed `EventType` set, `record` (on the mutation's transaction), `token_replay`, retention `sweep` |
 
@@ -114,8 +118,8 @@ for the database TLS connection; that is the TLS stack's choice, not ours.)
 | Use | Primitive |
 |---|---|
 | Token signing keys | RSA-2048 (RS256) and P-256 (ES256) generated by AWS-LC, stored as PKCS#8 DER; JWS via `jsonwebtoken` with its `aws_lc_rs` backend (RSA keys reach it as PKCS#8 PEM — AWS-LC can't export the PKCS#1 DER its raw-DER path expects) |
-| Secrets at rest (signing keys, TOTP) | AES-256-GCM under `OAUTH_MASTER_KEY`, random 96-bit nonce, sealed as `nonce ‖ ciphertext ‖ tag`, AAD binding the blob to its row (signing keys: tenant id ‖ kid; TOTP: `"totp"` ‖ tenant id ‖ user id) |
-| Bearer values (session cookie, codes, refresh / opaque access tokens, client secrets, recovery codes) | 256 random bits from AWS-LC; stored as SHA-256 only, looked up by hash (secrets compared in constant time) |
+| Secrets at rest (signing keys, TOTP, outbox bodies) | AES-256-GCM under `OAUTH_MASTER_KEY`, random 96-bit nonce, sealed as `nonce ‖ ciphertext ‖ tag`, AAD binding the blob to its row (signing keys: tenant id ‖ kid; TOTP: `"totp"` ‖ tenant id ‖ user id; outbox: `"outbox"` ‖ tenant id ‖ message id) |
+| Bearer values (session and device cookies, codes, refresh / opaque access tokens, client secrets, recovery codes, email link tokens) | 256 random bits from AWS-LC; stored as SHA-256 only, looked up by hash (secrets compared in constant time) |
 | TOTP | HMAC-SHA-1 (AWS-LC), 6 digits, 30 s, ±1 step, last used step stored (no replay) |
 | PKCE | S256 only, required for every client |
 | `kid` | RFC 7638 JWK thumbprint (SHA-256) |
@@ -142,7 +146,7 @@ migration transaction). Deleting a tenant cascades to everything it owns.
 | Table | Notes |
 |---|---|
 | `tenants` | `slug` unique (`^[a-z0-9][a-z0-9-]{1,62}$`, reserved list in `directory::slug`), `is_system` (at most one), `disabled`, `audit_retention_days` |
-| `users` | `user_type` member\|guest, `email` unique per tenant on `lower(email)` (casing kept), `password_hash` (argon2id PHC, nullable), `must_change_password`, `disabled` |
+| `users` | `user_type` member\|guest, `email` unique per tenant on `lower(email)` (casing kept), `password_hash` (argon2id PHC, nullable), `must_change_password`, `disabled`, `first_device_at` (first sign-in device recorded) |
 | `user_totp` · `user_recovery_codes` | sealed TOTP secret + `confirmed_at`; SHA-256 code hashes + `used_at` |
 | `groups` · `group_members` | static groups; members are users |
 | `directory_role_assignments` | (user, role) unique; role GlobalAdmin\|ApplicationAdmin\|UserAdmin |
@@ -159,6 +163,10 @@ migration transaction). Deleting a tenant cascades to everything it owns.
 | `refresh_tokens` | `token_hash`, `family_id`, client, user, session, originating code, scopes, resource, amr, auth_time, `expires_at` (fixed per family), `rotated_at`, `revoked_at` |
 | `opaque_access_tokens` | `token_hash`, client, resource, user, originating code / family, `claims` jsonb, `expires_at`, `revoked_at` |
 | `rate_limit_buckets` | (tenant, SHA-256 of key, window start) → count, `expires_at` |
+| `outbox` | `channel` email\|telegram, `recipient`, `kind` (shape-checked), `subject`, `body_enc` (sealed: bodies carry link tokens; NULL once sent or dead), `attempts`, `next_attempt_at`, `last_error` (error kind only), `sent_at`, `dead_at`, `expires_at` (= the link's lifetime, notices 24 h). Only the tenant FK |
+| `email_tokens` | `token_hash` (unique), user, `email` (the address at issue time; redeeming requires it unchanged), `purpose` verify\|reset\|invite\|change (24 h / 30 min / 7 d / 24 h), `new_email` (change only, CHECK), `consumed_at` (single use) |
+| `known_devices` | (tenant, user, SHA-256 of user id ‖ device cookie) unique, user agent, `first_seen` / `last_seen`, `expires_at` 1 y (refreshed per sign-in) |
+| `notification_prefs` | PK (tenant, user, event ∈ password_changed, mfa_changed, email_changed, new_sign_in, token_reuse); `email`, `telegram` booleans; no row = both on |
 | `audit_events` | `at`, `actor_type` user\|application\|system + `actor_id`, `event_type` (closed Rust enum `audit::EventType`, DB only checks the dotted shape so retired types stay valid history), `target_type` + `target_id`, `outcome` success\|failure, `ip`, `details` jsonb (never secrets). No FKs besides the tenant: events outlive what they mention. Indexed `(tenant_id, id DESC)` for newest-first listing, `(tenant_id, at)` for retention |
 
 `user_totp.last_used_step` (added by the OIDC migration) prevents TOTP replay.
@@ -297,7 +305,9 @@ cross-browser completion, no login CSRF / session fixation through a planted
 `tx`). The login API and `POST /oauth2/logout` require `Content-Type:
 application/json` and `Origin` = the tenant's own origin on every POST
 (another tenant's pages are cross-origin, hence rejected). A new
-sign-in deletes the browser's previous session; setting a password deletes
+sign-in deletes the browser's previous session and records the browser's
+device cookie `__Host-oauth_dev` (random, 1 year, `HttpOnly`, `SameSite=Lax`;
+an unknown device for that user queues a "new sign-in" notice); setting a password deletes
 all the user's sessions and revokes their refresh / opaque tokens. Client IP
 (rate limits, session record) = socket peer, or with `TRUSTED_PROXY_HEADER`
 the right-most entry of that header (one trusted proxy hop assumed); IPv6 is
@@ -354,6 +364,10 @@ opaque access tokens for the resource (one user, or everyone for an admin
 grant); deleting a scope revokes the families holding it, and refresh
 never re-mints a scope the resource no longer exposes.
 
+## Email
+
+Optional; flows, links, tokens and notices in [email.md](email.md).
+
 ## Frontend (`web/`)
 
 See [frontend.md](frontend.md): one Vue 3 SPA (`/login`, `/logout`, `/myaccount`,
@@ -363,7 +377,8 @@ See [frontend.md](frontend.md): one Vue 3 SPA (`/login`, `/logout`, `/myaccount`
 
 Multi-stage `Dockerfile` (node 22 → rust 1.99.0 → debian bookworm-slim, uid
 10001). `deploy/k8s/deploy.yml`: ConfigMap, Deployment (2 replicas, liveness
-`/healthz`, readiness `/readyz`, 5 s preStop sleep, no service-account token),
+`/healthz`, readiness `/readyz`, 5 s preStop sleep, 75 s grace period so an
+outbox send in flight can finish, no service-account token),
 Service (http 8080, metrics 9090), PodDisruptionBudget (`minAvailable: 1`),
 Ingress for the apex + `*.` wildcard host (TLS Secret `oauth-wildcard-tls`, a
 cert-manager DNS-01 wildcard certificate; the controller must keep `Host`, see the

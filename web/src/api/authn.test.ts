@@ -33,6 +33,21 @@ describe('login API client', () => {
     expect(calls[0]).toMatchObject({ url: '/oauth2/logout', method: 'POST', body: {} })
   })
 
+  it('posts the email-link endpoints outside any transaction', async () => {
+    const calls = mockFetch({ status: 202, body: { accepted: true } }, {}, {}, {})
+    await authn.requestPasswordReset('a@b.c')
+    await authn.verifyEmail('tok')
+    await authn.resetPassword('tok', 'pw')
+    await authn.acceptInvite('tok', 'pw')
+    expect(calls.map((c) => [c.url, c.body])).toEqual([
+      ['/api/authn/password-reset', { email: 'a@b.c' }],
+      ['/api/authn/email/verify', { token: 'tok' }],
+      ['/api/authn/email/reset', { token: 'tok', new_password: 'pw' }],
+      ['/api/authn/email/invite', { token: 'tok', new_password: 'pw' }],
+    ])
+    expect(calls.every((c) => c.method === 'POST')).toBe(true)
+  })
+
   it('tells a step view from a redirect', () => {
     expect(isRedirect({ redirect: 'x' })).toBe(true)
     expect(
@@ -43,6 +58,7 @@ describe('login API client', () => {
         client: { client_id: 'c', display_name: 'C' },
         user: null,
         consent: null,
+        features: { password_reset: false },
       }),
     ).toBe(false)
   })
