@@ -3,7 +3,7 @@
 //! `Directory.AccessAsUser`; no directory role needed.
 
 use axum::{extract::State, http::StatusCode};
-use entity::{applications, consent_grants, sessions, users};
+use entity::{applications, consent_grants, enums::NotifyEvent, sessions, users};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, QueryOrder,
     TransactionTrait,
@@ -26,6 +26,7 @@ use crate::{
     authn::rate_limit,
     directory::{self, display_name, password},
     error::{AppError, AppResult},
+    notify,
     tokens::refresh,
 };
 
@@ -70,9 +71,22 @@ pub async fn verify_password(
     }
 }
 
+/// `UserDetail` + `features` (what the server offers the SPA) — the shape
+/// of every `me` response.
+async fn me_view(state: &AppState, user: &users::Model) -> AppResult<Value> {
+    let mut view = detailed_view(&state.db, user).await?;
+    if let Some(obj) = view.as_object_mut() {
+        obj.insert(
+            "features".into(),
+            json!({ "email": state.config.email_enabled() }),
+        );
+    }
+    Ok(view)
+}
+
 pub async fn get(State(state): State<AppState>, caller: Caller) -> AppResult<axum::Json<Value>> {
     let user = me(&state, &caller).await?;
-    Ok(axum::Json(detailed_view(&state.db, &user).await?))
+    Ok(axum::Json(me_view(&state, &user).await?))
 }
 
 #[derive(Deserialize)]
@@ -92,7 +106,7 @@ pub async fn update(
         &mut row.display_name,
         display_name(&body.display_name, "user")?,
     ) {
-        return Ok(axum::Json(detailed_view(&state.db, &user).await?));
+        return Ok(axum::Json(me_view(&state, &user).await?));
     }
     row.updated_at = Set(chrono::Utc::now().fixed_offset());
     let txn = state.db.begin().await?;
@@ -106,7 +120,7 @@ pub async fn update(
         )
         .await?;
     txn.commit().await?;
-    Ok(axum::Json(detailed_view(&state.db, &updated).await?))
+    Ok(axum::Json(me_view(&state, &updated).await?))
 }
 
 #[derive(Deserialize)]
@@ -150,6 +164,16 @@ pub async fn change_password(
             json!({ "via": "me" }),
         )
         .await?;
+    let facts = notify::change("changed in My Account");
+    notify::event(
+        &txn,
+        &state.config,
+        &caller.tenant,
+        &user,
+        NotifyEvent::PasswordChanged,
+        &facts,
+    )
+    .await?;
     txn.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }

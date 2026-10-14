@@ -4,8 +4,8 @@
 
 use std::{collections::HashMap, net::IpAddr};
 
-use entity::{applications, refresh_tokens};
-use sea_orm::TransactionTrait;
+use entity::{applications, enums::NotifyEvent, refresh_tokens, users};
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, TransactionTrait};
 
 use super::{
     error::{ErrorCode, OAuthError, OAuthResult},
@@ -14,7 +14,7 @@ use super::{
 };
 use crate::{
     app::AppState,
-    audit,
+    audit, notify,
     tenancy::Tenant,
     tokens::{
         self, Delegated, Refresh, TokenSet,
@@ -78,7 +78,7 @@ pub async fn grant(
     let now = chrono::Utc::now().fixed_offset();
     match refresh::state(&row, now) {
         State::Active => {}
-        State::Reused => return Err(reuse(conn, &row, ip).await?),
+        State::Reused => return Err(reuse(state, tenant, conn, &row, client, ip).await?),
         State::Revoked => return Err(OAuthError::invalid_grant("refresh token revoked")),
         State::Expired => return Err(OAuthError::invalid_grant("refresh token expired")),
     }
@@ -117,7 +117,7 @@ pub async fn grant(
     // token we just issued.
     let txn = conn.begin().await?;
     if !refresh::mark_rotated(&txn, row.id).await? {
-        let err = reuse(&txn, &row, ip).await?;
+        let err = reuse(state, tenant, &txn, &row, client, ip).await?;
         txn.commit().await?;
         return Err(err);
     }
@@ -152,9 +152,14 @@ pub async fn grant(
     Ok(set)
 }
 
+/// Revokes the family, audits the replay and warns the user (the token may
+/// have been stolen).
 async fn reuse(
+    state: &AppState,
+    tenant: &Tenant,
     conn: &impl sea_orm::ConnectionTrait,
     row: &refresh_tokens::Model,
+    client: &applications::Model,
     ip: Option<IpAddr>,
 ) -> OAuthResult<OAuthError> {
     tracing::warn!(family_id = %row.family_id, "refresh token reuse; revoking the family");
@@ -170,6 +175,23 @@ async fn reuse(
         details,
     )
     .await?;
+    let user = users::Entity::find_by_id(row.user_id)
+        .filter(users::Column::TenantId.eq(row.tenant_id))
+        .one(conn)
+        .await
+        .map_err(anyhow::Error::from)?;
+    if let Some(user) = user {
+        let facts = [("Application", client.display_name.clone())];
+        notify::event(
+            conn,
+            &state.config,
+            tenant,
+            &user,
+            NotifyEvent::TokenReuse,
+            &facts,
+        )
+        .await?;
+    }
     Ok(OAuthError::invalid_grant(
         "refresh token already used; the grant was revoked",
     ))

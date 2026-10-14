@@ -165,4 +165,26 @@ describe('me', () => {
     await me.changePassword('old', 'new-password-123')
     expect(calls[0]?.body).toEqual({ current_password: 'old', new_password: 'new-password-123' })
   })
+
+  it('maps the email change and PUTs notification preferences', async () => {
+    const settings = { channels: { email: true, telegram: false }, items: [] }
+    const calls = mockFetch({ status: 202, body: { sent: true } }, { body: settings })
+    await me.changeEmail('new@b.c', 'pw')
+    const items = [{ event: 'new_sign_in' as const, email: false, telegram: false }]
+    expect(await me.updateNotifications(items)).toEqual(settings)
+    expect(calls[0]).toMatchObject({
+      method: 'POST',
+      url: `${T}/me/email`,
+      body: { new_email: 'new@b.c', password: 'pw' },
+    })
+    expect(calls[1]).toMatchObject({ method: 'PUT', url: `${T}/me/notifications`, body: { items } })
+  })
+
+  it('invites a user and re-sends the invitation with {}', async () => {
+    const calls = mockFetch({ status: 201, body: { user: { id: 'u' }, invite_sent: true } }, {})
+    await users.create({ email: 'a@b.c', display_name: 'A', invite: true })
+    await users.resendInvite('u/1')
+    expect(calls[0]?.body).toEqual({ email: 'a@b.c', display_name: 'A', invite: true })
+    expect(calls[1]).toMatchObject({ method: 'POST', url: `${T}/users/u%2F1/invite`, body: {} })
+  })
 })

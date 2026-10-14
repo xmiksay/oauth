@@ -26,6 +26,15 @@ pub fn init_tracing(format: LogFormat) -> anyhow::Result<()> {
 
 pub async fn run(config: Config) -> anyhow::Result<()> {
     tracing::info!(?config, "starting oauth server");
+    // rustls is built with both AWS-LC (ours, lettre) and ring (sqlx); make
+    // AWS-LC the explicit default rather than leave it to each user. `Err`
+    // only means a default is already in place.
+    if rustls::crypto::aws_lc_rs::default_provider()
+        .install_default()
+        .is_err()
+    {
+        tracing::debug!("a rustls crypto provider was already set");
+    }
     let metrics_handle = metrics::install()?;
     let db = db::connect(&config.database_url).await?;
 
@@ -94,8 +103,11 @@ pub async fn run_with(
         // Dropping the migration future rolls its transaction back.
         () = shutdown.cancelled() => None,
     };
-    match migration {
-        None => tracing::info!("stopping before migrations finished"),
+    let result = match migration {
+        None => {
+            tracing::info!("stopping before migrations finished");
+            join(servers).await
+        }
         Some(Ok(())) => {
             state.migrated.store(true, Ordering::Release);
             tracing::info!("migrations applied; ready");
@@ -106,7 +118,7 @@ pub async fn run_with(
             if let Err(err) = jobs.await {
                 tracing::warn!(error = %err, "background jobs task panicked");
             }
-            return result;
+            result
         }
         Some(Err(err)) => {
             // Never linger unready forever: stop serving and exit non-zero.
@@ -114,10 +126,14 @@ pub async fn run_with(
             if let Err(server_err) = join(servers).await {
                 tracing::warn!(error = %server_err, "server error during shutdown");
             }
-            return Err(err);
+            Err(err)
         }
-    }
-    join(servers).await
+    };
+    // Whatever ended the run, work handlers left running (e.g. a queued
+    // password reset) finishes first.
+    state.tasks.close();
+    state.tasks.wait().await;
+    result
 }
 
 async fn join(servers: JoinHandle<anyhow::Result<()>>) -> anyhow::Result<()> {

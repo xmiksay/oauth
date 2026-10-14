@@ -20,6 +20,7 @@ declare module 'vue-router' {
 }
 
 const AuthCallback = () => import('@/components/AuthCallback.vue')
+const PasswordLinkPage = () => import('@/areas/email/PasswordLinkPage.vue')
 
 const routes: RouteRecordRaw[] = [
   {
@@ -27,6 +28,28 @@ const routes: RouteRecordRaw[] = [
     name: 'login',
     component: () => import('@/areas/login/LoginPage.vue'),
     meta: { title: 'Sign in' },
+  },
+  // Emailed links: public (no `area`), the token itself authorizes the action.
+  {
+    path: '/login/reset',
+    name: 'password-reset',
+    component: PasswordLinkPage,
+    props: { mode: 'reset' },
+    meta: { title: 'Reset password' },
+  },
+  {
+    path: '/login/invite',
+    name: 'invite',
+    component: PasswordLinkPage,
+    props: { mode: 'invite' },
+    meta: { title: 'Set your password' },
+  },
+  {
+    // Outranks the `/myaccount` subtree (static path), so it skips that area's sign-in.
+    path: '/myaccount/verify-email',
+    name: 'verify-email',
+    component: () => import('@/areas/email/VerifyEmailPage.vue'),
+    meta: { title: 'Confirm email address' },
   },
   {
     path: '/logout',
@@ -68,6 +91,12 @@ const routes: RouteRecordRaw[] = [
         name: 'myaccount-apps',
         component: () => import('@/areas/myaccount/AppsPage.vue'),
         meta: { title: 'App permissions' },
+      },
+      {
+        path: 'notifications',
+        name: 'myaccount-notifications',
+        component: () => import('@/areas/myaccount/NotificationsPage.vue'),
+        meta: { title: 'Notifications' },
       },
     ],
   },

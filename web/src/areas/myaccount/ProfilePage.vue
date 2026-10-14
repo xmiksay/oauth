@@ -9,6 +9,7 @@ import { PASSWORD_MIN, passwordProblem } from '@/lib/format'
 import ErrorAlert from '@/components/ErrorAlert.vue'
 import StatusNote from '@/components/StatusNote.vue'
 import { passwordError } from './passwordError'
+import EmailSection from './EmailSection.vue'
 
 const auth = useAuthStore()
 const { me, isAdmin } = storeToRefs(auth)
@@ -68,19 +69,14 @@ async function changePassword() {
       <h2 class="text-lg font-semibold">
         Profile
       </h2>
-      <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+      <dl
+        v-if="me.directory_roles.length"
+        class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm"
+      >
         <dt class="muted">
-          Email
+          Directory roles
         </dt>
-        <dd class="break-all">
-          {{ me.email }}
-        </dd>
-        <template v-if="me.directory_roles.length">
-          <dt class="muted">
-            Directory roles
-          </dt>
-          <dd>{{ roleNames }}</dd>
-        </template>
+        <dd>{{ roleNames }}</dd>
       </dl>
       <div class="max-w-md">
         <label
@@ -113,6 +109,8 @@ async function changePassword() {
         </RouterLink>
       </div>
     </form>
+
+    <EmailSection />
 
     <form
       class="card space-y-4"

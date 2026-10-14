@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 
-defineProps<{ locked: boolean }>()
-const emit = defineEmits<{ submit: [email: string, password: string] }>()
+const props = defineProps<{ locked: boolean; canReset?: boolean; initialEmail?: string }>()
+const emit = defineEmits<{ submit: [email: string, password: string]; forgot: [email: string] }>()
 
-const email = ref('')
+const email = ref(props.initialEmail ?? '')
 const password = ref('')
 const first = ref<HTMLInputElement | null>(null)
 // Steps swap in place; move focus so keyboard and screen-reader users land on the new step.
@@ -51,6 +51,14 @@ onMounted(() => first.value?.focus())
       :disabled="locked"
     >
       Sign in
+    </button>
+    <button
+      v-if="canReset"
+      type="button"
+      class="btn-link"
+      @click="emit('forgot', email.trim())"
+    >
+      Forgot password?
     </button>
   </form>
 </template>

@@ -5,7 +5,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use entity::{user_recovery_codes, user_totp, users};
+use entity::{enums::EmailTokenPurpose, user_recovery_codes, user_totp, users};
 use sea_orm::{
     ActiveEnum, ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, PaginatorTrait,
     QueryFilter, TransactionTrait,
@@ -22,6 +22,7 @@ use super::{
     page::{self, Order, PageParams, Paged},
     search, ts,
     user_actions::ChosenPassword,
+    user_invite::{email_replaced, require_email, send_invite},
 };
 use crate::{
     app::AppState,
@@ -29,6 +30,7 @@ use crate::{
     authz::{Access, Area},
     directory::{self, DirectoryError, NewUser, display_name, normalize_email},
     error::{AppError, AppResult},
+    mail::links,
 };
 
 pub fn view(u: &users::Model) -> Value {
@@ -134,6 +136,9 @@ pub struct CreateUser {
     password: Option<String>,
     /// Defaults to `true` (change at first sign-in).
     must_change_password: Option<bool>,
+    /// Create without a password and email an invitation link instead
+    /// (needs SMTP; excludes `password` / `must_change_password`).
+    invite: Option<bool>,
 }
 
 pub async fn create(
@@ -142,7 +147,18 @@ pub async fn create(
     Json(body): Json<CreateUser>,
 ) -> AppResult<Response> {
     caller.require(Area::Directory, Access::Write)?;
-    let chosen = ChosenPassword::new(body.password, body.must_change_password)?;
+    let invite = body.invite == Some(true);
+    if invite {
+        if body.password.is_some() || body.must_change_password.is_some() {
+            return Err(AppError::BadRequest(
+                "an invitation sets no password: omit password and must_change_password".into(),
+            ));
+        }
+        require_email(&state)?;
+    }
+    let chosen = (!invite)
+        .then(|| ChosenPassword::new(body.password, body.must_change_password))
+        .transpose()?;
     let txn = state.db.begin().await?;
     let user = directory::create_user(
         &txn,
@@ -150,15 +166,15 @@ pub async fn create(
         NewUser {
             email: &body.email,
             display_name: &body.display_name,
-            password: Some(&chosen.value),
-            must_change_password: chosen.must_change,
+            password: chosen.as_ref().map(|c| c.value.as_str()),
+            must_change_password: chosen.as_ref().is_some_and(|c| c.must_change),
         },
     )
     .await?;
-    let how = if chosen.generated {
-        "generated"
-    } else {
-        "set_by_admin"
+    let how = match &chosen {
+        None => "invite",
+        Some(c) if c.generated => "generated",
+        Some(_) => "set_by_admin",
     };
     let details = json!({ "email": user.email, "password": how });
     caller
@@ -169,10 +185,25 @@ pub async fn create(
             details,
         )
         .await?;
+    if invite {
+        send_invite(&state, &caller, &txn, &user, false).await?;
+    } else if state.config.email_enabled() {
+        let tenant = &caller.tenant;
+        links::send(
+            &txn,
+            &state.config,
+            tenant,
+            &user,
+            EmailTokenPurpose::Verify,
+            None,
+        )
+        .await?;
+    }
     txn.commit().await?;
     let body = json!({
         "user": view(&user),
-        "one_time_password": chosen.one_time(),
+        "one_time_password": chosen.as_ref().and_then(ChosenPassword::one_time),
+        "invite_sent": invite,
     });
     Ok((StatusCode::CREATED, axum::Json(body)).into_response())
 }
@@ -209,6 +240,8 @@ pub async fn update(
         let email = normalize_email(email)?;
         if email != user.email {
             row.email = Set(email);
+            // The new address is unproven until its owner opens a link.
+            row.email_verified = Set(false);
             fields.push("email");
         }
     }
@@ -236,6 +269,9 @@ pub async fn update(
     if disabling {
         // A disabled account keeps no live sessions or refresh tokens.
         directory::revoke_credentials(&txn, tenant_id, id, None).await?;
+    }
+    if updated.email != user.email {
+        email_replaced(&state, &caller, &txn, &updated, &user).await?;
     }
     let details = json!({ "fields": fields, "disabled": updated.disabled });
     caller

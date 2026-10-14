@@ -8,7 +8,7 @@
 use anyhow::anyhow;
 use aws_lc_rs::rand;
 use axum::{extract::State, http::StatusCode};
-use entity::{user_recovery_codes, user_totp};
+use entity::{enums::NotifyEvent, user_recovery_codes, user_totp, users};
 use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use sea_orm::{
     ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, TransactionTrait,
@@ -30,7 +30,7 @@ use crate::{
     audit::{EventType, Target},
     authn::{rate_limit, recovery, totp},
     error::{AppError, AppResult},
-    secret,
+    notify, secret,
 };
 
 const SECRET_BYTES: usize = 20;
@@ -131,6 +131,26 @@ async fn enrollment(
         .await?)
 }
 
+async fn mfa_notice(
+    state: &AppState,
+    caller: &Caller,
+    conn: &impl ConnectionTrait,
+    user: &users::Model,
+    what: &str,
+) -> AppResult<()> {
+    let facts = notify::change(what);
+    notify::event(
+        conn,
+        &state.config,
+        &caller.tenant,
+        user,
+        NotifyEvent::MfaChanged,
+        &facts,
+    )
+    .await?;
+    Ok(())
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PasswordBody {
@@ -225,6 +245,7 @@ pub async fn confirm_totp(
             Value::Null,
         )
         .await?;
+    mfa_notice(&state, &caller, &txn, &user, "authenticator app added").await?;
     txn.commit().await?;
     Ok(axum::Json(json!({ "recovery_codes": codes })))
 }
@@ -252,6 +273,7 @@ pub async fn remove_totp(
             Value::Null,
         )
         .await?;
+    mfa_notice(&state, &caller, &txn, &user, "authenticator app removed").await?;
     txn.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -281,6 +303,7 @@ pub async fn regenerate_recovery_codes(
             Value::Null,
         )
         .await?;
+    mfa_notice(&state, &caller, &txn, &user, "new recovery codes generated").await?;
     txn.commit().await?;
     Ok(axum::Json(json!({ "recovery_codes": codes })))
 }

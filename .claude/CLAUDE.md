@@ -23,7 +23,7 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
 
 | Target | Does |
 |---|---|
-| `make dev-db` | Postgres 17 via docker compose (creds in `.env.example`) |
+| `make dev-db` | Postgres 17 + Mailpit (SMTP :1025, inbox http://localhost:8025) via docker compose (creds in `.env.example`) |
 | `make run` | `oauth serve`, loads `.env` |
 | `make web-dev` | Vite dev server on `*.localhost:5173` proxying to :8080 with `Host` kept (needs `PUBLIC_URL=http://localhost:5173`, the `.env.example` default); open `http://system.localhost:5173/admin` |
 | `make build` / `make web-build` | release binary + SPA / SPA only |
@@ -45,10 +45,13 @@ See `.env.example` (authoritative, commented). Required: `DATABASE_URL`,
 `LISTEN_ADDR` (0.0.0.0:8080), `METRICS_ADDR` (0.0.0.0:9090), `LOG_FORMAT`
 (text|json), `RUST_LOG`, `KEY_ROTATION_DAYS` (90), `KEY_PREPUBLISH_HOURS` (48),
 `SESSION_TTL_HOURS` (24), `WEB_DIST_DIR` (web/dist), `COOKIE_SECURE` (true;
-`false` only with an `http://` `PUBLIC_URL`), `TRUSTED_PROXY_HEADER` (unset).
+`false` only with an `http://` `PUBLIC_URL`), `TRUSTED_PROXY_HEADER` (unset),
+`SMTP_URL` + `SMTP_FROM` (both or neither; unset hides every email feature —
+[docs/email.md](../docs/email.md)). `SMTP_URL` lives in the Secret, `SMTP_FROM`
+in the ConfigMap.
 Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md); management API:
-[docs/api/management.md](../docs/api/management.md). Env vars are parsed and validated in
-`crates/server/src/config.rs`; adding a var means updating `.env.example`,
+[docs/api/management.md](../docs/api/management.md) (+ [me.md](../docs/api/me.md)). Env vars are parsed and validated in
+`crates/server/src/config/` (`env.rs`, `smtp.rs`, `public_url.rs`); adding a var means updating `.env.example`,
 `deploy/k8s/deploy.yml` and this list.
 
 ## Conventions
@@ -105,7 +108,8 @@ Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md); manag
   redacting `Debug`. SeaORM still derives `Debug` on every `ActiveModel`, so
   never log (`?`/`{:?}`) an `ActiveModel` of `users`, `user_totp`,
   `user_recovery_codes`, `client_secrets`, `signing_keys`, `sessions`,
-  `authorization_codes`, `refresh_tokens` or `opaque_access_tokens`.
+  `authorization_codes`, `refresh_tokens`, `opaque_access_tokens`, `outbox`,
+  `email_tokens` or `known_devices` (nor a `mail::Email`'s body).
 - Bearer values (cookies, codes, tokens) come from `secret::random_token`
   and are stored only as `secret::hash`; unguessable handles from
   `secret::random_uuid` (not UUIDv7).
@@ -144,8 +148,15 @@ Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md); manag
 - Audit: event types are the closed `audit::EventType` enum (add a variant,
   never a free string); `details` carry ids, names and changed field names
   only — never passwords, secrets, codes or tokens.
+- Email: never send inline — render a `mail::templates` message and queue it
+  with `mail::outbox::enqueue` / `mail::links::send` / `notify::event` on the
+  action's own transaction; `jobs::outbox` delivers. Never log a body,
+  recipient or link token. Link tokens are consumed via `mail::tokens::consume`
+  (atomic, tenant-scoped); anything wrong with one is the same `invalid_token`.
+  Public flows must not reveal whether an address exists (same status, body,
+  rate-limit buckets keyed by address, not account).
 - Cookies are host-only and `__Host-` prefixed (`__Host-oauth_sid`,
-  `__Host-oauth_tx`, `Path=/`) — never add a `Domain` (it would share them
+  `__Host-oauth_tx`, `__Host-oauth_dev`, `Path=/`) — never add a `Domain` (it would share them
   across tenant hosts) or a narrower `Path`. The login API / logout POST
   CSRF check wants `Origin` = the tenant's origin.
 - Writes that must be atomic with token issuance (code consume, refresh

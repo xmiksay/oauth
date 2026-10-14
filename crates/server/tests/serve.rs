@@ -186,3 +186,41 @@ async fn migration_failure_stops_the_server_with_an_error() {
     assert!(format!("{err:#}").contains("running migrations"), "{err:#}");
     assert!(shutdown.is_cancelled());
 }
+
+#[tokio::test]
+async fn shutdown_waits_for_work_handlers_left_running() {
+    let pg = common::start_postgres().await;
+    let conn = db::connect(&pg.url).await.unwrap();
+    let state = AppState::new(
+        conn,
+        common::test_config(&pg.url, common::PUBLIC_URL),
+        false,
+    );
+    // Detached work still running when shutdown begins (e.g. a queued
+    // password reset) must finish before run_with returns.
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    state.tasks.spawn({
+        let done = done.clone();
+        async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            done.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    });
+    let (listeners, _) = listeners().await;
+    let shutdown = CancellationToken::new();
+    shutdown.cancel();
+    tokio::time::timeout(
+        Duration::from_secs(20),
+        serve::run_with(
+            listeners,
+            state,
+            common::no_web_dist(),
+            Router::new(),
+            shutdown,
+        ),
+    )
+    .await
+    .expect("shutdown hung")
+    .unwrap();
+    assert!(done.load(std::sync::atomic::Ordering::SeqCst));
+}

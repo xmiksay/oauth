@@ -18,11 +18,13 @@ mod extract;
 mod groups;
 mod guard;
 mod me;
+mod me_email;
 mod me_mfa;
 pub mod page;
 mod role_assignments;
 mod tenants;
 mod user_actions;
+mod user_invite;
 mod users;
 pub mod validate;
 
@@ -66,6 +68,10 @@ pub fn router() -> Router<AppState> {
         .route(
             &format!("{T}/users/{{id}}/reset-password"),
             post(user_actions::reset_password),
+        )
+        .route(
+            &format!("{T}/users/{{id}}/invite"),
+            post(user_invite::resend),
         )
         .route(
             &format!("{T}/users/{{id}}/reset-mfa"),
@@ -163,6 +169,15 @@ pub fn router() -> Router<AppState> {
         .route(&format!("{T}/audit-events"), get(audit_events::list))
         .route(&me, get(me::get).patch(me::update))
         .route(&format!("{me}/change-password"), post(me::change_password))
+        .route(&format!("{me}/email"), post(me_email::change_email))
+        .route(
+            &format!("{me}/verify-email"),
+            post(me_email::send_verification),
+        )
+        .route(
+            &format!("{me}/notifications"),
+            get(me_email::notifications).put(me_email::update_notifications),
+        )
         .route(
             &format!("{me}/totp"),
             post(me_mfa::begin_totp).delete(me_mfa::remove_totp),

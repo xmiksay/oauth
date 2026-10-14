@@ -5,7 +5,7 @@ use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr};
 use anyhow::{Context, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
 
-use super::{Config, LogFormat, MASTER_KEY_LEN, PublicUrl};
+use super::{Config, LogFormat, MASTER_KEY_LEN, PublicUrl, SmtpConfig};
 
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
@@ -58,6 +58,7 @@ impl Config {
             trusted_proxy_header: get("TRUSTED_PROXY_HEADER")
                 .map(|h| parse_header_name(&h))
                 .transpose()?,
+            smtp: SmtpConfig::parse(get("SMTP_URL"), get("SMTP_FROM"))?,
         };
         config.validate()?;
         Ok(config)
@@ -125,6 +126,18 @@ mod tests {
         assert_eq!(cfg.web_dist_dir, PathBuf::from("web/dist"));
         assert!(cfg.cookie_secure);
         assert_eq!(cfg.trusted_proxy_header, None);
+        assert!(cfg.smtp.is_none() && !cfg.email_enabled());
+    }
+
+    #[test]
+    fn smtp_settings() {
+        let mut env = base_env();
+        env.insert("SMTP_URL", "smtps://mailer:pw-secret@mail.example".into());
+        assert!(parse(&env).is_err(), "SMTP_URL without SMTP_FROM");
+        env.insert("SMTP_FROM", "noreply@id.example.com".into());
+        let cfg = parse(&env).unwrap();
+        assert!(cfg.email_enabled());
+        assert!(!format!("{cfg:?}").contains("pw-secret"));
     }
 
     #[test]

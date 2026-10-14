@@ -72,11 +72,31 @@ pub fn totp_aad(tenant_id: Uuid, user_id: Uuid) -> Vec<u8> {
     aad
 }
 
+/// AAD for an outbox message body: `"outbox"` || tenant id || message id.
+/// The label keeps it distinct from the signing-key and TOTP AADs.
+pub fn outbox_aad(tenant_id: Uuid, message_id: Uuid) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(6 + 32);
+    aad.extend_from_slice(b"outbox");
+    aad.extend_from_slice(tenant_id.as_bytes());
+    aad.extend_from_slice(message_id.as_bytes());
+    aad
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const KEY: [u8; 32] = [7; 32];
+
+    #[test]
+    fn outbox_aad_binds_tenant_and_row() {
+        let (tenant, id) = (Uuid::now_v7(), Uuid::now_v7());
+        let sealed = seal(&KEY, &outbox_aad(tenant, id), b"body").unwrap();
+        assert!(open(&KEY, &outbox_aad(tenant, id), &sealed).is_ok());
+        assert!(open(&KEY, &outbox_aad(tenant, Uuid::now_v7()), &sealed).is_err());
+        assert!(open(&KEY, &outbox_aad(Uuid::now_v7(), id), &sealed).is_err());
+        assert!(open(&KEY, &totp_aad(tenant, id), &sealed).is_err());
+    }
 
     #[test]
     fn roundtrip() {

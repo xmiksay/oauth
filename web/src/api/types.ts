@@ -52,6 +52,31 @@ export interface UserDetail extends User {
   mfa: { totp: boolean; totp_pending: boolean; recovery_codes_remaining: number }
 }
 
+/** `GET` / `PATCH me`: the caller's own `UserDetail` plus what the server offers. */
+export type Me = UserDetail & {
+  /** `email`: the server can send email (verification, invitations, notifications). */
+  features: { email: boolean }
+}
+
+export type NotificationEvent =
+  | 'password_changed'
+  | 'mfa_changed'
+  | 'email_changed'
+  | 'new_sign_in'
+  | 'token_reuse'
+
+export interface NotificationPreference {
+  event: NotificationEvent
+  email: boolean
+  telegram: boolean
+}
+
+export interface NotificationSettings {
+  /** Channels this server can deliver on. */
+  channels: { email: boolean; telegram: boolean }
+  items: NotificationPreference[]
+}
+
 export interface Session {
   id: string
   amr: string[]

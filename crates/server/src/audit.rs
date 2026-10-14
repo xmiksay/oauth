@@ -48,6 +48,15 @@ event_types! {
     MfaTotpEnroll => "user.mfa.totp_enroll",
     MfaTotpRemove => "user.mfa.totp_remove",
     MfaRecoveryCodesRegenerate => "user.mfa.recovery_codes_regenerate",
+    EmailVerifyRequest => "user.email_verify_request",
+    EmailVerify => "user.email_verify",
+    PasswordResetRequest => "user.password_reset_request",
+    PasswordResetComplete => "user.password_reset_complete",
+    UserInvite => "user.invite",
+    UserInviteAccept => "user.invite_accept",
+    EmailChangeRequest => "user.email_change_request",
+    EmailChangeComplete => "user.email_change_complete",
+    NotificationPrefsUpdate => "user.notification_prefs_update",
     GroupCreate => "group.create",
     GroupUpdate => "group.update",
     GroupDelete => "group.delete",
@@ -102,7 +111,8 @@ impl Target {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Actor {
-    /// `None`: a sign-in attempt for an account that doesn't exist.
+    /// `None`: anonymous — a sign-in attempt for an account that doesn't
+    /// exist, or a password-reset request (whoever sent it).
     User(Option<Uuid>),
     Application(Uuid),
     System,

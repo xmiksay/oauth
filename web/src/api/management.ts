@@ -28,6 +28,7 @@ const seg = encodeURIComponent
 export const t = {
   get: <T>(rel: string) => authed<T>(apiPath(rel)),
   post: <T>(rel: string, body: unknown = {}) => authed<T>(apiPath(rel), { method: 'POST', body }),
+  put: <T>(rel: string, body: unknown) => authed<T>(apiPath(rel), { method: 'PUT', body }),
   patch: <T>(rel: string, body: unknown) => authed<T>(apiPath(rel), { method: 'PATCH', body }),
   del: (rel: string, body?: unknown) =>
     authed<void>(apiPath(rel), { method: 'DELETE', body }),

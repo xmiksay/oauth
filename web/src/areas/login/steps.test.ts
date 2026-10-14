@@ -58,6 +58,7 @@ describe('ConsentStep', () => {
         { value: 'Orders.Write', description: '' },
       ],
     },
+    features: { password_reset: false },
   }
 
   it('names the client, the resource and every requested scope', () => {

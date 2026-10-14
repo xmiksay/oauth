@@ -160,6 +160,7 @@ mod tests {
             password_hash: None,
             must_change_password: false,
             disabled: false,
+            first_device_at: None,
             created_at: now,
             updated_at: now,
         }

@@ -11,6 +11,7 @@ function view(step: LoginStep, extra: Partial<TxView> = {}): TxView {
     client: { client_id: 'shop', display_name: 'Shop' },
     user: step === 'password' ? null : { email: 'ann@example.com', display_name: 'Ann' },
     consent: null,
+    features: { password_reset: false },
     ...extra,
   }
 }

@@ -11,10 +11,15 @@ use axum::{
     middleware,
 };
 use sea_orm::DatabaseConnection;
+use tokio::sync::Semaphore;
+use tokio_util::task::TaskTracker;
 use tower_http::trace::{DefaultOnFailure, TraceLayer};
 use tracing::{Level, Span};
 
 use crate::{api, authn, config::Config, headers, health, metrics, oidc, spa, tenancy};
+
+/// Detached handler jobs allowed in flight (beyond: dropped).
+pub const MAX_DETACHED: usize = 64;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -22,6 +27,11 @@ pub struct AppState {
     pub config: Arc<Config>,
     /// Set once startup migrations finished; gates `/readyz`.
     pub migrated: Arc<AtomicBool>,
+    /// Work a handler leaves running after answering (e.g. queueing a
+    /// password reset); shutdown waits for it.
+    pub tasks: TaskTracker,
+    /// Caps how many such detached jobs may be in flight at once.
+    pub detached: Arc<Semaphore>,
 }
 
 impl AppState {
@@ -30,6 +40,8 @@ impl AppState {
             db,
             config: Arc::new(config),
             migrated: Arc::new(AtomicBool::new(migrated)),
+            tasks: TaskTracker::new(),
+            detached: Arc::new(Semaphore::new(MAX_DETACHED)),
         }
     }
 }

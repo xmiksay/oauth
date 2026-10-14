@@ -10,11 +10,14 @@
 mod complete;
 pub mod cookie;
 mod ctx;
+mod device;
+mod email;
 pub mod ip;
 mod mfa;
 mod password;
 pub mod rate_limit;
 pub mod recovery;
+mod reset;
 pub mod session;
 pub mod totp;
 pub mod tx;
@@ -46,6 +49,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(&format!("{TX}/recovery"), post(mfa::recovery))
         .route(&format!("{TX}/change-password"), post(password::change))
         .route(&format!("{TX}/consent"), post(complete::consent))
+        .route("/api/authn/password-reset", post(reset::request))
+        .route("/api/authn/email/reset", post(reset::complete))
+        .route("/api/authn/email/invite", post(email::accept_invite))
+        .route("/api/authn/email/verify", post(email::verify))
         .route_layer(middleware::from_fn_with_state(state, csrf))
 }
 
@@ -105,6 +112,15 @@ pub enum AuthnError {
     Csrf,
     #[error("login transaction not found or expired")]
     NotFound,
+    /// An email link token that is unknown, expired, used or of another
+    /// tenant — never distinguished.
+    #[error("the link is invalid, has expired or was already used")]
+    InvalidLink,
+    #[error("{0}")]
+    Conflict(String),
+    /// Email features without SMTP configured: they don't exist.
+    #[error("email is not available on this server")]
+    EmailDisabled,
     #[error("{0}")]
     Invalid(String),
     #[error(transparent)]
@@ -145,7 +161,9 @@ impl IntoResponse for AuthnError {
             Self::WrongStep => (StatusCode::CONFLICT, "wrong_step"),
             Self::RateLimited { .. } => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
             Self::Csrf => (StatusCode::FORBIDDEN, "csrf_rejected"),
-            Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+            Self::NotFound | Self::EmailDisabled => (StatusCode::NOT_FOUND, "not_found"),
+            Self::InvalidLink => (StatusCode::BAD_REQUEST, "invalid_token"),
+            Self::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
             Self::Invalid(_) => (StatusCode::BAD_REQUEST, "invalid_request"),
             Self::Internal(err) => {
                 tracing::error!(error = ?err, "login request failed");
