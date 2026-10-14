@@ -5,7 +5,8 @@ tenants, app registrations, delegated scopes + app roles, groups, consent and
 directory roles. Rust (Axum, SeaORM, Postgres) backend + Vue 3 SPA served
 same-origin. Repo: `github.com:xmiksay/oauth`.
 
-- Architecture: [docs/architecture.md](../docs/architecture.md), SPA: [docs/frontend.md](../docs/frontend.md)
+- Architecture: [docs/architecture.md](../docs/architecture.md), SPA: [docs/frontend.md](../docs/frontend.md),
+  passkeys: [docs/passkeys.md](../docs/passkeys.md)
 - Roadmap / milestones: [docs/roadmap.md](../docs/roadmap.md)
 
 ## Layout
@@ -27,7 +28,7 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
 | `make run` | `oauth serve`, loads `.env` |
 | `make web-dev` | Vite dev server on `*.localhost:5173` proxying to :8080 with `Host` kept (needs `PUBLIC_URL=http://localhost:5173`, the `.env.example` default); open `http://system.localhost:5173/admin` |
 | `make build` / `make web-build` | release binary + SPA / SPA only |
-| `make lint` | `cargo fmt --check`, clippy `-D warnings`, eslint, vue-tsc |
+| `make lint` | `lint-rust` (`cargo fmt --check`, clippy `-D warnings`) + `lint-web` (eslint, vue-tsc) |
 | `make fmt` | `cargo fmt` |
 | `make test` | `test-unit` + `test-integration` + `web-test` |
 | `make test-unit` | `cargo test --workspace --lib --bins` |
@@ -99,7 +100,8 @@ Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md); manag
   generation, AES-256-GCM, SHA-256 and randomness, and as `jsonwebtoken`'s
   backend (`aws_lc_rs` + `use_pem`). (`ring` is still linked transitively by
   sqlx's rustls for DB TLS — not used by our code.) Don't add `rsa` /
-  `p256` / `aes-gcm` / `rand` (the `rsa` crate has RUSTSEC-2023-0071); `cargo tree -i rsa` must find nothing. Only
+  `p256` / `aes-gcm` / `rand` (the `rsa` crate has RUSTSEC-2023-0071); `cargo tree -i rsa` and `cargo tree -i openssl-sys` must find nothing
+  (WebAuthn is our own verifier, `webauthn`: AWS-LC + `ciborium`, no webauthn-rs). Only
   `argon2` (password hashing) sits outside it and is built with opt-level 3
   in dev so tests stay fast. Building `aws-lc-sys` needs a C compiler (no
   cmake).
@@ -109,7 +111,9 @@ Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md); manag
   never log (`?`/`{:?}`) an `ActiveModel` of `users`, `user_totp`,
   `user_recovery_codes`, `client_secrets`, `signing_keys`, `sessions`,
   `authorization_codes`, `refresh_tokens`, `opaque_access_tokens`, `outbox`,
-  `email_tokens` or `known_devices` (nor a `mail::Email`'s body).
+  `email_tokens`, `known_devices` or `webauthn_challenges` (nor a `mail::Email`'s
+  body). `webauthn_credentials` holds only public keys and credential ids, so
+  its `Debug` is derived.
 - Bearer values (cookies, codes, tokens) come from `secret::random_token`
   and are stored only as `secret::hash`; unguessable handles from
   `secret::random_uuid` (not UUIDv7).
@@ -145,6 +149,15 @@ Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md); manag
   (`caller.require…`) comes before validation and before `BEGIN`.
   Never trust authorization data frozen in a token: app-only roles and the
   delegated session are re-read per call (`api::auth`).
+- Passkeys ([docs/passkeys.md](../docs/passkeys.md)): RP ID = tenant host without
+  port, origin = `config.tenant_origin(slug)` exactly, UP + UV required,
+  `attStmt` never trusted. Untrusted CBOR / JSON is size-bounded before
+  parsing and must never panic. Challenges (`passkey::challenge`) are
+  consumed first, on their own statement, by one `DELETE … RETURNING`; the
+  counter is re-checked in the UPDATE that stores it. A user without a
+  password keeps their last passkey (`passkey::store::remove`, under the
+  user's row lock). Sensitive `me` calls take `api::reauth::ReauthBody`
+  (password OR passkey), never a bare password.
 - Audit: event types are the closed `audit::EventType` enum (add a variant,
   never a free string); `details` carry ids, names and changed field names
   only — never passwords, secrets, codes or tokens.

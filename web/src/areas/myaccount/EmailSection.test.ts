@@ -23,7 +23,7 @@ function detail(over: Partial<Me> = {}): Me {
     created_at: '',
     updated_at: '',
     directory_roles: [],
-    mfa: { totp: false, totp_pending: false, recovery_codes_remaining: 0 },
+    mfa: { totp: false, totp_pending: false, recovery_codes_remaining: 0, passkeys: 0 },
     features: { email: true },
     ...over,
   }
@@ -71,7 +71,7 @@ describe('EmailSection', () => {
     await w.find('#pp-password').setValue('pw')
     await w.find('form').trigger('submit')
     await flushPromises()
-    expect(api.changeEmail).toHaveBeenCalledWith('new@example.com', 'pw')
+    expect(api.changeEmail).toHaveBeenCalledWith('new@example.com', { password: 'pw' })
     expect(w.find('[role=status]').text()).toBe(
       'We sent a link to new@example.com. Your email changes when you open it.',
     )

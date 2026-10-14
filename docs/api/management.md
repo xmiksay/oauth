@@ -127,7 +127,7 @@ Additional rules:
   "created_at", "updated_at" }
 // UserDetail (GET users/{id}, GET me) = User +
 { "directory_roles": ["GlobalAdmin"],
-  "mfa": { "totp": false, "totp_pending": false, "recovery_codes_remaining": 0 } }
+  "mfa": { "totp": false, "totp_pending": false, "recovery_codes_remaining": 0, "passkeys": 0 } }
 // Session
 { "id", "amr": ["pwd"], "auth_time", "ip", "user_agent", "created_at", "expires_at",
   "current": false }   // `current`: the session the calling token came from (me only)
@@ -200,10 +200,12 @@ GlobalAdmins (`disabled` here → 400, unknown field).
 | `POST users` | `{ email, display_name, password?, must_change_password? (default true), invite? }` | 201 `{ user, one_time_password, invite_sent }` — password generated (24 chars, must change) when `password` is omitted, else `null`. `invite: true` (only with email configured, else 400; not with `password` / `must_change_password`): no password, a 7-day invitation link is mailed instead. With email configured a non-invited user gets a verification link |
 | `GET users/{id}` | – | `UserDetail` |
 | `PATCH users/{id}` | `{ display_name?, email?, disabled? }` | `User` (409 if the email is taken). A new email resets `email_verified`, voids links sent to the old address, mails a verification link — or, for a user without a password, a new invitation — (email configured) and notifies the old address if it was verified |
-| `POST users/{id}/invite` | – | 204: re-sends the invitation, the older link stops working (409 if the user has a password, 400 email not configured) |
+| `POST users/{id}/invite` | – | 204: re-sends the invitation, the older link stops working (409 if the user has a password or a passkey, 400 email not configured) |
 | `DELETE users/{id}` | – | 204 (sessions, tokens, memberships, roles, grants cascade) |
 | `POST users/{id}/reset-password` | `{ password?, must_change_password? (default true) }` (send `{}` to generate) | `{ one_time_password, must_change_password }` |
-| `POST users/{id}/reset-mfa` | – | 204: TOTP and recovery codes deleted |
+| `POST users/{id}/reset-mfa` | – | 204: TOTP, recovery codes and passkeys deleted. 409 for a user without a password who has passkeys (it would lock them out): `reset-password` first |
+| `GET users/{id}/passkeys` | – | `{ items: Passkey[] }` (see [me.md](me.md)) |
+| `DELETE users/{id}/passkeys/{passkey_id}` | – | 204; 409 when it is the last sign-in method of a user without a password |
 | `GET users/{id}/sessions` | – | `{ items: Session[] }` (unexpired) |
 | `POST users/{id}/revoke-sessions` | – | 204: sessions deleted, refresh + opaque access tokens revoked |
 
@@ -340,10 +342,12 @@ exclusive, RFC 3339) → `AuditEvent`s.
 
 | `event_type` | Actor → target | Details |
 |---|---|---|
-| `sign_in` | user (`actor_id` null for an unknown account) → user | success: `session_id`, `application_id`, `amr`; failure: `reason` (`invalid_password`, `unknown_account`, `disabled`, `mfa_failed` + `factor`) |
+| `sign_in` | user (`actor_id` null for an unknown account) → user | success: `session_id`, `application_id`, `amr`; failure: `reason` (`invalid_password`, `unknown_account`, `disabled`, `mfa_failed` + `factor`; passkeys: `factor: "passkey"` + the verifier's reason, e.g. `invalid_challenge`, `foreign_credential`, `sign_count_regression`) |
 | `token.refresh_reuse`, `token.code_replay` | client app → user, failure | `family_id` / `authorization_code_id` |
 | `tenant.create`, `tenant.update` | system admin → tenant (logged in the system tenant; a system admin's `tenant.update` of another tenant is ALSO logged in that tenant's own log, in the same transaction; a tenant admin's settings change only in their own) | `slug`, `admin_user_id` / `fields`, `disabled` |
-| `user.create`, `user.update`, `user.delete`, `user.password_reset`, `user.mfa_reset`, `user.sessions_revoke` | admin or app → user | create: `email`, `password` (`generated` / `set_by_admin`); update: `fields`, `disabled`; delete: `email`; reset: `must_change_password`, `generated` |
+| `user.create`, `user.update`, `user.delete`, `user.password_reset`, `user.mfa_reset`, `user.sessions_revoke` | admin or app → user | create: `email`, `password` (`generated` / `set_by_admin`); update: `fields`, `disabled`; delete: `email`; reset: `must_change_password`, `generated`; mfa reset: `passkeys_removed` |
+| `user.mfa.passkey_register`, `user.mfa.passkey_rename`, `user.mfa.passkey_remove` | user → self (invite: by the link's user), admin → user (remove) | `passkey_id`, `name`, `via` (`me` / `admin` / `invite`) |
+| `user.mfa.passkey_sign_count_regression` | user → self (failure) | `via: "reauth"` |
 | `user.password_change` | user → self | `via`: `sign_in` (forced change) / `me` |
 | `user.profile_update`, `user.session_revoke`, `user.mfa.totp_enroll`, `user.mfa.totp_remove`, `user.mfa.recovery_codes_regenerate` | user → self | `fields` / `session_id` |
 | `user.invite` | admin → user | `email`, `resend` |

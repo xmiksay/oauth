@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mockFetch } from '@/test/helpers'
+import {
+  ASSERTION_JSON,
+  CREATION_OPTIONS,
+  REGISTRATION_JSON,
+  REQUEST_OPTIONS,
+  mockFetch,
+} from '@/test/helpers'
 import { authn, isRedirect } from './authn'
 
 afterEach(() => vi.unstubAllGlobals())
@@ -48,12 +54,27 @@ describe('login API client', () => {
     expect(calls.every((c) => c.method === 'POST')).toBe(true)
   })
 
+  it('posts the passkey endpoints of a transaction and of an invitation', async () => {
+    const calls = mockFetch({ body: REQUEST_OPTIONS }, {}, { body: CREATION_OPTIONS }, {})
+    expect(await authn.passkeyOptions('tx-1')).toEqual(REQUEST_OPTIONS)
+    await authn.passkey('tx-1', ASSERTION_JSON)
+    expect(await authn.invitePasskeyOptions('tok')).toEqual(CREATION_OPTIONS)
+    await authn.acceptInviteWithPasskey('tok', REGISTRATION_JSON)
+    expect(calls.map((c) => [c.method, c.url, c.body])).toEqual([
+      ['POST', '/api/authn/tx/tx-1/passkey/options', {}],
+      ['POST', '/api/authn/tx/tx-1/passkey', ASSERTION_JSON],
+      ['POST', '/api/authn/email/invite/passkey/options', { token: 'tok' }],
+      ['POST', '/api/authn/email/invite/passkey', { token: 'tok', credential: REGISTRATION_JSON }],
+    ])
+  })
+
   it('tells a step view from a redirect', () => {
     expect(isRedirect({ redirect: 'x' })).toBe(true)
     expect(
       isRedirect({
         tx: 'x',
         step: 'password',
+        factors: ['password'],
         tenant: { slug: 't', display_name: 'T' },
         client: { client_id: 'c', display_name: 'C' },
         user: null,

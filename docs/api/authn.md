@@ -47,6 +47,7 @@ the API answers with a `redirect`, which the SPA follows
     "resource": { "display_name": "Orders API", "audience": "api://orders" },
     "scopes": [{ "value": "Orders.Read", "description": "Read your orders" }]
   },
+  "factors": ["password", "passkey"],
   "features": { "password_reset": true }
 }
 ```
@@ -55,6 +56,10 @@ the API answers with a `redirect`, which the SPA follows
 unless `step` is `consent` (it then lists only the scopes awaiting approval —
 previously granted ones are not repeated). `features.password_reset` is
 true when the server can send email (show "Forgot password?").
+`factors` lists what the current step accepts: at `password` always
+`["password", "passkey"]` (offered whether or not the account has one, so
+it reveals nothing); at `mfa` the subset of `["totp", "recovery",
+"passkey"]` the user has; `[]` at other steps.
 
 ## Email links (no transaction)
 
@@ -66,12 +71,15 @@ link is the credential. Flows in [../email.md](../email.md).
 | `/api/authn/password-reset` | `{ "email" }` | `202 { "accepted": true }` for every well-formed address, known or not, answered before the account is even looked up (a link goes only to an enabled user with a verified address or a pending invitation). `404 not_found` when email isn't configured |
 | `/api/authn/email/reset` | `{ "token", "new_password" }` | `204`; the password is set, every session and refresh / opaque token of the user ends, MFA stays required |
 | `/api/authn/email/invite` | `{ "token", "new_password" }` | `204`; first password set, address verified |
+| `/api/authn/email/invite/passkey/options` | `{ "token" }` | `200 { "publicKey": PublicKeyCredentialCreationOptionsJSON }` (see [Passkeys](#passkeys)) |
+| `/api/authn/email/invite/passkey` | `{ "token", "credential": RegistrationJSON, "name"? }` | `204`; a passkey instead of a password, address verified, the user's other invitations voided; a rejected credential → `400 invalid_request` (the token stays usable) |
 | `/api/authn/email/verify` | `{ "token" }` | `200 { "purpose": "verify" \| "change", "email" }`; `409 conflict` when a changed-to address was taken meanwhile |
 
 Links carry the token in the fragment (`…#token=…`); the SPA posts it. A
 token works once, before it expires, on the host of the tenant that issued
 it, for an enabled user whose address is still the one it was sent to (an
-invitation also only while no password is set); anything else is
+invitation also only while the user has neither a password nor a passkey);
+anything else is
 `400 invalid_token` (never distinguished). Password rules as for `change-password`.
 
 ## Final response
@@ -95,11 +103,15 @@ reused session ended while consent was pending).
 | `password` | `{ "email", "password" }` | step `password` |
 | `totp` | `{ "code": "123456" }` | step `mfa` (user has a confirmed TOTP); a code is accepted once |
 | `recovery` | `{ "code": "abcd-efgh-…" }` | step `mfa`; one-time recovery code (case, spaces and `-` ignored) |
+| `passkey/options` | `{}` | step `password` or `mfa`: `200 { "publicKey": PublicKeyCredentialRequestOptionsJSON }` (not a step view) |
+| `passkey` | AssertionJSON | step `password` (passwordless) or `mfa` (second factor) |
 | `change-password` | `{ "new_password" }` | step `change_password` (`must_change_password`) |
 | `consent` | `{ "approve": true, "scopes": ["Orders.Read"] }` or `{ "approve": false }` | step `consent`; approving must list every scope shown (all-or-nothing) |
 
-Order: `password` → `mfa` (if TOTP confirmed) → `change_password` (if
-required) → `consent` (if needed) → redirect. A transaction created for a
+Order: `password` → `mfa` (if TOTP confirmed or a passkey registered) →
+`change_password` (if required) → `consent` (if needed) → redirect. A
+passkey at the `password` step signs the user in on its own (it skips
+`mfa` and `change_password`). A transaction created for a
 user who already has a session but must consent starts at `consent`.
 Setting the new password ends the user's other sessions and revokes their
 refresh tokens and opaque access tokens. A completed sign-in replaces any
@@ -113,6 +125,7 @@ earlier session of this browser (e.g. after `prompt=login`).
 | 400 | `invalid_token` | Email link token unknown, expired, used, of another tenant, or its user disabled |
 | 409 | `conflict` | Email change: the new address was taken meanwhile |
 | 401 | `invalid_credentials` | Wrong email or password, or unknown email — never distinguished (unknown accounts are verified against a dummy argon2 hash to equalise timing) |
+| 401 | `invalid_credentials` | Any rejected passkey assertion (unknown, other account's, wrong origin / RP, no user verification, bad signature, used / expired challenge, counter regression) — never distinguished; the audit log has the reason |
 | 401 | `invalid_code` | Wrong / reused TOTP code or recovery code |
 | 403 | `account_disabled` | Correct password, but the user is disabled |
 | 403 | `csrf_rejected` | `Origin` missing or not the tenant's `{origin}` |
@@ -128,12 +141,42 @@ successes too. IPv6 clients are bucketed per /64.
 
 | Bucket | Limit | Applies to |
 |---|---|---|
-| client IP, per tenant | 30 / 5 min | `password`, `totp`, `recovery`, `change-password` |
-| account, per tenant | 10 / 15 min | same; keyed by user id once the email resolves, else by the trimmed, lower-cased email |
+| client IP, per tenant | 30 / 5 min | `password`, `totp`, `recovery`, `passkey`, `change-password` |
+| account, per tenant | 10 / 15 min | same; keyed by user id once the email (or the passkey's credential, or the transaction) resolves it, else by the trimmed, lower-cased email (or the credential id) |
 | client IP, per tenant | 60 / 5 min | `/oauth2/authorize` requests that create a login transaction → `429` JSON (`rate_limited`), not a redirect |
 | client IP, per tenant | 10 / 15 min | `password-reset` |
 | email address, per tenant | 3 / 15 min | `password-reset`; keyed by the trimmed, lower-cased address whether or not it exists |
-| client IP, per tenant | 30 / 5 min | `email/{verify,reset,invite}` |
+| client IP, per tenant | 30 / 5 min | `email/{verify,reset,invite}`, `email/invite/passkey[/options]` |
+
+## Passkeys
+
+Binary members are base64url without padding; the shapes are the browser's
+`PublicKeyCredential.toJSON()` (unknown members ignored). Policy and
+verification in [../passkeys.md](../passkeys.md).
+
+```json
+// PublicKeyCredentialRequestOptionsJSON (allowCredentials empty at `password`:
+// discoverable credentials, `mediation: "conditional"` works)
+{ "challenge": "…", "rpId": "contoso.id.example", "timeout": 300000,
+  "userVerification": "required",
+  "allowCredentials": [{ "type": "public-key", "id": "…", "transports": ["internal"] }] }
+// AssertionJSON
+{ "id": "…", "rawId": "…", "type": "public-key",
+  "response": { "clientDataJSON": "…", "authenticatorData": "…", "signature": "…", "userHandle": "…" } }
+// PublicKeyCredentialCreationOptionsJSON
+{ "challenge": "…", "rp": { "id": "contoso.id.example", "name": "Contoso" },
+  "user": { "id": "<random handle>", "name": "ann@example.com", "displayName": "Ann" },
+  "pubKeyCredParams": [{ "type": "public-key", "alg": -7 }, { "type": "public-key", "alg": -8 }, { "type": "public-key", "alg": -257 }],
+  "timeout": 300000, "attestation": "none", "excludeCredentials": [],
+  "authenticatorSelection": { "residentKey": "required", "requireResidentKey": true, "userVerification": "required" } }
+// RegistrationJSON
+{ "id": "…", "rawId": "…", "type": "public-key",
+  "response": { "clientDataJSON": "…", "attestationObject": "…", "transports": ["internal"] } }
+```
+
+A challenge lives 5 minutes, works once, and only the newest one of a
+transaction is live — so the SPA aborts a pending conditional request
+before asking for fresh options for the button flow.
 
 ## Device cookie
 

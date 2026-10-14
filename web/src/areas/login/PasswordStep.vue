@@ -1,8 +1,18 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 
-const props = defineProps<{ locked: boolean; canReset?: boolean; initialEmail?: string }>()
-const emit = defineEmits<{ submit: [email: string, password: string]; forgot: [email: string] }>()
+/** `passkey`: offer "Sign in with a passkey" (the step accepts one and the browser can). */
+const props = defineProps<{
+  locked: boolean
+  canReset?: boolean
+  initialEmail?: string
+  passkey?: boolean
+}>()
+const emit = defineEmits<{
+  submit: [email: string, password: string]
+  forgot: [email: string]
+  passkey: []
+}>()
 
 const email = ref(props.initialEmail ?? '')
 const password = ref('')
@@ -21,13 +31,14 @@ onMounted(() => first.value?.focus())
         class="label"
         for="login-email"
       >Email</label>
+      <!-- `webauthn` lets the browser offer passkeys in this field's autofill. -->
       <input
         id="login-email"
         ref="first"
         v-model="email"
         class="input"
         type="email"
-        autocomplete="username"
+        :autocomplete="passkey ? 'username webauthn' : 'username'"
         required
       >
     </div>
@@ -52,6 +63,19 @@ onMounted(() => first.value?.focus())
     >
       Sign in
     </button>
+    <template v-if="passkey">
+      <p class="muted text-center text-xs">
+        or
+      </p>
+      <button
+        type="button"
+        class="btn w-full"
+        :disabled="locked"
+        @click="emit('passkey')"
+      >
+        Sign in with a passkey
+      </button>
+    </template>
     <button
       v-if="canReset"
       type="button"

@@ -3,10 +3,11 @@ import { ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useAuthStore } from '@/stores/auth'
 import { me as meApi } from '@/api/me'
-import type { TotpEnrollment } from '@/api/types'
+import type { Reauth, TotpEnrollment } from '@/api/types'
 import SecretOnceDialog from '@/components/SecretOnceDialog.vue'
 import ErrorAlert from '@/components/ErrorAlert.vue'
-import PasswordPrompt from './PasswordPrompt.vue'
+import ReauthPrompt from './ReauthPrompt.vue'
+import PasskeysSection from './PasskeysSection.vue'
 import TotpEnrollDialog from './TotpEnrollDialog.vue'
 
 type Prompt = 'enroll' | 'regenerate' | 'remove'
@@ -32,14 +33,14 @@ async function refresh() {
 
 const prompts: Record<
   Prompt,
-  { title: string; message: string; confirm: string; danger?: boolean; run: (pw: string) => Promise<void> }
+  { title: string; message: string; confirm: string; danger?: boolean; run: (reauth: Reauth) => Promise<void> }
 > = {
   enroll: {
     title: 'Set up an authenticator app',
-    message: 'Confirm your password to add an authenticator app.',
+    message: "Confirm it's you to add an authenticator app.",
     confirm: 'Continue',
-    run: async (pw) => {
-      enrollment.value = await meApi.beginTotp(pw)
+    run: async (reauth) => {
+      enrollment.value = await meApi.beginTotp(reauth)
       prompt.value = null
     },
   },
@@ -47,8 +48,8 @@ const prompts: Record<
     title: 'New recovery codes',
     message: 'Your existing recovery codes stop working and 10 new ones are shown once.',
     confirm: 'Generate new codes',
-    run: async (pw) => {
-      codes.value = (await meApi.regenerateRecoveryCodes(pw)).recovery_codes
+    run: async (reauth) => {
+      codes.value = (await meApi.regenerateRecoveryCodes(reauth)).recovery_codes
       prompt.value = null
       await refresh()
     },
@@ -59,8 +60,8 @@ const prompts: Record<
       'Sign-in will no longer ask for a second factor, and your recovery codes are deleted.',
     confirm: 'Remove',
     danger: true,
-    run: async (pw) => {
-      await meApi.removeTotp(pw)
+    run: async (reauth) => {
+      await meApi.removeTotp(reauth)
       prompt.value = null
       await refresh()
     },
@@ -73,8 +74,8 @@ async function confirmed(recovery: string[]) {
   await refresh()
 }
 
-async function runPrompt(pw: string) {
-  if (prompt.value) await prompts[prompt.value].run(pw)
+async function runPrompt(reauth: Reauth) {
+  if (prompt.value) await prompts[prompt.value].run(reauth)
 }
 </script>
 
@@ -84,6 +85,7 @@ async function runPrompt(pw: string) {
     class="space-y-6"
   >
     <ErrorAlert :error="refreshError" />
+    <PasskeysSection @changed="refresh" />
     <section class="card space-y-3">
       <h2 class="text-lg font-semibold">
         Two-step verification
@@ -127,7 +129,7 @@ async function runPrompt(pw: string) {
         </button>
       </template>
     </section>
-    <PasswordPrompt
+    <ReauthPrompt
       :open="prompt !== null"
       :title="prompt ? prompts[prompt].title : ''"
       :message="prompt ? prompts[prompt].message : ''"

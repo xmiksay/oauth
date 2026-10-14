@@ -20,8 +20,8 @@ NVM = want=$$(cat .nvmrc); have=$$(node --version 2>/dev/null | sed 's/^v\([0-9]
 # Load .env (if present) into the recipe's environment with shell semantics.
 DOTENV = set -a; [ -f .env ] && . ./.env; set +a;
 
-.PHONY: help build run dev-db web-dev lint fmt test test-unit test-integration \
-	web-test web-build docker bootstrap clean
+.PHONY: help build run dev-db web-dev lint lint-rust lint-web fmt test test-unit \
+	test-integration web-test web-build docker bootstrap clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -39,9 +39,13 @@ dev-db: ## Start the dev Postgres 17 and Mailpit (docker compose)
 web-dev: ## Run the Vite dev server (proxies API to the backend)
 	$(NVM) $(NPM) run dev
 
-lint: ## rustfmt check, clippy -D warnings, eslint, vue-tsc
+lint: lint-rust lint-web ## rustfmt check, clippy -D warnings, eslint, vue-tsc
+
+lint-rust: ## rustfmt check, clippy -D warnings
 	cargo fmt --all --check
 	cargo clippy --workspace --all-targets -- -D warnings
+
+lint-web: ## eslint, vue-tsc
 	$(NVM) $(NPM) run lint
 	$(NVM) $(NPM) run typecheck
 

@@ -7,12 +7,7 @@ use sea_orm::{ActiveEnum, TransactionTrait};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use super::{
-    Caller,
-    extract::Json,
-    me::{me, verify_password},
-    user_invite::require_email,
-};
+use super::{Caller, extract::Json, me::me, reauth, user_invite::require_email};
 use crate::{
     app::AppState,
     audit::{EventType, Target},
@@ -21,6 +16,7 @@ use crate::{
     error::{AppError, AppResult},
     mail::links,
     notify::{self, Pref},
+    passkey::AssertionJson,
 };
 
 /// Bounds the mail one account can make the server send.
@@ -77,12 +73,14 @@ pub async fn send_verification(
 #[serde(deny_unknown_fields)]
 pub struct ChangeEmail {
     new_email: String,
-    password: String,
+    password: Option<String>,
+    passkey: Option<AssertionJson>,
 }
 
 /// Mails a link to the NEW address; nothing changes until it is opened
 /// (`POST /api/authn/email/verify`), which also notifies the old address.
-/// Always 202 for a well-formed request with the right password.
+/// Always 202 for a well-formed request with a valid re-authentication
+/// (password or passkey).
 pub async fn change_email(
     State(state): State<AppState>,
     caller: Caller,
@@ -91,7 +89,14 @@ pub async fn change_email(
     let user = me(&state, &caller).await?;
     require_email(&state)?;
     let new_email = normalize_email(&body.new_email)?;
-    verify_password(&state, &user, &body.password).await?;
+    reauth::verify(
+        &state,
+        &caller,
+        &user,
+        body.password.as_deref(),
+        body.passkey.as_ref(),
+    )
+    .await?;
     limit_mail(&state, &caller).await?;
     if new_email.to_lowercase() == user.email.to_lowercase() {
         return Err(AppError::BadRequest(

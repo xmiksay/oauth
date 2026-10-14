@@ -1,6 +1,7 @@
 //! `…/me/totp` and `…/me/recovery-codes` — TOTP enrollment and recovery
-//! codes. Every change of security info requires the current password
-//! (a stolen access token alone can't add, remove or read out a factor).
+//! codes. Every change of security info requires re-authentication — the
+//! current password or a passkey (`reauth`): a stolen access token alone
+//! can't add, remove or read out a factor.
 //! Enrollment is two-step: `POST me/totp` stores a pending secret and shows
 //! it once; `POST me/totp/confirm` with a valid code activates it and
 //! returns fresh recovery codes (shown once).
@@ -19,12 +20,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-use super::{
-    Caller,
-    extract::Json,
-    me::{me, verify_password},
-    user_actions::delete_mfa,
-};
+use super::{Caller, extract::Json, me::me, reauth::ReauthBody, user_actions::delete_mfa};
 use crate::{
     app::AppState,
     audit::{EventType, Target},
@@ -131,7 +127,7 @@ async fn enrollment(
         .await?)
 }
 
-async fn mfa_notice(
+pub async fn mfa_notice(
     state: &AppState,
     caller: &Caller,
     conn: &impl ConnectionTrait,
@@ -151,16 +147,10 @@ async fn mfa_notice(
     Ok(())
 }
 
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PasswordBody {
-    password: String,
-}
-
 pub async fn begin_totp(
     State(state): State<AppState>,
     caller: Caller,
-    Json(body): Json<PasswordBody>,
+    Json(body): Json<ReauthBody>,
 ) -> AppResult<axum::Json<Value>> {
     let user = me(&state, &caller).await?;
     let existing = enrollment(&state.db, user.tenant_id, user.id).await?;
@@ -169,7 +159,7 @@ pub async fn begin_totp(
             "TOTP is already enrolled; remove it first".into(),
         ));
     }
-    verify_password(&state, &user, &body.password).await?;
+    body.verify(&state, &caller, &user).await?;
     let mut raw = Zeroizing::new([0u8; SECRET_BYTES]);
     rand::fill(raw.as_mut_slice()).map_err(|_| anyhow!("generating TOTP secret"))?;
     let sealed = totp::seal_secret(
@@ -253,7 +243,7 @@ pub async fn confirm_totp(
 pub async fn remove_totp(
     State(state): State<AppState>,
     caller: Caller,
-    Json(body): Json<PasswordBody>,
+    Json(body): Json<ReauthBody>,
 ) -> AppResult<StatusCode> {
     let user = me(&state, &caller).await?;
     if enrollment(&state.db, user.tenant_id, user.id)
@@ -262,7 +252,7 @@ pub async fn remove_totp(
     {
         return Err(AppError::NotFound);
     }
-    verify_password(&state, &user, &body.password).await?;
+    body.verify(&state, &caller, &user).await?;
     let txn = state.db.begin().await?;
     delete_mfa(&txn, user.tenant_id, user.id).await?;
     caller
@@ -281,7 +271,7 @@ pub async fn remove_totp(
 pub async fn regenerate_recovery_codes(
     State(state): State<AppState>,
     caller: Caller,
-    Json(body): Json<PasswordBody>,
+    Json(body): Json<ReauthBody>,
 ) -> AppResult<axum::Json<Value>> {
     let user = me(&state, &caller).await?;
     if totp::confirmed(&state.db, user.tenant_id, user.id)
@@ -292,7 +282,7 @@ pub async fn regenerate_recovery_codes(
             "recovery codes need an enrolled TOTP authenticator".into(),
         ));
     }
-    verify_password(&state, &user, &body.password).await?;
+    body.verify(&state, &caller, &user).await?;
     let txn = state.db.begin().await?;
     let codes = replace_recovery_codes(&txn, user.tenant_id, user.id).await?;
     caller

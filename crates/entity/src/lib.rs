@@ -31,6 +31,8 @@ pub mod tenants;
 pub mod user_recovery_codes;
 pub mod user_totp;
 pub mod users;
+pub mod webauthn_challenges;
+pub mod webauthn_credentials;
 
 #[cfg(test)]
 mod tests {
@@ -61,6 +63,7 @@ mod tests {
                     must_change_password: false,
                     disabled: false,
                     first_device_at: None,
+                    webauthn_handle: Some(bytes.clone()),
                     created_at: now(),
                     updated_at: now(),
                 }
@@ -160,6 +163,19 @@ mod tests {
                     user_agent: None,
                     first_seen: now(),
                     last_seen: now(),
+                    expires_at: now(),
+                }
+            ),
+            format!(
+                "{:?}",
+                webauthn_challenges::Model {
+                    id,
+                    tenant_id: id,
+                    challenge_hash: bytes.clone(),
+                    purpose: enums::WebauthnPurpose::Login,
+                    user_id: None,
+                    tx_id: Some(id),
+                    created_at: now(),
                     expires_at: now(),
                 }
             ),

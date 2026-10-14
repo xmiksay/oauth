@@ -4,8 +4,15 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { createPinia } from 'pinia'
 import { ApiError } from '@/api/client'
 import type { TxView } from '@/api/authn'
+import { ASSERTION_JSON, REQUEST_OPTIONS, domError, stubWebAuthn } from '@/test/helpers'
 
-const api = { get: vi.fn(), password: vi.fn(), requestPasswordReset: vi.fn() }
+const api = {
+  get: vi.fn(),
+  password: vi.fn(),
+  requestPasswordReset: vi.fn(),
+  passkeyOptions: vi.fn(),
+  passkey: vi.fn(),
+}
 vi.mock('@/api/authn', async (orig) => ({
   ...(await orig<typeof import('@/api/authn')>()),
   authn: api,
@@ -16,6 +23,7 @@ const { default: LoginPage } = await import('./LoginPage.vue')
 const passwordView: TxView = {
   tx: 'tx-1',
   step: 'password',
+  factors: ['password'],
   tenant: { slug: 'contoso', display_name: 'Contoso' },
   client: { client_id: 'shop', display_name: 'Shop' },
   user: null,
@@ -37,13 +45,10 @@ async function mountPage() {
   return w
 }
 
-beforeEach(() => {
-  api.get.mockReset()
-  api.password.mockReset()
-  api.requestPasswordReset.mockReset()
-})
+beforeEach(() => Object.values(api).forEach((f) => f.mockReset()))
 afterEach(() => {
   vi.useRealTimers()
+  vi.unstubAllGlobals()
   document.body.innerHTML = ''
 })
 
@@ -127,6 +132,79 @@ describe('LoginPage', () => {
     await w.find('form').trigger('submit')
     await flushPromises()
     expect(w.find('[role=alert]').text()).toBe('Too many attempts. Try again in 60 seconds.')
+  })
+})
+
+describe('LoginPage passkeys', () => {
+  const passkeyView: TxView = { ...passwordView, factors: ['password', 'passkey'] }
+  const mfaView: TxView = {
+    ...passwordView,
+    step: 'mfa',
+    user: { email: 'ann@example.com', display_name: 'Ann' },
+    factors: ['totp', 'recovery'],
+  }
+  const button = (w: Awaited<ReturnType<typeof mountPage>>, text: string) =>
+    w.findAll('button').find((b) => b.text() === text)
+
+  it('offers no passkey where the browser has no WebAuthn', async () => {
+    api.get.mockResolvedValue(passkeyView)
+    const w = await mountPage()
+    expect(button(w, 'Sign in with a passkey')).toBeUndefined()
+    expect(w.find('#login-email').attributes('autocomplete')).toBe('username')
+  })
+
+  it('cancels the autofill request before the passkey dialog and uses fresh options', async () => {
+    const wa = stubWebAuthn(true)
+    let autofill: AbortSignal | undefined
+    wa.get.mockImplementationOnce(async (o) => {
+      autofill = o?.signal ?? undefined
+      return new Promise((_, reject) =>
+        autofill?.addEventListener('abort', () => reject(domError('AbortError'))),
+      )
+    })
+    api.get.mockResolvedValue(passkeyView)
+    api.passkeyOptions.mockResolvedValue(REQUEST_OPTIONS)
+    api.passkey.mockResolvedValue(mfaView)
+    const w = await mountPage()
+    await vi.waitFor(() => expect(wa.get).toHaveBeenCalledTimes(1))
+    expect(wa.get.mock.calls[0]?.[0]?.mediation).toBe('conditional')
+    expect(w.find('#login-email').attributes('autocomplete')).toBe('username webauthn')
+
+    await button(w, 'Sign in with a passkey')?.trigger('click')
+    await flushPromises()
+    expect(autofill?.aborted).toBe(true)
+    expect(api.passkeyOptions).toHaveBeenCalledTimes(2)
+    expect(wa.get.mock.calls[1]?.[0]?.mediation).toBeUndefined()
+    expect(api.passkey).toHaveBeenCalledTimes(1)
+    expect(api.passkey).toHaveBeenCalledWith('tx-1', ASSERTION_JSON)
+    expect(w.find('#mfa-code').exists()).toBe(true)
+  })
+
+  it('shows a soft note when the passkey dialog is dismissed', async () => {
+    const wa = stubWebAuthn()
+    wa.get.mockRejectedValue(domError('NotAllowedError'))
+    api.get.mockResolvedValue(passkeyView)
+    api.passkeyOptions.mockResolvedValue(REQUEST_OPTIONS)
+    const w = await mountPage()
+    await button(w, 'Sign in with a passkey')?.trigger('click')
+    await flushPromises()
+    expect(w.find('[role=status]').text()).toBe('Passkey sign-in was cancelled.')
+    expect(w.find('[role=alert]').exists()).toBe(false)
+  })
+
+  it('offers only a passkey at the MFA step when that is all the user has', async () => {
+    stubWebAuthn()
+    api.get.mockResolvedValue({ ...mfaView, factors: ['passkey'] })
+    api.passkeyOptions.mockResolvedValue(REQUEST_OPTIONS)
+    api.passkey.mockRejectedValue(new ApiError(401, { error: 'invalid_credentials' }))
+    const w = await mountPage()
+    expect(w.find('#mfa-code').exists()).toBe(false)
+    expect(document.activeElement?.textContent?.trim()).toBe('Use a passkey')
+    await button(w, 'Use a passkey')?.trigger('click')
+    await flushPromises()
+    expect(w.find('[role=alert]').text()).toBe(
+      "That passkey couldn't be verified. Try again or use another method.",
+    )
   })
 })
 

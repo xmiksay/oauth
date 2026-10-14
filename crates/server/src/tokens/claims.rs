@@ -161,6 +161,7 @@ mod tests {
             must_change_password: false,
             disabled: false,
             first_device_at: None,
+            webauthn_handle: None,
             created_at: now,
             updated_at: now,
         }

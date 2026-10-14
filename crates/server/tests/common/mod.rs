@@ -2,10 +2,12 @@
 //! separately, so not every helper is used everywhere.
 #![allow(dead_code)]
 
+pub mod authenticator;
 pub mod browser;
 pub mod flow;
 pub mod mail;
 pub mod mgmt;
+pub mod passkeys;
 pub mod seed;
 
 use std::{collections::HashMap, path::Path};

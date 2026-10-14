@@ -1,6 +1,7 @@
 import { computed, ref, shallowRef } from 'vue'
 import { ApiError } from '@/api/client'
 import { authn, isRedirect, type StepResult, type TxView } from '@/api/authn'
+import { PasskeyCancelled, conditionalMediationAvailable, getPasskey } from '@/webauthn'
 
 /**
  * `missing`: no tx in the URL; `expired`: unknown / expired / finished transaction;
@@ -11,12 +12,17 @@ export type Phase = 'loading' | 'step' | 'redirecting' | 'expired' | 'missing' |
 export interface LoginDeps {
   api: typeof authn
   navigate: (url: string) => void
+  passkeys: { conditional: () => Promise<boolean>; get: typeof getPasskey }
 }
 
 const defaultDeps: LoginDeps = {
   api: authn,
   navigate: (url) => window.location.assign(url),
+  passkeys: { conditional: conditionalMediationAvailable, get: getPasskey },
 }
+
+export const PASSKEY_FAILED = "That passkey couldn't be verified. Try again or use another method."
+export const PASSKEY_CANCELLED = 'Passkey sign-in was cancelled.'
 
 function messageFor(err: ApiError): string {
   switch (err.code) {
@@ -48,6 +54,8 @@ export function useLoginFlow(tx: string | null, deps: LoginDeps = defaultDeps) {
   const phase = ref<Phase>(tx ? 'loading' : 'missing')
   const view = shallowRef<TxView | null>(null)
   const error = ref<string | null>(null)
+  /** A soft note (a dismissed passkey dialog), not an error. */
+  const notice = ref<string | null>(null)
   const busy = ref(false)
   const retryIn = ref(0)
   let timer: ReturnType<typeof setInterval> | null = null
@@ -89,7 +97,15 @@ export function useLoginFlow(tx: string | null, deps: LoginDeps = defaultDeps) {
     phase.value = 'step'
   }
 
-  async function handleError(err: unknown) {
+  async function handleError(err: unknown, failed?: string) {
+    if (err instanceof PasskeyCancelled) {
+      notice.value = PASSKEY_CANCELLED
+      return
+    }
+    if (typeof err === 'string') {
+      error.value = err
+      return
+    }
     if (!(err instanceof ApiError)) {
       error.value = 'Could not reach the server. Check your connection and try again.'
       return
@@ -103,7 +119,7 @@ export function useLoginFlow(tx: string | null, deps: LoginDeps = defaultDeps) {
     } else if (err.status === 429) {
       startCountdown(err.retryAfter ?? 30)
     } else {
-      error.value = messageFor(err)
+      error.value = failed && err.code === 'invalid_credentials' ? failed : messageFor(err)
     }
   }
 
@@ -127,24 +143,70 @@ export function useLoginFlow(tx: string | null, deps: LoginDeps = defaultDeps) {
     }
   }
 
-  async function run(call: (tx: string) => Promise<StepResult>) {
+  /** `failed`: the `invalid_credentials` message when the step isn't email + password. */
+  async function run(call: (tx: string) => Promise<StepResult>, failed?: string) {
     if (!tx || locked.value) return
     busy.value = true
     error.value = null
+    notice.value = null
     try {
       apply(await call(tx))
     } catch (err) {
-      await handleError(err)
+      await handleError(err, failed)
     } finally {
       busy.value = false
     }
   }
 
   const a = deps.api
+  // The pending autofill (conditional mediation) request, if any.
+  let conditional: AbortController | null = null
+
+  function stopConditional() {
+    conditional?.abort()
+    conditional = null
+  }
+
+  /**
+   * Offers passkeys in the email field's autofill. Silent on any failure: it's a shortcut
+   * beside the form and the passkey button, which both keep working.
+   */
+  async function startConditional() {
+    if (!tx || conditional || !view.value?.factors.includes('passkey')) return
+    const ctl = new AbortController()
+    conditional = ctl
+    try {
+      if (!(await deps.passkeys.conditional()) || ctl.signal.aborted) return
+      const options = await a.passkeyOptions(tx)
+      if (ctl.signal.aborted) return
+      const assertion = await deps.passkeys.get(options, {
+        mediation: 'conditional',
+        signal: ctl.signal,
+      })
+      if (ctl.signal.aborted) return
+      conditional = null
+      await run((id) => a.passkey(id, assertion), PASSKEY_FAILED)
+    } catch {
+      // Aborted, dismissed or unavailable: nothing to tell the user.
+    } finally {
+      if (conditional === ctl) conditional = null
+    }
+  }
+
+  /** Modal passkey sign-in, with fresh options: they replace the autofill's challenge. */
+  async function passkey() {
+    stopConditional()
+    await run(
+      async (id) => a.passkey(id, await deps.passkeys.get(await a.passkeyOptions(id))),
+      PASSKEY_FAILED,
+    )
+  }
+
   return {
     phase,
     view,
     error,
+    notice,
     busy,
     retryIn,
     locked,
@@ -154,12 +216,18 @@ export function useLoginFlow(tx: string | null, deps: LoginDeps = defaultDeps) {
       run((id) => a.password(id, email, password)),
     totp: (code: string) => run((id) => a.totp(id, code.replace(/\s/g, ''))),
     recovery: (code: string) => run((id) => a.recovery(id, code)),
+    passkey,
+    startConditional,
+    stopConditional,
     changePassword: (next: string) => run((id) => a.changePassword(id, next)),
     consent: (approve: boolean) =>
       run((id) =>
         a.consent(id, approve, view.value?.consent?.scopes.map((s) => s.value) ?? []),
       ),
-    dispose: stopTimer,
+    dispose: () => {
+      stopTimer()
+      stopConditional()
+    },
   }
 }
 

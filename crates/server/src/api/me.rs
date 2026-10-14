@@ -16,17 +16,17 @@ use super::{
     Caller, consents,
     extract::{Json, Path},
     guard::find_user,
-    set_changed,
+    reauth, set_changed,
     user_actions::{list_sessions, session_view},
     users::detailed_view,
 };
 use crate::{
     app::AppState,
     audit::{EventType, Target},
-    authn::rate_limit,
     directory::{self, display_name, password},
     error::{AppError, AppResult},
     notify,
+    passkey::AssertionJson,
     tokens::refresh,
 };
 
@@ -34,41 +34,6 @@ use crate::{
 /// users already fail authentication).
 pub async fn me(state: &AppState, caller: &Caller) -> AppResult<users::Model> {
     find_user(&state.db, caller.tenant_id(), caller.user_id()?).await
-}
-
-/// Re-authentication for sensitive self-service changes: rate-limited like
-/// sign-in (the bucket is shared with the login API), 403 when wrong.
-pub async fn verify_password(
-    state: &AppState,
-    user: &users::Model,
-    candidate: &str,
-) -> AppResult<()> {
-    let key = rate_limit::user_key(user.id);
-    let now = chrono::Utc::now();
-    if let Err(retry_after) = rate_limit::hit(
-        &state.db,
-        user.tenant_id,
-        &key,
-        rate_limit::PER_ACCOUNT,
-        now,
-    )
-    .await?
-    {
-        return Err(AppError::RateLimited { retry_after });
-    }
-    let ok = match &user.password_hash {
-        Some(phc) if candidate.len() <= password::MAX_PASSWORD_LEN * 4 => {
-            password::verify(candidate, phc).await?
-        }
-        _ => false,
-    };
-    if ok {
-        Ok(())
-    } else {
-        Err(AppError::Forbidden(
-            "the current password is incorrect".into(),
-        ))
-    }
 }
 
 /// `UserDetail` + `features` (what the server offers the SPA) — the shape
@@ -126,7 +91,9 @@ pub async fn update(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChangePassword {
-    current_password: String,
+    /// Or `passkey`: lets a passkey-only user set a first password.
+    current_password: Option<String>,
+    passkey: Option<AssertionJson>,
     new_password: String,
 }
 
@@ -139,9 +106,16 @@ pub async fn change_password(
     Json(body): Json<ChangePassword>,
 ) -> AppResult<StatusCode> {
     let user = me(&state, &caller).await?;
-    verify_password(&state, &user, &body.current_password).await?;
+    reauth::verify(
+        &state,
+        &caller,
+        &user,
+        body.current_password.as_deref(),
+        body.passkey.as_ref(),
+    )
+    .await?;
     password::validate(&body.new_password)?;
-    if body.new_password == body.current_password {
+    if body.current_password.as_deref() == Some(body.new_password.as_str()) {
         return Err(AppError::BadRequest(
             "the new password must differ from the current one".into(),
         ));

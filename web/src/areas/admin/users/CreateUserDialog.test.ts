@@ -30,7 +30,7 @@ function mountDialog(email: boolean) {
     ...created,
     id: 'admin',
     directory_roles: ['UserAdmin'],
-    mfa: { totp: false, totp_pending: false, recovery_codes_remaining: 0 },
+    mfa: { totp: false, totp_pending: false, recovery_codes_remaining: 0, passkeys: 0 },
     features: { email },
   })
   return mount(CreateUserDialog, { props: { open: true }, global: { plugins: [pinia] } })

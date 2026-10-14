@@ -9,26 +9,42 @@ and objects there).
 |---|---|---|
 | `GET me` | – | `Me` = `UserDetail` + `features: { email }` (whether the server can send email) |
 | `PATCH me` | `{ display_name }` | `Me` (same shape as `GET me`) |
-| `POST me/change-password` | `{ current_password, new_password }` | 204 |
+| `POST me/change-password` | `{ current_password, new_password }` or `{ passkey, new_password }` | 204 (the passkey variant lets a passkey-only user set a first password) |
 | `POST me/verify-email` | – | 202 `{ sent: true }`: a 24 h verification link to the current address (409 already verified, 400 email not configured) |
-| `POST me/email` | `{ new_email, password }` | 202 `{ sent: true }`: a 24 h link to the NEW address; the change applies when it is opened (`POST /api/authn/email/verify`, 409 if the address is taken by then) and notifies the old address if it was verified. Always 202 for a well-formed request with the right password — also for an address that is taken (no probing for accounts). 403 wrong password, 400 invalid / same as current / not configured |
+| `POST me/email` | `{ new_email, password }` or `{ new_email, passkey }` | 202 `{ sent: true }`: a 24 h link to the NEW address; the change applies when it is opened (`POST /api/authn/email/verify`, 409 if the address is taken by then) and notifies the old address if it was verified. Always 202 for a well-formed request with a valid re-authentication — also for an address that is taken (no probing for accounts). 403 wrong re-authentication, 400 invalid / same as current / not configured |
 | `GET me/notifications` | – | `{ channels: { email, telegram }, items: [{ event, email, telegram }] }` — all five events (`password_changed`, `mfa_changed`, `email_changed`, `new_sign_in`, `token_reuse`), default on |
 | `PUT me/notifications` | `{ items: [{ event, email, telegram? }] }` (any subset; unknown / repeated event → 400) | same as `GET` |
-| `POST me/totp` | `{ password }` | `{ secret, otpauth_uri, digits: 6, period: 30, algorithm: "SHA1" }` |
+| `POST me/reauth/options` | `{}` | `{ publicKey: PublicKeyCredentialRequestOptionsJSON }` for the user's passkeys (409 if none) |
+| `GET me/passkeys` | – | `{ items: Passkey[] }` |
+| `POST me/passkeys/options` | Reauth | `{ publicKey: PublicKeyCredentialCreationOptionsJSON }` (`excludeCredentials` = the user's passkeys); 409 when the user already has 20 (checked before re-auth and before the browser creates anything) |
+| `POST me/passkeys` | `{ credential: RegistrationJSON, name? }` | 201 `Passkey` (400 rejected / no live challenge, 409 already registered or 20 reached) |
+| `PATCH me/passkeys/{id}` | `{ name }` | `Passkey` (1–64 characters) |
+| `DELETE me/passkeys/{id}` | Reauth | 204; 409 when it is the last sign-in method (no password, last passkey) |
+| `POST me/totp` | Reauth | `{ secret, otpauth_uri, digits: 6, period: 30, algorithm: "SHA1" }` |
 | `POST me/totp/confirm` | `{ code }` | `{ recovery_codes: [10 × "xxxx-xxxx-xxxx"] }` |
-| `DELETE me/totp` | `{ password }` | 204: TOTP and recovery codes removed |
-| `POST me/recovery-codes` | `{ password }` | `{ recovery_codes }` (replaces all) |
+| `DELETE me/totp` | Reauth | 204: TOTP and recovery codes removed |
+| `POST me/recovery-codes` | Reauth | `{ recovery_codes }` (replaces all) |
 | `GET me/sessions` | – | `{ items: Session[] }` (`current` marks the token's session) |
 | `DELETE me/sessions/{id}` | – | 204 |
 | `POST me/sessions/revoke-all` | – | 204 |
 | `GET me/consents` | – | `{ items: [ConsentGrant + client: {id, client_id, display_name}, resource: {…}] }` (own grants only) |
 | `DELETE me/consents/{id}` | – | 204 |
 
-- **Security info changes need the current password** (`POST me/totp`,
-  `DELETE me/totp`, `POST me/recovery-codes`; also `change-password`): a
-  stolen access token alone can't add, remove or read out a factor. Wrong
-  password → 403; attempts count against the same per-account rate limit
-  as sign-in (429 + `Retry-After`).
+- **Security info changes need re-authentication** (`POST me/totp`,
+  `DELETE me/totp`, `POST me/recovery-codes`, `POST me/passkeys/options`,
+  `DELETE me/passkeys/{id}`; also `change-password` and `email`): a stolen
+  access token alone can't add, remove or read out a factor. **Reauth** =
+  `{ "password": "…" }` OR `{ "passkey": AssertionJSON }` answering a
+  `POST me/reauth/options` challenge (single use, 5 min) — exactly one (else
+  400), so a user who has only passkeys can manage the account. Wrong → 403;
+  attempts count against the same per-account rate limit as sign-in (429 +
+  `Retry-After`). A passkey whose counter went backwards is refused and
+  audited (`user.mfa.passkey_sign_count_regression`).
+- `Passkey` = `{ id, name, created_at, last_used_at, backup_eligible,
+  backup_state, transports, aaguid }`. Registration is two calls: the
+  options (after re-auth) carry a `register` challenge, `POST me/passkeys`
+  answers it. Adding or removing a passkey sends the "MFA changed" notice.
+  Shapes in [authn.md](authn.md#passkeys), policy in [../passkeys.md](../passkeys.md).
 - `verify-email` and `email` count against a per-account mail limit
   (5 / 15 min, 429). Notices go to a verified address only (the
   email-change notice to the old address regardless); see [../email.md](../email.md).

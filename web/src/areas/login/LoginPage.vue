@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useTenantStore } from '@/stores/tenant'
@@ -9,6 +9,7 @@ import MfaStep from './MfaStep.vue'
 import ChangePasswordStep from './ChangePasswordStep.vue'
 import ConsentStep from './ConsentStep.vue'
 import ForgotPasswordForm from './ForgotPasswordForm.vue'
+import { passkeysSupported } from '@/webauthn'
 import { useLoginFlow } from './useLoginFlow'
 
 const route = useRoute()
@@ -16,7 +17,7 @@ const { slug } = storeToRefs(useTenantStore())
 const tx = typeof route.query.tx === 'string' && route.query.tx ? route.query.tx : null
 
 const flow = useLoginFlow(tx)
-const { phase, view, error, locked, rateLimited, retryIn } = flow
+const { phase, view, error, notice, locked, rateLimited, retryIn } = flow
 
 onMounted(flow.load)
 onUnmounted(flow.dispose)
@@ -28,6 +29,23 @@ function toggleForgot(show: boolean, typed: string) {
   email.value = typed
   forgot.value = show
 }
+
+const canUsePasskeys = passkeysSupported()
+const factors = computed(() => view.value?.factors ?? [])
+const offerPasskey = computed(() => canUsePasskeys && factors.value.includes('passkey'))
+
+// Autofill passkeys only while the email field is on screen and nothing else is in flight;
+// any other request (password, modal passkey) cancels it and it restarts with fresh options.
+watch(
+  () =>
+    offerPasskey.value &&
+    phase.value === 'step' &&
+    view.value?.step === 'password' &&
+    !forgot.value &&
+    !locked.value,
+  (on) => (on ? void flow.startConditional() : flow.stopConditional()),
+  { flush: 'post' },
+)
 
 const title = computed(() => {
   if (forgot.value && view.value?.step === 'password') return 'Reset your password'
@@ -136,19 +154,31 @@ const subtitle = computed(() => {
       >
         {{ error }}
       </p>
+      <p
+        v-else-if="notice"
+        role="status"
+        class="muted mb-4 text-sm"
+      >
+        {{ notice }}
+      </p>
       <PasswordStep
         v-if="view.step === 'password'"
         :locked="locked"
         :can-reset="view.features.password_reset"
         :initial-email="email"
+        :passkey="offerPasskey"
         @submit="flow.password"
+        @passkey="flow.passkey"
         @forgot="(typed) => toggleForgot(true, typed)"
       />
       <MfaStep
         v-else-if="view.step === 'mfa'"
         :locked="locked"
+        :factors="factors"
+        :passkeys="canUsePasskeys"
         @totp="flow.totp"
         @recovery="flow.recovery"
+        @passkey="flow.passkey"
       />
       <ChangePasswordStep
         v-else-if="view.step === 'change_password'"

@@ -169,3 +169,18 @@ impl LoginStage {
         }
     }
 }
+
+/// What a WebAuthn challenge may be answered for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter, DeriveActiveEnum)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
+pub enum WebauthnPurpose {
+    /// Creating a credential (My Account, invitation).
+    #[sea_orm(string_value = "register")]
+    Register,
+    /// An assertion in a login transaction.
+    #[sea_orm(string_value = "login")]
+    Login,
+    /// An assertion re-authenticating a signed-in user (My Account).
+    #[sea_orm(string_value = "reauth")]
+    Reauth,
+}

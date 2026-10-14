@@ -109,6 +109,11 @@ impl Config {
         self.public_url.tenant_origin(tenant_slug)
     }
 
+    /// WebAuthn RP ID of a tenant (its host, no port).
+    pub fn tenant_rp_id(&self, tenant_slug: &str) -> String {
+        self.public_url.tenant_rp_id(tenant_slug)
+    }
+
     /// Whether email can be sent (verification, reset, invites, notices).
     pub fn email_enabled(&self) -> bool {
         self.smtp.is_some()

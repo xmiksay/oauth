@@ -31,6 +31,7 @@ use crate::{
     mail::tokens,
     notify,
     oidc::error::no_store,
+    passkey,
     tenancy::Tenant,
 };
 
@@ -76,7 +77,7 @@ pub(super) async fn record(
     .await
 }
 
-async fn limit_links(ctx: &Ctx<'_>) -> AuthnResult<()> {
+pub(super) async fn limit_links(ctx: &Ctx<'_>) -> AuthnResult<()> {
     let key = format!("link-{}", rate_limit::ip_key(ctx.ip));
     limit(ctx, &[(key, rate_limit::LINK_PER_IP)]).await
 }
@@ -84,7 +85,7 @@ async fn limit_links(ctx: &Ctx<'_>) -> AuthnResult<()> {
 /// The user a consumed token may act on (`tokens::still_valid`), locked
 /// for the rest of the transaction; anything else voids the attempt (the
 /// caller's transaction rolls back, the token stays unused).
-async fn owner(
+pub(super) async fn owner(
     conn: &impl ConnectionTrait,
     ctx: &Ctx<'_>,
     token: &email_tokens::Model,
@@ -122,6 +123,12 @@ pub(super) async fn set_password_by_link(
         .await?
         .ok_or(AuthnError::InvalidLink)?;
     let user = owner(&txn, ctx, &token).await?;
+    // A passkey accepted the invitation already: it is spent.
+    if purpose == EmailTokenPurpose::Invite
+        && passkey::store::count(&txn, tenant_id, user.id).await? > 0
+    {
+        return Err(AuthnError::InvalidLink);
+    }
     directory::set_password(&txn, tenant_id, user.id, &body.new_password, false).await?;
     let mut row: users::ActiveModel = user.into();
     row.email_verified = Set(true);

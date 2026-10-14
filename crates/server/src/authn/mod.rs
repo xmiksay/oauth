@@ -12,8 +12,10 @@ pub mod cookie;
 mod ctx;
 mod device;
 mod email;
+mod invite_passkey;
 pub mod ip;
 mod mfa;
+mod passkey;
 mod password;
 pub mod rate_limit;
 pub mod recovery;
@@ -47,11 +49,21 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(&format!("{TX}/password"), post(password::submit))
         .route(&format!("{TX}/totp"), post(mfa::totp))
         .route(&format!("{TX}/recovery"), post(mfa::recovery))
+        .route(&format!("{TX}/passkey/options"), post(passkey::options))
+        .route(&format!("{TX}/passkey"), post(passkey::submit))
         .route(&format!("{TX}/change-password"), post(password::change))
         .route(&format!("{TX}/consent"), post(complete::consent))
         .route("/api/authn/password-reset", post(reset::request))
         .route("/api/authn/email/reset", post(reset::complete))
         .route("/api/authn/email/invite", post(email::accept_invite))
+        .route(
+            "/api/authn/email/invite/passkey/options",
+            post(invite_passkey::options),
+        )
+        .route(
+            "/api/authn/email/invite/passkey",
+            post(invite_passkey::accept),
+        )
         .route("/api/authn/email/verify", post(email::verify))
         .route_layer(middleware::from_fn_with_state(state, csrf))
 }

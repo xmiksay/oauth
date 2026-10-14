@@ -31,6 +31,7 @@ use crate::{
     directory::{self, DirectoryError, NewUser, display_name, normalize_email},
     error::{AppError, AppResult},
     mail::links,
+    passkey,
 };
 
 pub fn view(u: &users::Model) -> Value {
@@ -112,6 +113,7 @@ pub async fn detailed_view(
         .filter(user_recovery_codes::Column::UsedAt.is_null())
         .count(conn)
         .await?;
+    let passkeys = passkey::store::count(conn, user.tenant_id, user.id).await?;
     let mut out = view(user);
     if let Some(obj) = out.as_object_mut() {
         obj.insert("directory_roles".into(), json!(roles));
@@ -121,6 +123,7 @@ pub async fn detailed_view(
                 "totp": totp.as_ref().is_some_and(|t| t.confirmed_at.is_some()),
                 "totp_pending": totp.as_ref().is_some_and(|t| t.confirmed_at.is_none()),
                 "recovery_codes_remaining": recovery_left,
+                "passkeys": passkeys,
             }),
         );
     }
