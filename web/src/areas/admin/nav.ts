@@ -6,7 +6,7 @@ export interface AdminNavItem {
   systemOnly?: boolean
 }
 
-/** Left-nav entries of the admin portal; each is a child route of `/:tenant/admin`. */
+/** Left-nav entries of the admin portal; each is a child route of `/admin`. */
 export const adminNav: AdminNavItem[] = [
   { name: 'admin-users', path: 'users', label: 'Users' },
   { name: 'admin-groups', path: 'groups', label: 'Groups' },

@@ -20,7 +20,7 @@ watch(
 )
 
 const tabs = computed(() => {
-  const params = { tenant: route.params.tenant, id: route.params.id }
+  const params = { id: route.params.id }
   return [
     { to: { name: 'admin-app', params }, label: 'Overview', exact: true },
     { to: { name: 'admin-app-auth', params }, label: 'Authentication' },
@@ -41,7 +41,7 @@ const tabs = computed(() => {
     >
       <template #breadcrumb>
         <RouterLink
-          :to="{ name: 'admin-apps', params: { tenant: route.params.tenant } }"
+          :to="{ name: 'admin-apps' }"
           class="btn-link"
         >
           App registrations

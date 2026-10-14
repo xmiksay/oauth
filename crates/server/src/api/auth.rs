@@ -1,5 +1,5 @@
 //! Bearer authentication for the management API. A token is accepted when
-//! it is a valid access token of the path's tenant (signature against the
+//! it is a valid access token of the host's tenant (signature against the
 //! tenant's published keys, or an active opaque token of the tenant), its
 //! `tid` is that tenant, and its audience is the tenant's built-in
 //! `management-api`. Delegated tokens must carry the `Directory.AccessAsUser`
@@ -22,9 +22,8 @@ use crate::{
     audit::{self, Actor, EventType, Target},
     authn::{ip::ClientIp, session},
     authz::{self, Access, Area, Principal},
-    directory::{
-        self,
-        builtin_apps::{MANAGEMENT_API, ROLE_READ_ALL, ROLE_READ_WRITE_ALL, SCOPE_ACCESS_AS_USER},
+    directory::builtin_apps::{
+        MANAGEMENT_API, ROLE_READ_ALL, ROLE_READ_WRITE_ALL, SCOPE_ACCESS_AS_USER,
     },
     error::{AppError, AppResult},
     oidc::bearer,
@@ -32,7 +31,7 @@ use crate::{
     tokens::{inspect, principal},
 };
 
-/// An authenticated caller of `/api/v1/tenants/{tenant}/…`.
+/// An authenticated caller of `/api/v1/…` on its tenant's host.
 pub struct Caller {
     pub tenant: Tenant,
     pub principal: Principal,
@@ -140,29 +139,19 @@ impl FromRequestParts<AppState> for Caller {
     }
 }
 
-/// A Global Admin of the system tenant (`/api/v1/tenants` itself).
+/// A Global Admin of the system tenant (`/api/v1/tenants`), calling on the
+/// system tenant's host; on any other host the resource does not exist.
 pub struct SystemAdmin(pub Caller);
 
 impl FromRequestParts<AppState> for SystemAdmin {
     type Rejection = AppError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> AppResult<Self> {
-        let system = directory::find_system_tenant(&state.db)
-            .await?
-            .filter(|t| !t.disabled)
-            .ok_or(AppError::NotFound)?;
-        let tenant = Tenant(std::sync::Arc::new(system));
-        let ClientIp(ip) = match ClientIp::from_request_parts(parts, state).await {
-            Ok(ip) => ip,
-            Err(never) => match never {},
-        };
-        let (principal, session_id) = authenticate(state, &tenant, &parts.headers).await?;
-        let caller = Caller {
-            tenant,
-            principal,
-            session_id,
-            ip,
-        };
+        let tenant = Tenant::from_request_parts(parts, state).await?;
+        if !tenant.is_system {
+            return Err(AppError::NotFound);
+        }
+        let caller = Caller::from_request_parts(parts, state).await?;
         caller.require_global_admin("manage tenants")?;
         Ok(Self(caller))
     }

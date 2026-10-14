@@ -1,4 +1,4 @@
-// App registrations and their children (`/api/v1/tenants/{t}/applications/…`).
+// App registrations and their children (`/api/v1/applications/…`).
 import { query } from './client'
 import { p, t } from './management'
 import type {

@@ -106,7 +106,7 @@ async function changePassword() {
         </button>
         <RouterLink
           v-if="isAdmin"
-          :to="{ name: 'admin', params: { tenant: auth.tenant } }"
+          :to="{ name: 'admin' }"
           class="btn-link"
         >
           Open the admin center

@@ -5,7 +5,7 @@ tenants, app registrations, delegated scopes + app roles, groups, consent and
 directory roles. Rust (Axum, SeaORM, Postgres) backend + Vue 3 SPA served
 same-origin. Repo: `github.com:xmiksay/oauth`.
 
-- Architecture: [docs/architecture.md](../docs/architecture.md)
+- Architecture: [docs/architecture.md](../docs/architecture.md), SPA: [docs/frontend.md](../docs/frontend.md)
 - Roadmap / milestones: [docs/roadmap.md](../docs/roadmap.md)
 
 ## Layout
@@ -15,8 +15,8 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
 | `crates/server/` | bin `oauth` (`serve`, `bootstrap`) + lib `oauth_server` (all modules; integration tests use it) |
 | `crates/entity/` | SeaORM entities (one file per table) + `enums.rs` |
 | `crates/migration/` | `sea-orm-migration` Migrator (append-only, raw SQL) |
-| `web/` | Vite + Vue 3 + TS + Tailwind + Pinia SPA (`/{t}/login`, `/{t}/logout`, `/{t}/myaccount`, `/{t}/admin`); conventions below |
-| `deploy/k8s/deploy.yml` | ConfigMap, Deployment, Service, PodDisruptionBudget (Secret `oauth-secrets` created by hand) |
+| `web/` | Vite + Vue 3 + TS + Tailwind + Pinia SPA (`/login`, `/logout`, `/myaccount`, `/admin` on each tenant host); conventions below |
+| `deploy/k8s/deploy.yml` | ConfigMap, Deployment, Service, PodDisruptionBudget, Ingress for apex + `*.` wildcard (TLS Secret `oauth-wildcard-tls` via cert-manager DNS-01; Secret `oauth-secrets` created by hand) |
 | `.github/workflows/ci.yml` | `make lint` + `make test` + `make web-build`, plus `docker build`, on PR and push to `main`; actions pinned by SHA |
 
 ## Commands (always via make; `CARGO_BUILD_JOBS=4` is exported)
@@ -25,7 +25,7 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
 |---|---|
 | `make dev-db` | Postgres 17 via docker compose (creds in `.env.example`) |
 | `make run` | `oauth serve`, loads `.env` |
-| `make web-dev` | Vite dev server on :5173 proxying to :8080 (needs `PUBLIC_URL=http://localhost:5173` set before `bootstrap`) |
+| `make web-dev` | Vite dev server on `*.localhost:5173` proxying to :8080 with `Host` kept (needs `PUBLIC_URL=http://localhost:5173`, the `.env.example` default); open `http://system.localhost:5173/admin` |
 | `make build` / `make web-build` | release binary + SPA / SPA only |
 | `make lint` | `cargo fmt --check`, clippy `-D warnings`, eslint, vue-tsc |
 | `make fmt` | `cargo fmt` |
@@ -75,8 +75,23 @@ Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md); manag
 - Service code (`directory`, `keys`) is plain async functions over
   `ConnectionTrait` / `TransactionTrait`; `directory` returns the typed
   `DirectoryError` (→ `AppError`: 400 / 409 / 404 / 500).
-- Tenant slugs: `^[a-z0-9][a-z0-9-]{1,62}$` minus `directory::slug::RESERVED_SLUGS`
-  — adding a root route means adding its first segment there.
+- Tenancy is by host only: tenant `t` lives at `t.{PUBLIC_URL host}[:port]`, its
+  issuer is that origin (`Config::tenant_origin` / `issuer`; `PUBLIC_URL` is an origin,
+  no path). `tenancy::resolve_host` gates every route but `/healthz` / `/readyz`
+  (authority = absolute-form / `:authority` first, then `Host`, RFC 9112 §3.2.2;
+  several `Host` headers → 400; default port normalised; unknown / disabled /
+  other-port / nested hosts and tenants with a now-invalid slug → 404, apex `/` →
+  system admin portal); never read `X-Forwarded-Host` / `Forwarded`. Startup
+  (`db::migrate_and_reconcile`) refuses enabled tenants whose slug fails
+  `slug::validate`. Routes have no tenant
+  segment; take the `Tenant` extractor. Built-in SPA redirect URIs derive from
+  `PUBLIC_URL`; `builtin_apps::reconcile_all` rewrites them at startup.
+- Tenant slugs are DNS labels: `^[a-z0-9][a-z0-9-]{1,62}$` (DB CHECK), plus
+  (`slug::validate`) no trailing `-` and no `--` as characters 3–4 (`xn--`),
+  minus `directory::slug::RESERVED_SLUGS` (service host names like `www`,
+  `mail`, `api`, and `system`). Older tenants may violate the newer rules:
+  startup refuses any such tenant that is enabled, and re-enabling one through
+  `PATCH /api/v1/tenants/{slug}` is a 400.
 - Application crypto goes through one provider: AWS-LC via `aws-lc-rs` for key
   generation, AES-256-GCM, SHA-256 and randomness, and as `jsonwebtoken`'s
   backend (`aws_lc_rs` + `use_pem`). (`ring` is still linked transitively by
@@ -108,15 +123,17 @@ Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md); manag
   matched case-insensitively); `api::validate::identifier_uri` checks it up
   front (400) and rejects a non-lowercase `api://` scheme.
 - Management API (`api`, contract [docs/api/management.md](../docs/api/management.md)):
-  handlers take the `api::Caller` extractor (bearer token of the path's
-  tenant for its `management-api`), call `caller.require(Area, Access)`
+  handlers take the `api::Caller` extractor (bearer token of the host's
+  tenant for its `management-api`; `api::auth::SystemAdmin` for
+  `/api/v1/tenants`, system host only), call `caller.require(Area, Access)`
   (matrix in `authz`) first, run the mutation in ONE transaction and record
   its audit event on that transaction (`caller.audit(&txn, …)`). Objects of
   other tenants are 404 (always filter by `caller.tenant_id()`); body-named
   objects that don't exist are 400 (`guard::referenced`). Lists paginate
   with `page::fetch` (UUIDv7 keyset). PATCH applies, audits and rule-checks
-  only values that actually change (`api::set_changed`; clients echo
-  unchanged fields). Changing a user goes through
+  only values that actually change (clients echo unchanged fields): most
+  handlers use `api::set_changed`, `users.rs` / `groups.rs` compare against
+  the loaded row directly. Changing a user goes through
   `guard::ensure_can_modify_user`; removing a GlobalAdmin's effect through
   `guard::ensure_not_last_global_admin`. App writes go through
   `app_rules` (`writable_app`, `ensure_may_manage_credentials` for secrets
@@ -127,8 +144,10 @@ Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md); manag
 - Audit: event types are the closed `audit::EventType` enum (add a variant,
   never a free string); `details` carry ids, names and changed field names
   only — never passwords, secrets, codes or tokens.
-- Cookies are `__Host-` prefixed (`__Host-oauth_sid_{tenant}`,
-  `__Host-oauth_tx`, `Path=/`) — never add a `Domain` or a narrower `Path`.
+- Cookies are host-only and `__Host-` prefixed (`__Host-oauth_sid`,
+  `__Host-oauth_tx`, `Path=/`) — never add a `Domain` (it would share them
+  across tenant hosts) or a narrower `Path`. The login API / logout POST
+  CSRF check wants `Origin` = the tenant's origin.
 - Writes that must be atomic with token issuance (code consume, refresh
   rotation, login completion) run in one DB transaction; keep new service
   code generic over `ConnectionTrait` so it can join one.
@@ -136,7 +155,7 @@ Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md); manag
   `app::request_span` logs the route template.
 - Each file ≤ 400 lines. Backend changes ship with unit tests (`#[cfg(test)]`)
   and integration tests (`crates/server/tests/`, in-process router + testcontainers).
-- Branches `feat/m1a-*` per roadmap step, ff-only onto `main`; `make lint` and
+- Branches `feat/m1a-*` / `feat/m1b-*` per roadmap step, ff-only onto `main`; `make lint` and
   `make test` green before push.
 
 ## Frontend conventions (`web/`)
@@ -151,10 +170,12 @@ Layout: `src/api/` (HTTP), `src/auth/oidc.ts` (UserManager settings, `SPA_SCOPE`
 - All HTTP goes through `api/client.ts` (`request`, `ApiError`, `errorMessage`);
   management calls through `api/management.ts` (`authed` adds the bearer token
   from the auth store and re-authenticates on 401; `t.get/post/patch/del` take
-  tenant-relative paths, ``p`…` `` escapes path segments). One module per resource
+  paths relative to `/api/v1/` of the page's host (`apiPath`), ``p`…` `` escapes path segments).
+  The tenant is the first hostname label (`stores/tenant`), never a route param;
+  the OIDC authority is `location.origin`. One module per resource
   group; response shapes in `api/types.ts`, matching `docs/api/management.md`.
-- Auth state only in `stores/auth` (one `UserManager` per tenant + area, tokens in
-  `sessionStorage`, never `localStorage`; one manager per tenant + area for the page's
+- Auth state only in `stores/auth` (one `UserManager` per area, tokens in
+  `sessionStorage`, never `localStorage`; one manager per area for the page's
   lifetime; refresh only through `accessToken()`, which is single-flight — never call
   `signinSilent` elsewhere or turn on `automaticSilentRenew`: refresh tokens rotate and
   reuse revokes the family). Routes needing sign-in carry

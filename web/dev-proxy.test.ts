@@ -5,10 +5,10 @@ describe('dev proxy matcher', () => {
   it.each([
     '/api/v1/x',
     '/api',
-    '/contoso/api/authn',
-    '/contoso/oauth2/token',
-    '/contoso/.well-known/openid-configuration',
-    '/contoso/discovery/keys',
+    '/api/authn/tx/x/password',
+    '/oauth2/token',
+    '/.well-known/openid-configuration',
+    '/discovery/keys',
   ])('proxies %s', (path) => {
     expect(isProxied(path)).toBe(true)
   })
@@ -20,8 +20,9 @@ describe('dev proxy matcher', () => {
     '/@id/api/x',
     '/@vite/client',
     '/apix',
-    '/contoso/admin/users',
-    '/contoso/apix',
+    '/admin/users',
+    '/login',
+    '/contoso/oauth2/token',
   ])('does not proxy %s', (path) => {
     expect(isProxied(path)).toBe(false)
   })

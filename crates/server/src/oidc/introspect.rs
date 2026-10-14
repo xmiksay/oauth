@@ -1,4 +1,4 @@
-//! `POST /{t}/oauth2/introspect` (RFC 7662). Callers must be confidential
+//! `POST /oauth2/introspect` (RFC 7662). Callers must be confidential
 //! clients. A token is reported active only to the client it was issued to
 //! or to the resource app it is for (by app id); anyone else gets
 //! `{"active": false}`, indistinguishable from an invalid token.

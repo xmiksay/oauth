@@ -1,6 +1,7 @@
-//! Serves the built Vue SPA (`web/dist`). Client-side routes under
-//! `/{tenant}/login|logout|myaccount|admin` fall back to `index.html`; anything else
-//! is looked up as a static asset.
+//! Serves the built Vue SPA (`web/dist`) on tenant hosts (the host gate in
+//! `app.rs` keeps it off the apex). Client-side routes under
+//! `/login|logout|myaccount|admin` fall back to `index.html`; anything else is
+//! looked up as a static asset.
 
 use std::path::Path;
 
@@ -20,11 +21,8 @@ pub fn router<S: Clone + Send + Sync + 'static>(dist: &Path) -> Router<S> {
     let mut router = Router::new();
     for area in SPA_AREAS {
         router = router
-            .route_service(&format!("/{{tenant}}/{area}"), ServeFile::new(&index))
-            .route_service(
-                &format!("/{{tenant}}/{area}/{{*rest}}"),
-                ServeFile::new(&index),
-            );
+            .route_service(&format!("/{area}"), ServeFile::new(&index))
+            .route_service(&format!("/{area}/{{*rest}}"), ServeFile::new(&index));
     }
     router.fallback_service(ServeDir::new(dist))
 }

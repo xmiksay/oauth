@@ -7,10 +7,10 @@ afterEach(() => vi.unstubAllGlobals())
 describe('login API client', () => {
   it('posts JSON steps with same-origin credentials', async () => {
     const fetchCalls = mockFetch({ body: { redirect: 'https://app/cb?code=1' } })
-    const res = await authn.password('contoso', 'tx-1', 'a@b.c', 'pw')
+    const res = await authn.password('tx-1', 'a@b.c', 'pw')
     expect(isRedirect(res)).toBe(true)
     expect(fetchCalls[0]).toMatchObject({
-      url: '/contoso/api/authn/tx/tx-1/password',
+      url: '/api/authn/tx/tx-1/password',
       method: 'POST',
       body: { email: 'a@b.c', password: 'pw' },
     })
@@ -21,16 +21,16 @@ describe('login API client', () => {
 
   it('sends all scopes when approving and none when declining', async () => {
     const calls = mockFetch({}, {})
-    await authn.consent('t', 'x', true, ['A', 'B'])
-    await authn.consent('t', 'x', false, ['A'])
+    await authn.consent('x', true, ['A', 'B'])
+    await authn.consent('x', false, ['A'])
     expect(calls[0]?.body).toEqual({ approve: true, scopes: ['A', 'B'] })
     expect(calls[1]?.body).toEqual({ approve: false })
   })
 
   it('signs out with an empty JSON body', async () => {
     const calls = mockFetch({ body: { signed_out: true } })
-    await authn.signOut('contoso')
-    expect(calls[0]).toMatchObject({ url: '/contoso/oauth2/logout', method: 'POST', body: {} })
+    await authn.signOut()
+    expect(calls[0]).toMatchObject({ url: '/oauth2/logout', method: 'POST', body: {} })
   })
 
   it('tells a step view from a redirect', () => {

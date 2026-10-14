@@ -13,11 +13,12 @@ use serde_json::Value;
 use tower::ServiceExt;
 
 use super::{
-    PUBLIC_URL,
-    flow::{PASSWORD, T, TOTP_SECRET, VERIFIER},
+    ORIGIN,
+    flow::{PASSWORD, TOTP_SECRET, VERIFIER},
 };
 
-pub async fn send(app: &Router, req: Request<Body>) -> (StatusCode, HeaderMap, String) {
+pub async fn send(app: &Router, mut req: Request<Body>) -> (StatusCode, HeaderMap, String) {
+    super::default_host(&mut req);
     let resp = app.clone().oneshot(req).await.expect("infallible router");
     let status = resp.status();
     let headers = resp.headers().clone();
@@ -57,7 +58,7 @@ pub fn authorize_url(
     let query = form_urlencoded::Serializer::new(String::new())
         .extend_pairs(pairs)
         .finish();
-    format!("/{T}/oauth2/authorize?{query}")
+    format!("/oauth2/authorize?{query}")
 }
 
 /// Query parameters of a URL.
@@ -73,6 +74,10 @@ pub fn current_totp() -> String {
     format!("{:06}", totp::hotp(TOTP_SECRET, now / totp::STEP_SECS))
 }
 
+pub const SESSION_COOKIE: &str = "__Host-oauth_sid";
+
+/// One cookie jar for every host: tests drive a single tenant per browser,
+/// except the cross-tenant ones, which want the jar to leak on purpose.
 pub struct Browser {
     app: Router,
     pub cookies: HashMap<String, String>,
@@ -80,7 +85,7 @@ pub struct Browser {
 
 impl Browser {
     pub fn has_session(&self) -> bool {
-        self.cookies.contains_key("__Host-oauth_sid_contoso")
+        self.cookies.contains_key(SESSION_COOKIE)
     }
 
     pub fn new(app: Router) -> Self {
@@ -114,8 +119,7 @@ impl Browser {
         (status, headers, body)
     }
 
-    /// GET; returns the status and the `Location` (relative to PUBLIC_URL if
-    /// it points at us).
+    /// GET; returns the status and the `Location`.
     pub async fn get(&mut self, path: &str) -> (StatusCode, Option<String>, String) {
         let (status, headers, body) = self
             .request(Request::get(path).body(Body::empty()).unwrap())
@@ -148,7 +152,7 @@ impl Browser {
     /// Calls a login API step with the right Origin.
     pub async fn step(&mut self, tx: &str, step: &str, body: Value) -> (StatusCode, Value) {
         let (status, _, value) = self
-            .post_json(&format!("/{T}/api/authn/tx/{tx}/{step}"), &body, PUBLIC_URL)
+            .post_json(&format!("/api/authn/tx/{tx}/{step}"), &body, ORIGIN)
             .await;
         (status, value)
     }
@@ -159,7 +163,7 @@ impl Browser {
         let (status, location, body) = self.get(url).await;
         assert_eq!(status, StatusCode::FOUND, "authorize: {body}");
         let location = location.unwrap();
-        let login = format!("{PUBLIC_URL}/{T}/login?tx=");
+        let login = format!("{ORIGIN}/login?tx=");
         match location.strip_prefix(&login) {
             Some(tx) => Ok(tx.to_owned()),
             None => Err(location),
@@ -169,7 +173,7 @@ impl Browser {
     /// Answers every step (password, TOTP, consent approval) until the flow
     /// redirects back; returns that redirect URL.
     pub async fn complete_login(&mut self, tx: &str, email: &str) -> String {
-        let (status, _, _) = self.get(&format!("/{T}/api/authn/tx/{tx}")).await;
+        let (status, _, _) = self.get(&format!("/api/authn/tx/{tx}")).await;
         assert_eq!(status, StatusCode::OK);
         let (mut status, mut resp) = self
             .step(

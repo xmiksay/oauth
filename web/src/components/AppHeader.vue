@@ -14,7 +14,7 @@ async function signOut() {
     await auth.signOut()
   } catch {
     // No usable id_token (or discovery failed): the confirmation page signs out by cookie.
-    window.location.assign(`/${encodeURIComponent(auth.tenant ?? '')}/logout`)
+    window.location.assign('/logout')
   }
 }
 </script>

@@ -17,21 +17,20 @@ export async function authed<T>(path: string, opts: RequestOptions = {}): Promis
   }
 }
 
-/** `/api/v1/tenants/{t}/{rel}` for the tenant the user signed in to. */
-export function tenantPath(rel: string): string {
-  const t = useAuthStore().tenant ?? ''
-  return `/api/v1/tenants/${encodeURIComponent(t)}/${rel}`
+/** `/api/v1/{rel}`: the API of the tenant whose host this page is on. */
+export function apiPath(rel: string): string {
+  return `/api/v1/${rel}`
 }
 
 const seg = encodeURIComponent
 
 /** Tenant-relative verbs; `rel` is e.g. `users/${id}`. */
 export const t = {
-  get: <T>(rel: string) => authed<T>(tenantPath(rel)),
-  post: <T>(rel: string, body: unknown = {}) => authed<T>(tenantPath(rel), { method: 'POST', body }),
-  patch: <T>(rel: string, body: unknown) => authed<T>(tenantPath(rel), { method: 'PATCH', body }),
+  get: <T>(rel: string) => authed<T>(apiPath(rel)),
+  post: <T>(rel: string, body: unknown = {}) => authed<T>(apiPath(rel), { method: 'POST', body }),
+  patch: <T>(rel: string, body: unknown) => authed<T>(apiPath(rel), { method: 'PATCH', body }),
   del: (rel: string, body?: unknown) =>
-    authed<void>(tenantPath(rel), { method: 'DELETE', body }),
+    authed<void>(apiPath(rel), { method: 'DELETE', body }),
 }
 
 /** Every item of a paged list (follows `next_cursor` with the maximum page size). */

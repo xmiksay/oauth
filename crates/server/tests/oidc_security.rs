@@ -16,9 +16,9 @@ use axum::{
     http::{Request, StatusCode, header},
 };
 use common::{
-    PUBLIC_URL,
+    ORIGIN,
     browser::{authorize_url, query_of, send},
-    flow::{Fixture, PASSWORD, T, WEB_CB},
+    flow::{Fixture, PASSWORD, WEB_CB},
     seed::add_app,
 };
 use entity::enums::{AccessTokenFormat, ClientType, SigningAlg};
@@ -43,7 +43,7 @@ async fn login_transaction_is_bound_to_the_starting_browser() {
     // Another browser (no / a different binding cookie) can't see or drive it.
     let mut attacker = f.browser();
     assert_eq!(
-        attacker.get(&format!("/{T}/api/authn/tx/{tx}")).await.0,
+        attacker.get(&format!("/api/authn/tx/{tx}")).await.0,
         StatusCode::NOT_FOUND
     );
     let (status, resp) = attacker.step(&tx, "password", creds.clone()).await;
@@ -55,7 +55,7 @@ async fn login_transaction_is_bound_to_the_starting_browser() {
         .cookies
         .insert("__Host-oauth_tx".into(), "x".repeat(43));
     assert_eq!(
-        attacker.get(&format!("/{T}/api/authn/tx/{tx}")).await.0,
+        attacker.get(&format!("/api/authn/tx/{tx}")).await.0,
         StatusCode::NOT_FOUND
     );
 
@@ -79,9 +79,9 @@ async fn security_headers_on_every_route() {
     let f = Fixture::new().await;
     let authorize = authorize_url("web-app", WEB_CB, "openid", &[]);
     for path in [
-        format!("/{T}/login"),
+        "/login".to_owned(),
         authorize,
-        format!("/{T}/api/authn/tx/x"),
+        "/api/authn/tx/x".to_owned(),
         "/healthz".into(),
     ] {
         let (_, headers, _) = send(&f.app, Request::get(&path).body(Body::empty()).unwrap()).await;
@@ -94,7 +94,7 @@ async fn security_headers_on_every_route() {
         assert_eq!(headers[header::REFERRER_POLICY], "no-referrer", "{path}");
     }
     let (_, headers, _) = f
-        .post_form(&format!("/{T}/oauth2/token"), &[("grant_type", "x")], None)
+        .post_form("/oauth2/token", &[("grant_type", "x")], None)
         .await;
     assert_eq!(headers[header::X_FRAME_OPTIONS], "DENY");
 }
@@ -107,11 +107,11 @@ async fn malformed_login_bodies_get_json_errors() {
         .authorize(&authorize_url("web-app", WEB_CB, "openid", &[]))
         .await
         .unwrap();
-    let path = format!("/{T}/api/authn/tx/{tx}/password");
+    let path = format!("/api/authn/tx/{tx}/password");
     for body in ["{not json", r#"{"email": "a@b.c"}"#, "[]"] {
         let req = Request::post(&path)
             .header(header::CONTENT_TYPE, "application/json")
-            .header(header::ORIGIN, PUBLIC_URL)
+            .header(header::ORIGIN, ORIGIN)
             .body(Body::from(body))
             .unwrap();
         let (status, _, text) = browser.request(req).await;
@@ -209,19 +209,19 @@ async fn a_session_does_not_cross_tenants() {
     .await
     .unwrap();
     let (mut browser, _) = f.web_tokens("openid", "ann@example.com").await;
-    let callback = format!("{PUBLIC_URL}/fabrikam/admin/callback");
-    let url = authorize_url("admin-portal", &callback, "openid", &[("prompt", "none")]).replacen(
-        "/contoso/",
-        "/fabrikam/",
-        1,
-    );
-    let redirect = browser.authorize(&url).await.unwrap_err();
+    assert!(browser.has_session());
+    // The jar is shared across hosts, so contoso's live session cookie is
+    // presented on fabrikam's host (cookie names no longer carry the tenant).
+    let callback = common::at("fabrikam", "/admin/callback");
+    let path = authorize_url("admin-portal", &callback, "openid", &[("prompt", "none")]);
+    let redirect = browser
+        .authorize(&common::at("fabrikam", &path))
+        .await
+        .unwrap_err();
+    assert!(redirect.starts_with(&callback), "{redirect}");
     assert_eq!(query_of(&redirect)["error"], "login_required");
-    // Even presenting contoso's session value under fabrikam's cookie name.
-    let value = browser.cookies["__Host-oauth_sid_contoso"].clone();
-    browser
-        .cookies
-        .insert("__Host-oauth_sid_fabrikam".into(), value);
-    let redirect = browser.authorize(&url).await.unwrap_err();
-    assert_eq!(query_of(&redirect)["error"], "login_required");
+    // The same session still works at home.
+    let home = authorize_url("web-app", WEB_CB, "openid", &[("prompt", "none")]);
+    let redirect = browser.authorize(&home).await.unwrap_err();
+    assert!(query_of(&redirect).contains_key("code"), "{redirect}");
 }

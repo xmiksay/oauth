@@ -20,11 +20,11 @@ use oauth_server::directory::{self, NewTenant, builtin_apps};
 use sea_orm::ConnectionTrait;
 use serde_json::{Value, json};
 
-const USERS: &str = "/api/v1/tenants/contoso/users";
-const APPS: &str = "/api/v1/tenants/contoso/applications";
-const ROLES: &str = "/api/v1/tenants/contoso/directory-roles";
-const AUDIT: &str = "/api/v1/tenants/contoso/audit-events";
-const ME: &str = "/api/v1/tenants/contoso/me";
+const USERS: &str = "/api/v1/users";
+const APPS: &str = "/api/v1/applications";
+const ROLES: &str = "/api/v1/directory-roles";
+const AUDIT: &str = "/api/v1/audit-events";
+const ME: &str = "/api/v1/me";
 
 struct Callers {
     ga: String,
@@ -142,10 +142,15 @@ async fn permission_matrix_across_endpoints() {
         S::FORBIDDEN
     );
 
-    // Tenant management: system GlobalAdmins only; a tenant's GlobalAdmin
-    // token is not even valid there (no system tenant exists here → 404).
-    let (st, _) = call(&f.app, Method::GET, "/api/v1/tenants", Some(&c.ga), None).await;
-    assert_eq!(st, S::NOT_FOUND);
+    // Tenant management lives on the system host only (and no system tenant
+    // exists here, so that host is 404 too).
+    for path in [
+        "/api/v1/tenants".to_owned(),
+        common::at("system", "/api/v1/tenants"),
+    ] {
+        let (st, _) = call(&f.app, Method::GET, &path, Some(&c.ga), None).await;
+        assert_eq!(st, S::NOT_FOUND, "{path}");
+    }
 }
 
 #[tokio::test]
@@ -205,7 +210,7 @@ async fn administrators_are_protected_from_lesser_callers() {
         .unwrap()["id"]
         .clone();
     let body = json!({ "app_role_id": role_id, "principal_type": "application", "principal_id": f.web.id });
-    let path = "/api/v1/tenants/contoso/role-assignments";
+    let path = "/api/v1/role-assignments";
     for token in [&c.aa, &c.app_rw] {
         assert_eq!(
             status(&f, Method::POST, path, token, Some(&body)).await,
@@ -275,9 +280,9 @@ async fn tokens_are_bound_to_tenant_audience_scope_and_user_state() {
         StatusCode::UNAUTHORIZED
     );
     // …while it works at its own tenant, and contoso's objects are 404 there.
-    let fab_users = "/api/v1/tenants/fabrikam/users";
+    let fab_users = common::at("fabrikam", "/api/v1/users");
     assert_eq!(
-        status(&f, Method::GET, fab_users, &foreign, None).await,
+        status(&f, Method::GET, &fab_users, &foreign, None).await,
         StatusCode::OK
     );
     let cross = format!("{fab_users}/{}", f.user.id);

@@ -20,17 +20,26 @@
    center (users, groups, app registrations, role assignments, directory roles,
    audit log, settings, tenants) on the built-in OIDC clients.
 
-## M1b — local auth extras + domains
+## M1b — local auth extras + subdomains
 
-Passkeys / WebAuthn (MFA and passwordless), email verification / reset /
-invites (SMTP via lettre), Telegram bot OTP + security notifications,
-subdomain and custom-domain tenant routing (`tenant_domains`, DNS TXT
-verification).
+1. **`feat/m1b-subdomains`** — every tenant on its own host
+   `{slug}.{PUBLIC_URL host}` (issuer = that origin, path routing removed,
+   apex redirects to the system admin center), host-only cookies, per-tenant
+   CSRF origin, startup reconcile of built-in SPA URIs, wildcard Ingress.
+2. **`feat/m1b-email`** — SMTP outbox, email verification, password reset,
+   admin invites, email change, security notifications.
+3. **`feat/m1b-passkeys`** — WebAuthn (MFA and passwordless).
+4. **`feat/m1b-telegram`** — Telegram bot OTP + notifications.
 
-## M2 — federation
+## M2 — federation + custom domains
 
 Upstream IdP brokering (generic OIDC, Google, GitHub, Entra; JIT provisioning
 and account linking), device code grant (RFC 8628).
+
+Custom domain aliases for a tenant (e.g. `login.contoso.com` next to
+`contoso.{PUBLIC_URL host}`): a tenant admin adds them; each must be globally
+unique; no DNS ownership proof; a system GlobalAdmin resolves collisions; an
+operator adds the ingress host and certificate.
 
 ## M3 — delegation
 

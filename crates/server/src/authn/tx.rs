@@ -1,4 +1,4 @@
-//! Login transactions: persistence and the `GET /{t}/api/authn/tx/{id}` view.
+//! Login transactions: persistence and the `GET /api/authn/tx/{id}` view.
 
 use anyhow::Context;
 use axum::{
@@ -83,13 +83,7 @@ pub async fn load(ctx: &Ctx<'_>, raw_id: &str) -> AuthnResult<LoadedTx> {
 }
 
 fn bound_to(ctx: &Ctx<'_>, binding_hash: &[u8]) -> bool {
-    cookie::read(
-        ctx.headers,
-        &ctx.state.config,
-        Kind::TxBinding,
-        &ctx.tenant.slug,
-    )
-    .fold(false, |found, value| {
+    cookie::read(ctx.headers, &ctx.state.config, Kind::TxBinding).fold(false, |found, value| {
         secret::ct_eq(&secret::hash(value), binding_hash) | found
     })
 }
@@ -210,7 +204,7 @@ pub async fn get(
     tenant: Tenant,
     ip: ClientIp,
     headers: HeaderMap,
-    Path((_, tx_id)): Path<(String, String)>,
+    Path(tx_id): Path<String>,
 ) -> AuthnResult<Outcome> {
     let ctx = Ctx::new(&state, &tenant, ip, &headers);
     let tx = load(&ctx, &tx_id).await?;

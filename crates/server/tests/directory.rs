@@ -122,7 +122,7 @@ async fn create_tenant_provisions_keys_builtin_apps_and_consent() {
     for (client_id, area) in [(ADMIN_PORTAL, "admin"), (MY_ACCOUNT, "myaccount")] {
         let spa = app(client_id);
         assert_eq!(spa.client_type, ClientType::Public);
-        let base = format!("{}/contoso/{area}", common::PUBLIC_URL);
+        let base = format!("{}/{area}", common::ORIGIN);
         assert_eq!(spa.redirect_uris, [format!("{base}/callback")]);
         assert_eq!(spa.post_logout_redirect_uris, [base]);
 

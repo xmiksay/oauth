@@ -5,8 +5,8 @@
 Single binary `oauth` (crate `crates/server`):
 
 - `oauth serve` — config → tracing → DB pool → bind and start the HTTP
-  listener (`LISTEN_ADDR`) + metrics listener (`METRICS_ADDR`) → run
-  migrations → flip the `migrated` flag → start background jobs. Until then `/healthz` is 200 and
+  listener (`LISTEN_ADDR`) + metrics listener (`METRICS_ADDR`) → run migrations and
+  `builtin_apps::reconcile_all` → flip the `migrated` flag → start jobs. Until then `/healthz` is 200 and
   `/readyz` 503, so a replica waiting on the migration lock stays alive but out
   of the Service. A failed migration shuts both listeners down and exits
   non-zero; SIGTERM / ctrl-c drains both listeners gracefully (and rolls back an
@@ -19,9 +19,8 @@ Single binary `oauth` (crate `crates/server`):
   admin's password is only replaced with `--reset-password`. Exit 0 either way.
 
 Migrations: all pending ones run in a single transaction that first takes
-`pg_advisory_xact_lock(MIGRATION_LOCK_KEY)`, so concurrent replicas serialize
-and the lock is released exactly on commit/rollback. Consequently migrations
-must be transaction-safe (no `CREATE INDEX CONCURRENTLY`).
+`pg_advisory_xact_lock(MIGRATION_LOCK_KEY)` (replicas serialize; released exactly on
+commit/rollback), so they must be transaction-safe (no `CREATE INDEX CONCURRENTLY`).
 
 State lives only in PostgreSQL (sessions, codes, login transactions, rate
 limits). Multiple replicas are safe: migrations serialize on the advisory lock,
@@ -30,8 +29,7 @@ background jobs run each tick inside a transaction holding
 
 ### Background jobs (`jobs`)
 
-Spawned by `serve::run_with` after migrations; stop on the shutdown token
-(a run in progress finishes first).
+Spawned by `serve::run_with` after migrations; stop on the shutdown token (a run in progress finishes first).
 
 | Job | Every | Does |
 |---|---|---|
@@ -40,24 +38,39 @@ Spawned by `serve::run_with` after migrations; stop on the shutdown token
 
 ## HTTP surface (current)
 
-Issuer of tenant `{t}` = `{PUBLIC_URL}/{t}`. Unknown or disabled tenants are
-404 everywhere (`tenancy::Tenant` extractor, cached per request).
+Tenant `{t}` lives only at `{t}.{PUBLIC_URL host}[:port]`; its issuer is that origin.
+`tenancy::resolve_host` gates every route but the probes. The request authority is the
+absolute-form target / HTTP/2 `:authority` if present, else `Host` (RFC 9112 §3.2.2); more
+than one `Host` header → 400. It must match exactly: ASCII case-insensitive, the scheme's
+default port (`:443` for https, `:80` for http) spelled out counts as none; another port, trailing dot, nested label or
+IP literal → 404. `X-Forwarded-Host` / `Forwarded` are never trusted. Unknown or disabled
+tenants are 404 everywhere, and so are enabled tenants whose slug today's rules reject
+(startup refuses to run with any — rename or disable them). The apex serves only
+`GET /` → 302 `{scheme}://system.{host}/admin`. Paths below are per tenant host.
+
+Trust model: issuer, redirect URLs and the CSRF origin all derive from `PUBLIC_URL` plus
+the tenant's slug in the DB, never from request text, so a client choosing its `Host`
+only reaches a tenant it could visit anyway. Hence no shared cache or CDN in front may
+key responses on the path without the host, and the ingress must forward `Host`
+unchanged (ingress-nginx: leave `use-forwarded-headers` off unless another trusted
+proxy sits in front; the server ignores the forwarded host either way).
 
 | Route | Listener | Module |
 |---|---|---|
-| `GET /healthz` — process alive, no DB dependency | app | `health` |
-| `GET /readyz` — migrations done + DB ping, else 503 | app | `health` |
-| `GET /{t}/.well-known/openid-configuration` | app | `oidc::discovery` |
-| `GET /{t}/discovery/keys` — JWKS (next + active + unexpired retired), `max-age=300` | app | `oidc::discovery` |
-| `GET /{t}/oauth2/authorize` | app | `oidc::authorize` |
-| `POST /{t}/oauth2/token` | app | `oidc::token`, `oidc::refresh_grant` |
-| `GET\|POST /{t}/oauth2/userinfo` | app | `oidc::userinfo` |
-| `POST /{t}/oauth2/introspect` (RFC 7662) | app | `oidc::introspect` |
-| `POST /{t}/oauth2/revoke` (RFC 7009) | app | `oidc::revoke` |
-| `GET /{t}/oauth2/logout` (RP-initiated), `POST` (confirmation page, CSRF-checked) | app | `oidc::logout` |
-| `GET /{t}/api/authn/tx/{id}`, `POST …/{password,totp,recovery,change-password,consent}` — login JSON API, contract in [api/authn.md](api/authn.md) | app | `authn` |
-| `/api/v1/tenants[/{t}]` (system Global Admins), `/api/v1/tenants/{t}/settings` (the tenant's own Global Admins), `/api/v1/tenants/{t}/{users,groups,directory-roles,applications,role-assignments,consents,audit-events}[/…]`, `/api/v1/tenants/{t}/me[/…]` — management REST API, bearer tokens for the tenant's `management-api`; contract in [api/management.md](api/management.md) | app | `api` |
-| `/{tenant}/{login,logout,myaccount,admin}[/…]` → `index.html` | app | `spa` |
+| `GET /healthz` — process alive, no DB dependency (any host) | app | `health` |
+| `GET /readyz` — migrations done + DB ping, else 503 (any host) | app | `health` |
+| `GET /` on the apex → 302 to the system admin portal | app | `tenancy` |
+| `GET /.well-known/openid-configuration` | app | `oidc::discovery` |
+| `GET /discovery/keys` — JWKS (next + active + unexpired retired), `max-age=300` | app | `oidc::discovery` |
+| `GET /oauth2/authorize` | app | `oidc::authorize` |
+| `POST /oauth2/token` | app | `oidc::token`, `oidc::refresh_grant` |
+| `GET\|POST /oauth2/userinfo` | app | `oidc::userinfo` |
+| `POST /oauth2/introspect` (RFC 7662) | app | `oidc::introspect` |
+| `POST /oauth2/revoke` (RFC 7009) | app | `oidc::revoke` |
+| `GET /oauth2/logout` (RP-initiated), `POST` (confirmation page, CSRF-checked) | app | `oidc::logout` |
+| `GET /api/authn/tx/{id}`, `POST …/{password,totp,recovery,change-password,consent}` — login JSON API, contract in [api/authn.md](api/authn.md) | app | `authn` |
+| `/api/v1/{settings,users,groups,directory-roles,applications,role-assignments,consents,audit-events}[/…]`, `/api/v1/me[/…]`, and on the system host only `/api/v1/tenants[/{slug}]` (system Global Admins) — management REST API, bearer tokens for the host tenant's `management-api`; contract in [api/management.md](api/management.md) | app | `api` |
+| `/{login,logout,myaccount,admin}[/…]` → `index.html` | app | `spa` |
 | any other path → static file from `WEB_DIST_DIR`, else 404 | app | `spa` |
 | `GET /metrics` — Prometheus text format | metrics | `metrics` |
 
@@ -69,19 +82,19 @@ Implemented:
 
 | Module | Responsibility |
 |---|---|
-| `config` | Env parsing + validation (`Config::from_lookup` for tests); redacting `Debug` |
+| `config` | Env parsing + validation (`env.rs`, `Config::from_lookup` for tests); `PublicUrl` (`public_url.rs`: origin-only `PUBLIC_URL`, `tenant_origin`, `host_kind`); redacting `Debug` |
 | `error` | `AppError` → JSON `{error, error_description}`; 5xx causes logged, never leaked |
 | `app` | `AppState { db, migrated }` and router assembly (trace + metrics layers) |
-| `db` | Pool connect; `migrate()` in one transaction holding `pg_advisory_xact_lock` |
+| `db` | Pool connect; `migrate()` in one transaction holding `pg_advisory_xact_lock`; `migrate_and_reconcile()` (startup) adds `builtin_apps::reconcile_all` to it |
 | `health` | `/healthz`, `/readyz` |
 | `metrics` | Global Prometheus recorder, `/metrics` router, `http_requests_total` + `http_request_duration_seconds`. Labels are bounded: `path` = route template (fallback → `unmatched`), `method` = standard verb or `other` |
 | `spa` | `ServeDir` + history fallback for the three SPA areas |
 | `serve` | `run` (process-global setup: recorder, binds, signals) → `run_with` (serve, then migrate, then ready; tested in `tests/serve.rs`), tracing init, graceful shutdown |
 | `keys` | Per-tenant RS256 (2048-bit) / ES256 key generation, `wrap` (AES-256-GCM seal/open, AAD = tenant id ‖ kid), public JWK with RFC 7638 thumbprint as `kid`, `active_signing_key`, `jwks` (next + active + retired-until-`expires_at`). Rotation job lands in step 3. See [Cryptography](#cryptography) |
-| `directory` | `create_tenant` (slug rules in `slug`, keys + built-in apps in one transaction), `create_user`, `find_user_by_email`, `set_password` (argon2id in `password`), `assign_directory_role`; typed `DirectoryError` |
+| `directory` | `create_tenant` (DNS-label slug rules in `slug`, keys + built-in apps in one transaction; `builtin_apps::reconcile_all`), `create_user`, `find_user_by_email`, `set_password` (argon2id in `password`), `assign_directory_role`; typed `DirectoryError` |
 | `bootstrap` | `oauth bootstrap` logic + report rendering |
 | `headers` | `content_type_is`; app-wide `X-Frame-Options: DENY`, `CSP: frame-ancestors 'none'`, `Referrer-Policy: no-referrer` |
-| `tenancy` | `Tenant` extractor: `{tenant}` path segment → active tenant (404 otherwise); M1b adds `Host` / custom domains |
+| `tenancy` | `resolve_host` middleware (host → active tenant, apex redirect, else 404) and the `Tenant` extractor reading its result |
 | `secret` | Random bearer secrets (256-bit, base64url), random UUIDv4 handles, SHA-256 storage hash, constant-time compare |
 | `oidc` | Protocol endpoints; `params` (duplicate-rejecting form/query parsing, `AuthRequest`), `pkce`, `redirect` (matching + building), `scope` (parsing, resource resolution), `client_auth`, `error` (`OAuthError`, RFC 6749 JSON + `WWW-Authenticate`, `no-store`) |
 | `authn` | Login JSON API + CSRF guard (`AuthnError`, `JsonBody`), `cookie` (session + tx-binding cookies), `ctx`, `tx` (login transactions + browser binding + view), `password`, `mfa` (TOTP / recovery), `complete` (next step, consent, session + code), `session` (cookie), `totp` (RFC 6238 via AWS-LC HMAC, sealed secret, replay-protected step), `recovery`, `rate_limit`, `ip` |
@@ -140,7 +153,6 @@ migration transaction). Deleting a tenant cascades to everything it owns.
 | `app_role_assignments` | role of a resource app → exactly one principal column (`user_id` / `group_id` / `client_application_id`) so deleting the principal cascades |
 | `consent_grants` | (client, resource, user) unique; `user_id` NULL = tenant-wide admin consent; `scopes[]` |
 | `signing_keys` | `kid` (JWK thumbprint) unique, `alg`, `status` next\|active\|retired (≤ 1 active and ≤ 1 next per tenant+alg), sealed private key (PKCS#8 DER, both algs), `public_jwk`, `activated_at` / `retired_at` / `expires_at` |
-
 | `sessions` | `token_hash` (cookie), `amr[]`, `auth_time`, ip, user agent, `expires_at` (`SESSION_TTL_HOURS`); `id` is the `sid` claim |
 | `login_transactions` | random UUIDv4 `id` (the `tx` handle), `binding_hash` (SHA-256 of the browser's tx-binding cookie), client app, `params` jsonb (validated `AuthRequest`), `stage` password\|mfa\|change_password\|consent, user / amr / auth_time once known, `session_id` when an existing session only needs consent; 15 min |
 | `authorization_codes` | `code_hash`, client, user, session, redirect URI, scopes (OIDC + bare resource values), resource app, nonce, S256 challenge, amr, auth_time; 60 s, `consumed_at` (single use) |
@@ -264,25 +276,27 @@ tokens.
   ends (row deleted, cookie cleared) and the browser goes to
   `post_logout_redirect_uri` (+ `state`) if the hint's client registered it
   (unregistered → 400, nothing ended), else to the SPA page
-  `/{t}/logout?signed_out=1` (a navigation never ends on raw JSON).
+  `/logout?signed_out=1` (a navigation never ends on raw JSON).
   Without a valid hint, or with another user's, nothing ends: 302 to the SPA
-  confirmation page `/{t}/logout`, which signs out via `POST
-  /{t}/oauth2/logout` (JSON + `Origin`, see [api/authn.md](api/authn.md)) —
+  confirmation page `/logout`, which signs out via `POST /oauth2/logout`
+  (JSON + `Origin`, see [api/authn.md](api/authn.md)) —
   a cross-site `<img>` can't log anyone out. Refresh tokens survive logout
   (offline access is independent of the browser session).
 
 ### Sessions & CSRF
 
-Session cookie `__Host-oauth_sid_{t}` (one per tenant; `oauth_sid_{t}` with
-`COOKIE_SECURE=false`), `Path=/`, `HttpOnly`, `Secure`, `SameSite=Lax` (sent on
+Session cookie `__Host-oauth_sid` (`oauth_sid` with `COOKIE_SECURE=false`),
+host-only so each tenant host has its own; session lookup is also filtered
+by the host's tenant. `Path=/`, `HttpOnly`, `Secure`, `SameSite=Lax` (sent on
 the RP's top-level GET to `/authorize`, not on cross-site POSTs); `__Host-`
-stops sibling subdomains from planting cookies. `/authorize` also sets
-`__Host-oauth_tx` (browser-wide, refreshed per request, never cleared so
+stops sibling tenant hosts from planting cookies. `/authorize` also sets
+`__Host-oauth_tx` (per host, refreshed per request, never cleared so
 parallel tabs work), whose hash each login transaction stores: the
 login API serves a transaction only to the browser that started it (no
 cross-browser completion, no login CSRF / session fixation through a planted
 `tx`). The login API and `POST /oauth2/logout` require `Content-Type:
-application/json` and `Origin` = `PUBLIC_URL`'s origin on every POST. A new
+application/json` and `Origin` = the tenant's own origin on every POST
+(another tenant's pages are cross-origin, hence rejected). A new
 sign-in deletes the browser's previous session; setting a password deletes
 all the user's sessions and revokes their refresh / opaque tokens. Client IP
 (rate limits, session record) = socket peer, or with `TRUSTED_PROXY_HEADER`
@@ -303,16 +317,18 @@ tenant row: one active RS256 and one active ES256 key; `management-api`
 (confidential resource, `identifier_uri = api://management-api`, delegated
 scope `Directory.AccessAsUser` [admin consent], app roles `Directory.Read.All`
 and `Directory.ReadWrite.All` for applications); `admin-portal` and
-`my-account` (public SPA clients, redirect `{PUBLIC_URL}/{t}/admin/callback` /
-`/{t}/myaccount/callback`, post-logout to the area root, 24 h refresh TTL),
+`my-account` (public SPA clients, redirect `{origin}/admin/callback` /
+`{origin}/myaccount/callback`, post-logout to the area root, 24 h refresh TTL),
 each requiring the management-api scope and pre-consented by a tenant-wide
-admin `consent_grant`.
+admin `consent_grant`. The SPA URIs derive from `PUBLIC_URL`, so
+`builtin_apps::reconcile_all` rewrites them for every tenant at each startup
+(idempotent, inside the migration transaction, before `/readyz` turns ready).
 
 ## Management API
 
 `/api/v1` — contract and permission matrix in
 [api/management.md](api/management.md). Bearer tokens only (no cookies,
-no CSRF surface): an access token of the path's tenant (JWT verified
+no CSRF surface): an access token of the host's tenant (JWT verified
 against its published keys, or an active opaque token), `tid` = that
 tenant, audience = the tenant's built-in `management-api`. Delegated tokens
 need `scp ∋ Directory.AccessAsUser` and a still-existing session (`sid`),
@@ -321,8 +337,8 @@ GlobalAdmin writes everything, UserAdmin users / groups, ApplicationAdmin
 apps / grants); app-only tokens act through their CURRENT
 `Directory.Read.All` / `Directory.ReadWrite.All` assignments (looked up
 per call, not taken from the token) and never touch directory roles or
-tenants; a tenant's GlobalAdmin edits its own `settings`. `/api/v1/tenants` is for GlobalAdmins of
-the `system` tenant. Administrators can only be modified by GlobalAdmins;
+tenants; a tenant's GlobalAdmin edits its own `settings`. `/api/v1/tenants` exists only on
+the system host and is for GlobalAdmins of the `system` tenant. Administrators can only be modified by GlobalAdmins;
 the last enabled GlobalAdmin can't be removed (per-tenant advisory lock
 serializes the check, and role checks lock the target user row); built-in
 apps are GlobalAdmin-only and read-mostly; management-API grants, and the
@@ -340,55 +356,17 @@ never re-mints a scope the resource no longer exposes.
 
 ## Frontend (`web/`)
 
-One Vue 3 SPA (TypeScript, Tailwind v4, Pinia, vue-router) with four areas —
-`/{t}/login`, `/{t}/logout`, `/{t}/myaccount`, `/{t}/admin` — built to
-`web/dist` and served by the backend same-origin (`spa`).
-
-- **Login** (`areas/login`): `useLoginFlow` drives the login transaction of
-  [api/authn.md](api/authn.md) — `GET` the step view, `POST` each step, follow
-  the final `redirect` with `window.location.assign`. Same-origin `fetch` sends
-  the tx-binding cookie and the `Origin` the CSRF check expects. `404` → "sign-in
-  expired" (restart from the app), `409 wrong_step` → reload the view, `429` →
-  form locked for `Retry-After` seconds; wrong credentials get one generic
-  message. The page renders no external links (the `tx` id stays in this
-  browser; the server also sends `Referrer-Policy: no-referrer`).
-- **Logout** (`areas/logout`): the RP-initiated-logout confirmation page
-  (`POST /{t}/oauth2/logout`) and the `?signed_out=1` view.
-- **Admin / My Account**: the tenant's built-in public clients `admin-portal`
-  / `my-account` (code + PKCE via `oidc-client-ts`, scope
-  `openid offline_access api://management-api/Directory.AccessAsUser`). One
-  `UserManager` per tenant + area (`stores/auth`); tokens and PKCE state live
-  in `sessionStorage` only. Tokens are renewed on demand with the refresh
-  token, ~30 s before expiry, as ONE shared request per manager (no
-  `automaticSilentRenew` timer): refresh tokens rotate and a reused one makes
-  the server revoke the whole family (and audit `token.refresh_reuse`), so two
-  concurrent refreshes would sign the user out. Caveat: a *duplicated* browser
-  tab copies `sessionStorage`, so both tabs hold the same refresh token; the
-  first tab to refresh wins and the other's next refresh trips reuse detection —
-  it then simply signs in again (the browser session still exists). The router
-  guard (`meta.area`) starts sign-in; a management-API `401` removes the user
-  and signs in again (loop-guarded), `403` renders "no permission". Sign-out
-  is `end_session` with `id_token_hint` back to the area root and also drops
-  the other area's tokens (same browser session).
-- **API layer** (`src/api`): `client.ts` (fetch wrapper, `ApiError` with
-  `code` / `description` / `retryAfter`, `errorMessage`), `management.ts`
-  (bearer injection, tenant paths), one typed module per resource group
-  (`directory`, `applications`, `access`, `me`, `authn`), shapes in `types.ts`.
-  Lists page with `usePagedList` (cursor stack over `next_cursor`, debounced
-  search).
-- UI hides actions the caller's directory roles (`GET me`) can't perform and
-  shows the server's `403` for the rest. One-time secrets (passwords, client
-  secrets, recovery codes) are shown only in `SecretOnceDialog` from
-  component-local state — never in a store or browser storage.
-- `index.html` uses an empty `data:` favicon (avoids a 404 per page load). The
-  server sets no CSP `img-src` today; if one is added, allow `data:` there or
-  serve a real `/favicon.ico`.
+See [frontend.md](frontend.md): one Vue 3 SPA (`/login`, `/logout`, `/myaccount`,
+`/admin`) served same-origin on every tenant host.
 
 ## Deployment
 
 Multi-stage `Dockerfile` (node 22 → rust 1.99.0 → debian bookworm-slim, uid
 10001). `deploy/k8s/deploy.yml`: ConfigMap, Deployment (2 replicas, liveness
 `/healthz`, readiness `/readyz`, 5 s preStop sleep, no service-account token),
-Service (http 8080, metrics 9090), PodDisruptionBudget (`minAvailable: 1`).
+Service (http 8080, metrics 9090), PodDisruptionBudget (`minAvailable: 1`),
+Ingress for the apex + `*.` wildcard host (TLS Secret `oauth-wildcard-tls`, a
+cert-manager DNS-01 wildcard certificate; the controller must keep `Host`, see the
+trust model under [HTTP surface](#http-surface-current)).
 Secrets come from a hand-made Secret `oauth-secrets`. CI builds the image on
 every PR (no push).

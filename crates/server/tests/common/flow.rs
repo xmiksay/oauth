@@ -25,7 +25,7 @@ use uuid::Uuid;
 
 use super::browser::{Browser, send};
 use super::seed::{add_app, add_role, add_scope, add_secret, add_user, assign_role, insert};
-use super::{PUBLIC_URL, TestDb};
+use super::{ORIGIN, TestDb};
 
 pub const T: &str = "contoso";
 pub const PASSWORD: &str = "correct horse battery";
@@ -224,9 +224,7 @@ impl Fixture {
             form.push(("scope", scope));
         }
         let basic = Some(("web-app", self.web_secret.as_str()));
-        let (status, _, body) = self
-            .post_form(&format!("/{T}/oauth2/token"), &form, basic)
-            .await;
+        let (status, _, body) = self.post_form("/oauth2/token", &form, basic).await;
         (status, body)
     }
 
@@ -247,9 +245,7 @@ impl Fixture {
         if basic.is_none() {
             form.push(("client_id", &client.client_id));
         }
-        let (status, _, body) = self
-            .post_form(&format!("/{T}/oauth2/token"), &form, basic)
-            .await;
+        let (status, _, body) = self.post_form("/oauth2/token", &form, basic).await;
         (status, body)
     }
 
@@ -257,9 +253,7 @@ impl Fixture {
     pub async fn verify_jwt(&self, token: &str, audience: &str) -> serde_json::Map<String, Value> {
         let (status, _, body) = send(
             &self.app,
-            Request::get(format!("/{T}/discovery/keys"))
-                .body(Body::empty())
-                .unwrap(),
+            Request::get("/discovery/keys").body(Body::empty()).unwrap(),
         )
         .await;
         assert_eq!(status, StatusCode::OK);
@@ -270,7 +264,7 @@ impl Fixture {
             .expect("kid in JWKS");
         let mut validation = Validation::new(header.alg);
         validation.set_audience(&[audience]);
-        validation.set_issuer(&[format!("{PUBLIC_URL}/{T}")]);
+        validation.set_issuer(&[ORIGIN]);
         jsonwebtoken::decode(token, &DecodingKey::from_jwk(jwk).unwrap(), &validation)
             .unwrap()
             .claims

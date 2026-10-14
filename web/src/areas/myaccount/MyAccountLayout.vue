@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useTenantStore } from '@/stores/tenant'
@@ -10,15 +9,12 @@ import TabNav from '@/components/TabNav.vue'
 const { slug } = storeToRefs(useTenantStore())
 const route = useRoute()
 
-const tabs = computed(() => {
-  const params = { tenant: slug.value }
-  return [
-    { to: { name: 'myaccount', params }, label: 'Profile', exact: true },
-    { to: { name: 'myaccount-security', params }, label: 'Security info' },
-    { to: { name: 'myaccount-sessions', params }, label: 'Devices & sessions' },
-    { to: { name: 'myaccount-apps', params }, label: 'App permissions' },
-  ]
-})
+const tabs = [
+  { to: { name: 'myaccount' }, label: 'Profile', exact: true },
+  { to: { name: 'myaccount-security' }, label: 'Security info' },
+  { to: { name: 'myaccount-sessions' }, label: 'Devices & sessions' },
+  { to: { name: 'myaccount-apps' }, label: 'App permissions' },
+]
 </script>
 
 <template>

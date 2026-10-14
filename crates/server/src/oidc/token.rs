@@ -1,4 +1,4 @@
-//! `POST /{t}/oauth2/token`: `authorization_code`, `refresh_token`,
+//! `POST /oauth2/token`: `authorization_code`, `refresh_token`,
 //! `client_credentials`. Errors per RFC 6749 §5.2, always `no-store`.
 
 use std::{collections::HashMap, net::IpAddr};

@@ -1,4 +1,4 @@
-//! `GET /{t}/oauth2/authorize` — authorization code flow with mandatory
+//! `GET /oauth2/authorize` — authorization code flow with mandatory
 //! PKCE S256. Until `client_id` and `redirect_uri` are validated, errors are
 //! rendered (400 JSON) and never redirected (RFC 6749 §4.1.2.1).
 
@@ -167,12 +167,11 @@ async fn to_login(
         return Ok(AuthnError::RateLimited { retry_after }.into_response());
     }
     // Reuse the browser's existing binding so parallel tabs keep working.
-    let binding = match cookie::read(env.headers, &state.config, Kind::TxBinding, &tenant.slug)
-        .find(|v| v.len() == 43)
-    {
-        Some(existing) => existing.to_owned(),
-        None => crate::secret::random_token()?,
-    };
+    let binding =
+        match cookie::read(env.headers, &state.config, Kind::TxBinding).find(|v| v.len() == 43) {
+            Some(existing) => existing.to_owned(),
+            None => crate::secret::random_token()?,
+        };
     let id = tx::create(
         &state.db,
         tx::NewTx {
@@ -185,9 +184,9 @@ async fn to_login(
         },
     )
     .await?;
-    let url = format!("{}/{}/login?tx={id}", state.config.public_url, tenant.slug);
+    let url = format!("{}/login?tx={id}", state.config.tenant_origin(&tenant.slug));
     let mut response = redirect::found(&url);
-    let set = cookie::set(&state.config, Kind::TxBinding, &tenant.slug, &binding)?;
+    let set = cookie::set(&state.config, Kind::TxBinding, &binding)?;
     response.headers_mut().append(header::SET_COOKIE, set);
     Ok(response)
 }

@@ -20,8 +20,8 @@ use entity::{app_scopes, enums::DirectoryRole::GlobalAdmin};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde_json::{Value, json};
 
-const APPS: &str = "/api/v1/tenants/contoso/applications";
-const ASSIGN: &str = "/api/v1/tenants/contoso/role-assignments";
+const APPS: &str = "/api/v1/applications";
+const ASSIGN: &str = "/api/v1/role-assignments";
 
 async fn item_id(f: &Fixture, token: &str, path: &str, value: &str) -> String {
     let (_, list) = call(&f.app, Method::GET, path, Some(token), None).await;
@@ -114,7 +114,7 @@ async fn deleting_a_scope_withdraws_it_everywhere() {
         (st, body["error"].as_str()),
         (StatusCode::BAD_REQUEST, Some("invalid_grant"))
     );
-    let consents = format!("/api/v1/tenants/contoso/consents?user_id={}", f.user.id);
+    let consents = format!("/api/v1/consents?user_id={}", f.user.id);
     let (_, grants) = call(&f.app, Method::GET, &consents, Some(&token), None).await;
     let held: Vec<&Value> = grants["items"]
         .as_array()
@@ -252,7 +252,7 @@ async fn roles_permissions_secrets_and_assignments() {
     ];
     let (st, _, _) = f
         .post_form(
-            "/contoso/oauth2/token",
+            "/oauth2/token",
             &form,
             Some(("web-app", f.web_secret.as_str())),
         )

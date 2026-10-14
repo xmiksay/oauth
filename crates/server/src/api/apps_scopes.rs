@@ -44,7 +44,7 @@ fn scope_view(s: &app_scopes::Model) -> Value {
 pub async fn list_scopes(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, app_id)): Path<(String, Uuid)>,
+    Path(app_id): Path<Uuid>,
 ) -> AppResult<axum::Json<Value>> {
     caller.require(Area::Applications, Access::Read)?;
     let app = find_app(&state.db, caller.tenant_id(), app_id).await?;
@@ -70,7 +70,7 @@ pub struct ScopeBody {
 pub async fn create_scope(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, app_id)): Path<(String, Uuid)>,
+    Path(app_id): Path<Uuid>,
     Json(body): Json<ScopeBody>,
 ) -> AppResult<Response> {
     caller.require(Area::Applications, Access::Write)?;
@@ -123,7 +123,7 @@ async fn find_scope(
 pub async fn update_scope(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, app_id, scope_id)): Path<(String, Uuid, Uuid)>,
+    Path((app_id, scope_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<ScopeBody>,
 ) -> AppResult<axum::Json<Value>> {
     caller.require(Area::Applications, Access::Write)?;
@@ -166,7 +166,7 @@ pub async fn update_scope(
 pub async fn remove_scope(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, app_id, scope_id)): Path<(String, Uuid, Uuid)>,
+    Path((app_id, scope_id)): Path<(Uuid, Uuid)>,
 ) -> AppResult<StatusCode> {
     caller.require(Area::Applications, Access::Write)?;
     let txn = state.db.begin().await?;

@@ -1,4 +1,4 @@
-// Login JSON API (`/{t}/api/authn/tx/{id}`) and the sign-out POST — docs/api/authn.md.
+// Login JSON API (`/api/authn/tx/{id}` on the tenant's host) and the sign-out POST — docs/api/authn.md.
 // Same-origin fetch carries the tx-binding / session cookies and the `Origin` the CSRF check wants.
 import { api } from './client'
 
@@ -31,26 +31,23 @@ export function isRedirect(r: StepResult): r is Redirect {
   return typeof (r as Redirect).redirect === 'string'
 }
 
-function txPath(tenant: string, tx: string, action = ''): string {
-  const base = `/${encodeURIComponent(tenant)}/api/authn/tx/${encodeURIComponent(tx)}`
+function txPath(tx: string, action = ''): string {
+  const base = `/api/authn/tx/${encodeURIComponent(tx)}`
   return action ? `${base}/${action}` : base
 }
 
 export const authn = {
-  get: (tenant: string, tx: string) => api.get<TxView>(txPath(tenant, tx)),
-  password: (tenant: string, tx: string, email: string, password: string) =>
-    api.post<StepResult>(txPath(tenant, tx, 'password'), { email, password }),
-  totp: (tenant: string, tx: string, code: string) =>
-    api.post<StepResult>(txPath(tenant, tx, 'totp'), { code }),
-  recovery: (tenant: string, tx: string, code: string) =>
-    api.post<StepResult>(txPath(tenant, tx, 'recovery'), { code }),
-  changePassword: (tenant: string, tx: string, newPassword: string) =>
-    api.post<StepResult>(txPath(tenant, tx, 'change-password'), { new_password: newPassword }),
-  consent: (tenant: string, tx: string, approve: boolean, scopes: string[] = []) =>
+  get: (tx: string) => api.get<TxView>(txPath(tx)),
+  password: (tx: string, email: string, password: string) =>
+    api.post<StepResult>(txPath(tx, 'password'), { email, password }),
+  totp: (tx: string, code: string) => api.post<StepResult>(txPath(tx, 'totp'), { code }),
+  recovery: (tx: string, code: string) => api.post<StepResult>(txPath(tx, 'recovery'), { code }),
+  changePassword: (tx: string, newPassword: string) =>
+    api.post<StepResult>(txPath(tx, 'change-password'), { new_password: newPassword }),
+  consent: (tx: string, approve: boolean, scopes: string[] = []) =>
     api.post<StepResult>(
-      txPath(tenant, tx, 'consent'),
+      txPath(tx, 'consent'),
       approve ? { approve: true, scopes } : { approve: false },
     ),
-  signOut: (tenant: string) =>
-    api.post<{ signed_out: boolean }>(`/${encodeURIComponent(tenant)}/oauth2/logout`, {}),
+  signOut: () => api.post<{ signed_out: boolean }>('/oauth2/logout', {}),
 }

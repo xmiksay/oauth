@@ -4,7 +4,7 @@ import {
   type RouteLocationNormalized,
   type RouteRecordRaw,
 } from 'vue-router'
-import { useTenantStore } from '@/stores/tenant'
+import { systemAdminUrl, useTenantStore } from '@/stores/tenant'
 import { useAuthStore } from '@/stores/auth'
 import type { SpaArea } from '@/auth/oidc'
 import { adminRoutes } from './admin'
@@ -23,25 +23,25 @@ const AuthCallback = () => import('@/components/AuthCallback.vue')
 
 const routes: RouteRecordRaw[] = [
   {
-    path: '/:tenant/login',
+    path: '/login',
     name: 'login',
     component: () => import('@/areas/login/LoginPage.vue'),
     meta: { title: 'Sign in' },
   },
   {
-    path: '/:tenant/logout',
+    path: '/logout',
     name: 'logout',
     component: () => import('@/areas/logout/LogoutPage.vue'),
     meta: { title: 'Sign out' },
   },
   {
-    path: '/:tenant/myaccount/callback',
+    path: '/myaccount/callback',
     name: 'myaccount-callback',
     component: AuthCallback,
     meta: { area: 'myaccount', callback: true },
   },
   {
-    path: '/:tenant/myaccount',
+    path: '/myaccount',
     component: () => import('@/areas/myaccount/MyAccountLayout.vue'),
     meta: { area: 'myaccount' },
     children: [
@@ -72,13 +72,13 @@ const routes: RouteRecordRaw[] = [
     ],
   },
   {
-    path: '/:tenant/admin/callback',
+    path: '/admin/callback',
     name: 'admin-callback',
     component: AuthCallback,
     meta: { area: 'admin', callback: true },
   },
   {
-    path: '/:tenant/admin',
+    path: '/admin',
     component: () => import('@/areas/admin/AdminLayout.vue'),
     meta: { area: 'admin' },
     children: adminRoutes,
@@ -97,23 +97,29 @@ export const router = createRouter({
 })
 
 router.beforeEach(async (to) => {
-  const tenants = useTenantStore()
-  tenants.setFromParam(to.params.tenant)
+  if (!useTenantStore().slug) {
+    // Only the dev apex (`localhost:5173`, which Vite serves) gets here; the server
+    // redirects its own apex the same way.
+    window.location.replace(systemAdminUrl())
+    return false
+  }
   const area = to.meta.area
-  if (!area || to.meta.callback || !tenants.slug) return true
+  if (!area || to.meta.callback) return true
   // false = the browser is already on its way to the authorize endpoint.
-  return useAuthStore().ensureSignedIn(tenants.slug, area, to.fullPath)
+  return useAuthStore().ensureSignedIn(area, to.fullPath)
 })
 
 const AREA_NAMES: Record<SpaArea, string> = { admin: 'Admin center', myaccount: 'My Account' }
 
 /** "Users · Admin center · contoso" — child meta wins over the parent's. */
-export function pageTitle(to: Pick<RouteLocationNormalized, 'meta' | 'params'>): string {
+export function pageTitle(
+  to: Pick<RouteLocationNormalized, 'meta'>,
+  tenant: string | null,
+): string {
   const area = to.meta.area ? AREA_NAMES[to.meta.area] : null
-  const tenant = typeof to.params.tenant === 'string' ? to.params.tenant : null
   return [to.meta.title, area, tenant].filter(Boolean).join(' · ') || 'oauth'
 }
 
 router.afterEach((to) => {
-  document.title = pageTitle(to)
+  document.title = pageTitle(to, useTenantStore().slug)
 })

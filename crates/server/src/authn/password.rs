@@ -77,7 +77,7 @@ pub async fn submit(
     tenant: Tenant,
     ip: ClientIp,
     headers: HeaderMap,
-    Path((_, tx_id)): Path<(String, String)>,
+    Path(tx_id): Path<String>,
     JsonBody(body): JsonBody<PasswordBody>,
 ) -> AuthnResult<Outcome> {
     let ctx = Ctx::new(&state, &tenant, ip, &headers);
@@ -154,7 +154,7 @@ pub async fn change(
     tenant: Tenant,
     ip: ClientIp,
     headers: HeaderMap,
-    Path((_, tx_id)): Path<(String, String)>,
+    Path(tx_id): Path<String>,
     JsonBody(body): JsonBody<ChangeBody>,
 ) -> AuthnResult<Outcome> {
     let ctx = Ctx::new(&state, &tenant, ip, &headers);

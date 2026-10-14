@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { storeToRefs } from 'pinia'
+import { useTenantStore } from '@/stores/tenant'
 import AuthCard from '@/components/AuthCard.vue'
 import PasswordStep from './PasswordStep.vue'
 import MfaStep from './MfaStep.vue'
@@ -9,10 +11,10 @@ import ConsentStep from './ConsentStep.vue'
 import { useLoginFlow } from './useLoginFlow'
 
 const route = useRoute()
-const tenant = String(route.params.tenant ?? '')
+const { slug } = storeToRefs(useTenantStore())
 const tx = typeof route.query.tx === 'string' && route.query.tx ? route.query.tx : null
 
-const flow = useLoginFlow(tenant, tx)
+const flow = useLoginFlow(tx)
 const { phase, view, error, locked, rateLimited, retryIn } = flow
 
 onMounted(flow.load)
@@ -42,7 +44,7 @@ const subtitle = computed(() => {
 <template>
   <AuthCard
     :title="phase === 'step' ? title : 'Sign in'"
-    :tenant="view?.tenant.display_name ?? tenant"
+    :tenant="view?.tenant.display_name ?? slug"
     :subtitle="phase === 'step' ? subtitle : null"
   >
     <p

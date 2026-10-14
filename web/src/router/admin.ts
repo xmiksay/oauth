@@ -1,6 +1,6 @@
 import type { RouteRecordRaw } from 'vue-router'
 
-/** Children of `/:tenant/admin`; list routes match `adminNav` names. */
+/** Children of `/admin`; list routes match `adminNav` names. */
 export const adminRoutes: RouteRecordRaw[] = [
   {
     path: '',

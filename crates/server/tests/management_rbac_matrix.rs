@@ -31,7 +31,7 @@ enum Area {
 
 fn routes() -> Vec<(Method, String, Value, Area)> {
     use Area::{Applications as A, Directory as D, GlobalAdmin as G};
-    let t = "/api/v1/tenants/contoso";
+    let t = "/api/v1";
     let (x, y) = (Uuid::now_v7(), Uuid::now_v7());
     let app = format!("{t}/applications/{x}");
     let none = Value::Null;
@@ -201,7 +201,7 @@ async fn app_only_access_follows_live_role_assignments() {
     let f = Fixture::new().await;
     let ga = user_with_roles(&f.db, f.tenant.id, "ga@example.com", &[GlobalAdmin]).await;
     let ga = mint_user_token(&f.db, &f.config, &f.tenant, &ga).await;
-    let apps = "/api/v1/tenants/contoso/applications";
+    let apps = "/api/v1/applications";
     let (_, svc) = post(
         &f,
         &ga,
@@ -229,17 +229,17 @@ async fn app_only_access_follows_live_role_assignments() {
         .clone();
     let assign =
         json!({ "app_role_id": rw, "principal_type": "application", "principal_id": svc["id"] });
-    let (_, assignment) = post(&f, &ga, "/api/v1/tenants/contoso/role-assignments", assign).await;
+    let (_, assignment) = post(&f, &ga, "/api/v1/role-assignments", assign).await;
 
     let form = [
         ("grant_type", "client_credentials"),
         ("scope", "api://management-api/.default"),
     ];
     let basic = Some(("svc", secret["secret"].as_str().unwrap()));
-    let (st, _, body) = f.post_form("/contoso/oauth2/token", &form, basic).await;
+    let (st, _, body) = f.post_form("/oauth2/token", &form, basic).await;
     assert_eq!(st, StatusCode::OK, "{body}");
     let token = body["access_token"].as_str().unwrap().to_owned();
-    let users = "/api/v1/tenants/contoso/users";
+    let users = "/api/v1/users";
     let new_user = |n: u8| json!({ "email": format!("u{n}@example.com"), "display_name": "U" });
     assert_eq!(
         post(&f, &token, users, new_user(1)).await.0,
@@ -248,7 +248,7 @@ async fn app_only_access_follows_live_role_assignments() {
 
     // The token's `roles` claim still says ReadWrite.All; access doesn't.
     let one = format!(
-        "/api/v1/tenants/contoso/role-assignments/{}",
+        "/api/v1/role-assignments/{}",
         assignment["id"].as_str().unwrap()
     );
     assert_eq!(
@@ -268,7 +268,7 @@ async fn app_only_access_follows_live_role_assignments() {
     let (_, _) = post(
         &f,
         &ga,
-        "/api/v1/tenants/contoso/role-assignments",
+        "/api/v1/role-assignments",
         json!({ "app_role_id": rw, "principal_type": "application", "principal_id": svc["id"] }),
     )
     .await;

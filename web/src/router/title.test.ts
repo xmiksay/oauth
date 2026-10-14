@@ -6,13 +6,13 @@ setActivePinia(createPinia())
 
 describe('pageTitle', () => {
   it('names the page, the area and the tenant', () => {
-    expect(pageTitle(router.resolve('/contoso/admin/users'))).toBe('Users · Admin center · contoso')
-    expect(pageTitle(router.resolve('/contoso/myaccount/security'))).toBe(
-      'Security info · My Account · contoso',
-    )
-    expect(pageTitle(router.resolve('/contoso/admin/app-registrations/x/secrets'))).toBe(
+    const title = (path: string) => pageTitle(router.resolve(path), 'contoso')
+    expect(title('/admin/users')).toBe('Users · Admin center · contoso')
+    expect(title('/myaccount/security')).toBe('Security info · My Account · contoso')
+    expect(title('/admin/app-registrations/x/secrets')).toBe(
       'App registration · Admin center · contoso',
     )
-    expect(pageTitle(router.resolve('/contoso/login'))).toBe('Sign in · contoso')
+    expect(title('/login')).toBe('Sign in · contoso')
+    expect(pageTitle(router.resolve('/nowhere'), null)).toBe('Page not found')
   })
 })

@@ -1,34 +1,57 @@
-//! Tenant slug validation. The slug is the first path segment of every tenant
-//! URL (`/{slug}/oauth2/…`, `/{slug}/admin`), so it must not collide with
-//! top-level routes.
+//! Tenant slug validation. The slug is the first DNS label of every tenant
+//! host (`{slug}.{PUBLIC_URL host}`), so it must be a valid label and must not
+//! take a name operators conventionally give to other services on the same
+//! domain.
 
 use super::DirectoryError;
 
 /// The built-in tenant created by `oauth bootstrap`.
 pub const SYSTEM_TENANT_SLUG: &str = "system";
 
-/// Slugs that would shadow a top-level path. WHY each exists: the backend
-/// router (`app.rs`) serves `/healthz`, `/readyz` (`health.rs`), static SPA
-/// files at the root such as `/assets/…` (`spa.rs`) and the management API
-/// under `/api/…` (`api`);
-/// the Vite dev server owns `/src`, `/node_modules` and `/@…` (see
-/// `web/dev-proxy.ts`, which must not proxy them as tenants); `/metrics` and
-/// `/.well-known` are conventional root paths; `system` is the bootstrap
-/// tenant. Keep in sync when adding a root route.
+/// Labels that are not tenant names. WHY: under a wildcard DNS record and
+/// certificate every label resolves to us, so a tenant called `www`, `mail`
+/// or `status` would capture the hostname an operator (or a user typing it)
+/// expects to be the website, mail server or status page — and could serve a
+/// convincing sign-in page there. `system` is the bootstrap tenant.
 pub const RESERVED_SLUGS: &[&str] = &[
+    "www",
     "api",
-    "assets",
+    "app",
+    "admin",
+    "auth",
+    "login",
+    "sso",
+    "id",
+    "oauth",
+    "account",
+    "accounts",
+    "mail",
+    "email",
+    "smtp",
+    "imap",
+    "pop",
+    "pop3",
+    "mx",
+    "webmail",
+    "autoconfig",
+    "autodiscover",
+    "ns",
+    "ns1",
+    "ns2",
+    "dns",
+    "ftp",
+    "vpn",
+    "cdn",
     "static",
-    "src",
-    "node_modules",
-    "healthz",
-    "readyz",
+    "assets",
+    "status",
     "metrics",
-    "well-known",
+    "localhost",
     SYSTEM_TENANT_SLUG,
 ];
 
 /// Checks the shape `^[a-z0-9][a-z0-9-]{1,62}$` (mirrored by a DB CHECK).
+/// Used as the cheap pre-check before any slug lookup.
 pub fn validate_format(slug: &str) -> Result<(), DirectoryError> {
     let mut chars = slug.chars();
     let first_ok = chars
@@ -45,16 +68,28 @@ pub fn validate_format(slug: &str) -> Result<(), DirectoryError> {
     }
 }
 
-/// Full validation for user-chosen slugs: format + reserved names.
+/// Full validation for user-chosen slugs: format, DNS label rules the DB
+/// CHECK predates, and reserved names.
 pub fn validate(slug: &str) -> Result<(), DirectoryError> {
-    // `@…` / `.…` (Vite internals, dotfiles) need no entry: the format
-    // already requires a leading letter or digit.
     if RESERVED_SLUGS.contains(&slug) {
         return Err(DirectoryError::Invalid(format!(
             "tenant slug `{slug}` is reserved"
         )));
     }
-    validate_format(slug)
+    validate_format(slug)?;
+    if slug.ends_with('-') {
+        return Err(DirectoryError::Invalid(format!(
+            "tenant slug `{slug}` must not end with '-' (it is a DNS label)"
+        )));
+    }
+    // `xn--…` is punycode (a homograph of some Unicode name) and RFC 5891
+    // reserves every `??--` label for such encodings.
+    if slug.get(2..4) == Some("--") {
+        return Err(DirectoryError::Invalid(format!(
+            "tenant slug `{slug}` must not have '--' as its 3rd and 4th characters"
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -63,7 +98,17 @@ mod tests {
 
     #[test]
     fn accepts_valid_slugs() {
-        for slug in ["ab", "contoso", "a-b-c", "0day", "x9", &"a".repeat(63)] {
+        for slug in [
+            "ab",
+            "contoso",
+            "a-b-c",
+            "a--b",
+            "0day",
+            "x9",
+            "src",
+            "healthz",
+            &"a".repeat(63),
+        ] {
             assert!(validate(slug).is_ok(), "{slug} rejected");
         }
     }
@@ -74,11 +119,16 @@ mod tests {
             "",
             "a",
             "-ab",
+            "ab-",
+            "xn--80ak6aa92e",
+            "ab--c",
             "Contoso",
             "con toso",
             "con_toso",
             "conto.so",
             "čau",
+            "@vite",
+            ".git",
             &"a".repeat(64),
         ] {
             let err = validate(slug).unwrap_err();
@@ -91,17 +141,6 @@ mod tests {
         for slug in RESERVED_SLUGS {
             let err = validate(slug).unwrap_err().to_string();
             assert!(err.contains("reserved"), "{slug}: {err}");
-        }
-    }
-
-    #[test]
-    fn rejects_vite_and_dot_prefixes_by_format() {
-        for slug in ["@vite", "@fs", ".well-known", ".git"] {
-            let err = validate(slug).unwrap_err().to_string();
-            assert!(
-                err.contains("starting with a letter or digit"),
-                "{slug}: {err}"
-            );
         }
     }
 

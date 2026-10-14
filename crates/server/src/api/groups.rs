@@ -1,4 +1,4 @@
-//! `/api/v1/tenants/{t}/groups` CRUD and `…/members`.
+//! `/api/v1/groups` CRUD and `…/members`.
 
 use axum::{
     extract::State,
@@ -84,7 +84,7 @@ pub async fn list(
 pub async fn get(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, id)): Path<(String, Uuid)>,
+    Path(id): Path<Uuid>,
 ) -> AppResult<axum::Json<Value>> {
     caller.require(Area::Directory, Access::Read)?;
     Ok(axum::Json(view(
@@ -135,7 +135,7 @@ pub async fn create(
 pub async fn update(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, id)): Path<(String, Uuid)>,
+    Path(id): Path<Uuid>,
     Json(body): Json<GroupBody>,
 ) -> AppResult<axum::Json<Value>> {
     caller.require(Area::Directory, Access::Write)?;
@@ -177,7 +177,7 @@ pub async fn update(
 pub async fn remove(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, id)): Path<(String, Uuid)>,
+    Path(id): Path<Uuid>,
 ) -> AppResult<StatusCode> {
     caller.require(Area::Directory, Access::Write)?;
     let txn = state.db.begin().await?;
@@ -200,7 +200,7 @@ pub async fn remove(
 pub async fn members(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, id)): Path<(String, Uuid)>,
+    Path(id): Path<Uuid>,
     Query(q): Query<PageParams>,
 ) -> AppResult<Paged<Value>> {
     caller.require(Area::Directory, Access::Read)?;
@@ -242,7 +242,7 @@ pub struct AddMember {
 pub async fn add_member(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, id)): Path<(String, Uuid)>,
+    Path(id): Path<Uuid>,
     Json(body): Json<AddMember>,
 ) -> AppResult<StatusCode> {
     caller.require(Area::Directory, Access::Write)?;
@@ -275,7 +275,7 @@ pub async fn add_member(
 pub async fn remove_member(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, id, user_id)): Path<(String, Uuid, Uuid)>,
+    Path((id, user_id)): Path<(Uuid, Uuid)>,
 ) -> AppResult<StatusCode> {
     caller.require(Area::Directory, Access::Write)?;
     let tenant_id = caller.tenant_id();

@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { computed, ref, watchEffect } from 'vue'
+import { ref, watchEffect } from 'vue'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useApplicationStore } from '@/stores/application'
-import { useTenantStore } from '@/stores/tenant'
 import { applications } from '@/api/applications'
 import { useAction } from '@/composables/useAction'
 import { formatDate } from '@/lib/format'
@@ -14,7 +13,6 @@ import CopyButton from '@/components/CopyButton.vue'
 const router = useRouter()
 const store = useApplicationStore()
 const { app, canEdit, canEditConfig } = storeToRefs(store)
-const { slug } = storeToRefs(useTenantStore())
 const name = ref('')
 const { busy, error, run } = useAction()
 
@@ -22,13 +20,14 @@ watchEffect(() => {
   name.value = app.value?.display_name ?? ''
 })
 
-const issuer = computed(() => `${window.location.origin}/${slug.value}`)
-const endpoints = computed(() => [
-  ['OpenID Connect metadata', `${issuer.value}/.well-known/openid-configuration`],
-  ['Authorization', `${issuer.value}/oauth2/authorize`],
-  ['Token', `${issuer.value}/oauth2/token`],
-  ['Issuer', issuer.value],
-])
+// The tenant is this host, so its origin is the issuer.
+const issuer = window.location.origin
+const endpoints = [
+  ['OpenID Connect metadata', `${issuer}/.well-known/openid-configuration`],
+  ['Authorization', `${issuer}/oauth2/authorize`],
+  ['Token', `${issuer}/oauth2/token`],
+  ['Issuer', issuer],
+]
 
 async function save() {
   await run(() => store.update({ display_name: name.value.trim() }))
@@ -37,7 +36,7 @@ async function save() {
 async function remove() {
   if (!app.value) return
   await applications.remove(app.value.id)
-  await router.replace({ name: 'admin-apps', params: { tenant: slug.value } })
+  await router.replace({ name: 'admin-apps' })
 }
 </script>
 

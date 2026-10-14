@@ -1,14 +1,14 @@
 //! OIDC RP-Initiated Logout 1.0.
 //!
-//! `GET /{t}/oauth2/logout` ends the browser session only when a valid
+//! `GET /oauth2/logout` ends the browser session only when a valid
 //! `id_token_hint` (signature + issuer verified, expiry ignored as the spec
 //! allows) names the session's own user — otherwise any site could log users
 //! out with an `<img>` tag. In every other case (no / invalid hint, hint for
 //! another user) the browser is sent to the SPA confirmation page
-//! `/{t}/logout`, which signs out with `POST /{t}/oauth2/logout` (JSON +
+//! `/logout`, which signs out with `POST /oauth2/logout` (JSON +
 //! `Origin`, the login API's CSRF rules). A `post_logout_redirect_uri` is
 //! honoured only with a valid hint of a client that registered it; without
-//! one, a hint-authorized logout lands on `/{t}/logout?signed_out=1`.
+//! one, a hint-authorized logout lands on `/logout?signed_out=1`.
 
 use std::collections::HashMap;
 
@@ -48,7 +48,7 @@ pub async fn logout(
     }
 }
 
-/// `POST /{t}/oauth2/logout` from the confirmation page (CSRF-checked by
+/// `POST /oauth2/logout` from the confirmation page (CSRF-checked by
 /// `authn::csrf` on the route).
 pub async fn sign_out(
     State(state): State<AppState>,
@@ -57,7 +57,7 @@ pub async fn sign_out(
 ) -> Response {
     let ended = async {
         let current = session::from_cookie(&state.db, &state.config, &tenant, &headers).await?;
-        end_session(&state, &tenant, current.as_ref()).await
+        end_session(&state, current.as_ref()).await
     };
     match ended.await {
         Ok(clear) => {
@@ -116,8 +116,8 @@ async fn handle(
     let current = session::from_cookie(&state.db, &state.config, tenant, headers).await?;
     let confirm = || {
         redirect::found(&format!(
-            "{}/{}/logout",
-            state.config.public_url, tenant.slug
+            "{}/logout",
+            state.config.tenant_origin(&tenant.slug)
         ))
     };
     let Some(hint) = hint else {
@@ -151,12 +151,12 @@ async fn handle(
     // shows "signed out" (a navigation must never end on raw JSON).
     let url = target.unwrap_or_else(|| {
         format!(
-            "{}/{}/logout?signed_out=1",
-            state.config.public_url, tenant.slug
+            "{}/logout?signed_out=1",
+            state.config.tenant_origin(&tenant.slug)
         )
     });
     let mut response = redirect::found(&url);
-    let clear = end_session(state, tenant, current.as_ref()).await?;
+    let clear = end_session(state, current.as_ref()).await?;
     response.headers_mut().append(header::SET_COOKIE, clear);
     Ok(response)
 }
@@ -165,12 +165,11 @@ async fn handle(
 /// session cookie.
 async fn end_session(
     state: &AppState,
-    tenant: &Tenant,
     current: Option<&sessions::Model>,
 ) -> OAuthResult<HeaderValue> {
     if let Some(current) = current {
         session::delete(&state.db, current.id).await?;
         tracing::info!(session = %current.id, "session ended by logout");
     }
-    Ok(cookie::clear(&state.config, Kind::Session, &tenant.slug)?)
+    Ok(cookie::clear(&state.config, Kind::Session)?)
 }

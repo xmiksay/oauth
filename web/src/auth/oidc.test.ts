@@ -2,28 +2,28 @@ import { describe, expect, it } from 'vitest'
 import { buildOidcSettings, createUserManager, SPA_SCOPE } from './oidc'
 
 describe('buildOidcSettings', () => {
-  it('builds admin-portal settings for a tenant', () => {
-    const s = buildOidcSettings('contoso', 'admin', 'https://id.example.com')
+  it('builds admin-portal settings on the tenant origin', () => {
+    const s = buildOidcSettings('admin', 'https://contoso.id.example.com')
     expect(s).toMatchObject({
-      authority: 'https://id.example.com/contoso',
+      authority: 'https://contoso.id.example.com',
       client_id: 'admin-portal',
-      redirect_uri: 'https://id.example.com/contoso/admin/callback',
-      post_logout_redirect_uri: 'https://id.example.com/contoso/admin',
+      redirect_uri: 'https://contoso.id.example.com/admin/callback',
+      post_logout_redirect_uri: 'https://contoso.id.example.com/admin',
       response_type: 'code',
       scope: SPA_SCOPE,
     })
   })
 
-  it('builds my-account settings for a tenant', () => {
-    const s = buildOidcSettings('contoso', 'myaccount', 'https://id.example.com')
+  it('builds my-account settings on the tenant origin', () => {
+    const s = buildOidcSettings('myaccount', 'https://contoso.id.example.com')
     expect(s.client_id).toBe('my-account')
-    expect(s.redirect_uri).toBe('https://id.example.com/contoso/myaccount/callback')
-    expect(s.post_logout_redirect_uri).toBe('https://id.example.com/contoso/myaccount')
+    expect(s.redirect_uri).toBe('https://contoso.id.example.com/myaccount/callback')
+    expect(s.post_logout_redirect_uri).toBe('https://contoso.id.example.com/myaccount')
   })
 
   it('defaults to the current origin', () => {
-    const s = buildOidcSettings('system', 'admin')
-    expect(s.authority).toBe(`${window.location.origin}/system`)
+    const s = buildOidcSettings('admin')
+    expect(s.authority).toBe(window.location.origin)
   })
 
   it('requests the management API delegated scope by its identifier URI', () => {
@@ -41,7 +41,7 @@ describe('createUserManager', () => {
   it('keeps tokens and PKCE state in sessionStorage, never localStorage', async () => {
     localStorage.clear()
     sessionStorage.clear()
-    const m = createUserManager('contoso', 'admin')
+    const m = createUserManager('admin')
     expect(m.settings.automaticSilentRenew).toBe(false)
     expect(m.settings.monitorSession).toBe(false)
     await m.settings.userStore.set('probe', 'x')

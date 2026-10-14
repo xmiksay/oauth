@@ -1,4 +1,4 @@
-//! `/api/v1/tenants/{t}/applications` — app registrations. Built-in apps
+//! `/api/v1/applications` — app registrations. Built-in apps
 //! (`management-api`, `admin-portal`, `my-account`) can't be deleted; only a
 //! GlobalAdmin may change them, and only their display name and token
 //! lifetimes.
@@ -99,7 +99,7 @@ pub async fn list(
 pub async fn get(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, id)): Path<(String, Uuid)>,
+    Path(id): Path<Uuid>,
 ) -> AppResult<axum::Json<Value>> {
     caller.require(Area::Applications, Access::Read)?;
     Ok(axum::Json(view(
@@ -283,7 +283,7 @@ const BUILTIN_EDITABLE: [&str; 3] = [
 pub async fn update(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, id)): Path<(String, Uuid)>,
+    Path(id): Path<Uuid>,
     Json(body): Json<AppBody>,
 ) -> AppResult<axum::Json<Value>> {
     caller.require(Area::Applications, Access::Write)?;
@@ -333,7 +333,7 @@ pub async fn update(
 pub async fn remove(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, id)): Path<(String, Uuid)>,
+    Path(id): Path<Uuid>,
 ) -> AppResult<StatusCode> {
     caller.require(Area::Applications, Access::Write)?;
     let txn = state.db.begin().await?;

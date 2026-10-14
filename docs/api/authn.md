@@ -1,9 +1,10 @@
-# Login JSON API (`/{t}/api/authn`) and sign-out page
+# Login JSON API (`/api/authn`) and sign-out page
 
-The contract the SPA pages `/{t}/login?tx=<id>` and `/{t}/logout` (step 5)
-call. `/{t}/oauth2/authorize` creates a **login transaction**, sets the
-transaction-binding cookie and redirects the browser to
-`{PUBLIC_URL}/{t}/login?tx=<id>`; the SPA then walks the steps below until
+Every path here is on the tenant's own host `{origin}` =
+`{scheme}://{t}.{PUBLIC_URL host}[:port]` (unknown hosts → 404). The contract
+the SPA pages `/login?tx=<id>` and `/logout` call. `/oauth2/authorize`
+creates a **login transaction**, sets the transaction-binding cookie and
+redirects the browser to `{origin}/login?tx=<id>`; the SPA then walks the steps below until
 the API answers with a `redirect`, which the SPA follows
 (`window.location.assign`).
 
@@ -15,12 +16,13 @@ the API answers with a `redirect`, which the SPA follows
   `SameSite=Lax`, `Max-Age` = 15 min, refreshed by every `/authorize`).
   Same-origin `fetch` sends it automatically. A missing or foreign cookie
   answers exactly like an unknown transaction (`404 not_found`), so a leaked
-  or planted `tx` id is useless in another browser. The cookie is shared by
-  all tabs and tenants of the browser and never cleared explicitly (it just
-  expires), so several sign-ins can run in parallel tabs.
+  or planted `tx` id is useless in another browser. The cookie is host-only
+  (one per tenant host), shared by all tabs and never cleared explicitly (it
+  just expires), so several sign-ins can run in parallel tabs.
 - **CSRF.** All `POST`s must send `Content-Type: application/json` **and**
-  an `Origin` equal to the origin of `PUBLIC_URL` (no CORS is ever granted,
-  so cross-site JSON posts can't be made). Violations: `400 invalid_request`
+  an `Origin` equal to the tenant's own `{origin}` — another tenant's host is
+  a different origin and is rejected (no CORS is ever granted, so cross-site
+  JSON posts can't be made). Violations: `400 invalid_request`
   (content type) / `403 csrf_rejected` (origin).
 - A transaction lives 15 minutes and is deleted when the flow completes or
   is declined. Unknown / expired / foreign ids → `404 not_found`.
@@ -32,7 +34,7 @@ the API answers with a `redirect`, which the SPA follows
   'none'` and `Referrer-Policy: no-referrer` (the SPA must not rely on being
   framed or on `Referer`).
 
-## Step view (`GET /{t}/api/authn/tx/{id}` and every non-final `POST`)
+## Step view (`GET /api/authn/tx/{id}` and every non-final `POST`)
 
 ```json
 {
@@ -91,8 +93,8 @@ earlier session of this browser (e.g. after `prompt=login`).
 | 401 | `invalid_credentials` | Wrong email or password, or unknown email — never distinguished (unknown accounts are verified against a dummy argon2 hash to equalise timing) |
 | 401 | `invalid_code` | Wrong / reused TOTP code or recovery code |
 | 403 | `account_disabled` | Correct password, but the user is disabled |
-| 403 | `csrf_rejected` | `Origin` missing or not `PUBLIC_URL`'s |
-| 404 | `not_found` | Unknown, expired, finished or foreign transaction (`no-store`). An unknown or disabled tenant also answers `404 {"error":"not_found","error_description":"resource not found"}`, from the tenant resolver (without `no-store`) |
+| 403 | `csrf_rejected` | `Origin` missing or not the tenant's `{origin}` |
+| 404 | `not_found` | Unknown, expired, finished or foreign transaction (`no-store`). An unknown or disabled tenant (host) also answers `404 {"error":"not_found","error_description":"resource not found"}`, from the tenant resolver (without `no-store`) |
 | 409 | `wrong_step` | The transaction is at another step (or a concurrent call advanced it) |
 | 429 | `rate_limited` | Too many attempts; `Retry-After` header in seconds |
 | 500 | `server_error` | Internal fault (logged; no detail in the body) |
@@ -110,29 +112,29 @@ successes too. IPv6 clients are bucketed per /64.
 
 ## Session cookie
 
-`__Host-oauth_sid_{t}=<random>; Path=/; Max-Age=SESSION_TTL_HOURS*3600;
-HttpOnly; SameSite=Lax; Secure` — one cookie per tenant (the `__Host-` prefix
-forbids a per-tenant `Path`, so the tenant is in the name; the prefix also
-stops sibling subdomains from planting cookies). With `COOKIE_SECURE=false`
-(plain-http local dev only) the names lose the prefix (`oauth_sid_{t}`,
-`oauth_tx`) and `Secure`. The server keeps only the SHA-256 of the value.
+`__Host-oauth_sid=<random>; Path=/; Max-Age=SESSION_TTL_HOURS*3600;
+HttpOnly; SameSite=Lax; Secure` — host-only, so every tenant host has its own
+(the server also only looks sessions up within the host's tenant); the
+`__Host-` prefix stops sibling tenant hosts from planting cookies. With
+`COOKIE_SECURE=false` (plain-http local dev only) the names lose the prefix
+(`oauth_sid`, `oauth_tx`) and `Secure`. The server keeps only the SHA-256 of the value.
 
-## Sign-out confirmation page (`/{t}/logout`)
+## Sign-out confirmation page (`/logout`)
 
-`GET /{t}/oauth2/logout` ends the session directly only with a valid
+`GET /oauth2/logout` ends the session directly only with a valid
 `id_token_hint` whose `sub` is the session's user; it then redirects to the
 client's registered `post_logout_redirect_uri`, or — without one — to
-`{PUBLIC_URL}/{t}/logout?signed_out=1`, where the page just shows "You have
+`{origin}/logout?signed_out=1`, where the page just shows "You have
 been signed out" (no confirmation, no API call). Otherwise (no hint, an
 invalid one, or another user's) it ends nothing and redirects to
-`{PUBLIC_URL}/{t}/logout` without parameters (it never redirects to a
+`{origin}/logout` without parameters (it never redirects to a
 `post_logout_redirect_uri` without a valid hint). That page asks "Sign out?"
 and on confirmation calls:
 
 ```
-POST /{t}/oauth2/logout
+POST /oauth2/logout
 Content-Type: application/json
-Origin: {PUBLIC_URL origin}
+Origin: {origin}
 
 {}
 ```

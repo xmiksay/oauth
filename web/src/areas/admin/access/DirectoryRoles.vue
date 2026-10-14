@@ -2,7 +2,6 @@
 import { ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useAuthStore } from '@/stores/auth'
-import { useTenantStore } from '@/stores/tenant'
 import { directoryRoles } from '@/api/directory'
 import {
   DIRECTORY_ROLES,
@@ -27,7 +26,6 @@ const DESCRIPTIONS: Record<DirectoryRole, string> = {
 }
 
 const { isGlobalAdmin } = storeToRefs(useAuthStore())
-const { slug } = storeToRefs(useTenantStore())
 const filter = ref<DirectoryRole | ''>('')
 const list = usePagedList<DirectoryRoleAssignment>((q) =>
   directoryRoles.list({ ...q, ...(filter.value ? { role: filter.value } : {}) }),
@@ -184,7 +182,7 @@ function unassign(assignmentId: string) {
           >
             <td>
               <RouterLink
-                :to="{ name: 'admin-user', params: { tenant: slug, id: a.user_id } }"
+                :to="{ name: 'admin-user', params: { id: a.user_id } }"
                 class="btn-link"
               >
                 {{ name('user', a.user_id) }}

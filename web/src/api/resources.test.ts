@@ -3,8 +3,8 @@ import { createPinia, setActivePinia } from 'pinia'
 import { FakeManager, fakeUser, mockFetch } from '@/test/helpers'
 
 vi.mock('@/auth/oidc', () => ({
-  createUserManager: (t: string, a: string) => {
-    const m = new FakeManager(t, a)
+  createUserManager: (a: string) => {
+    const m = new FakeManager(a)
     m.stored = fakeUser({ access_token: 'tok' })
     return m
   },
@@ -18,11 +18,12 @@ const { applications, secrets, scopes, appRoles, requiredPermissions } = await i
 const { roleAssignments, consents, auditEvents, settings, tenants } = await import('./access')
 const { me } = await import('./me')
 
-const T = '/api/v1/tenants/con%20toso'
+// The tenant is the host: no tenant segment in API paths.
+const T = '/api/v1'
 
 beforeEach(async () => {
   setActivePinia(createPinia())
-  await useAuthStore().ensureSignedIn('con toso', 'admin', '/')
+  await useAuthStore().ensureSignedIn('admin', '/')
 })
 afterEach(() => vi.unstubAllGlobals())
 

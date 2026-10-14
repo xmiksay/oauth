@@ -9,6 +9,26 @@
 # First admin (after the rollout is ready; idempotent, prints a one-time password
 # once — add --reset-password to issue a new one for an existing admin):
 #   kubectl exec deploy/oauth -- oauth bootstrap --admin-email you@example.com
+# then sign in at https://system.id.example.com/admin.
+#
+# Hosts: tenant `t` lives at `t.<PUBLIC_URL host>`, so DNS needs both the apex
+# and a wildcard record (`id.example.com`, `*.id.example.com`) pointing at the
+# ingress, and TLS a wildcard certificate in the Secret `oauth-wildcard-tls`.
+# Wildcards can only be issued via the ACME DNS-01 challenge; with cert-manager
+# (CRDs installed, a DNS-01 solver for your DNS provider configured on the
+# issuer) e.g.:
+#   apiVersion: cert-manager.io/v1
+#   kind: Certificate
+#   metadata:
+#     name: oauth-wildcard
+#   spec:
+#     secretName: oauth-wildcard-tls
+#     dnsNames: ["id.example.com", "*.id.example.com"]
+#     issuerRef:
+#       kind: ClusterIssuer
+#       name: letsencrypt-dns01
+# A wildcard covers exactly one label, matching the server: `a.b.id.example.com`
+# is never a tenant.
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -135,3 +155,46 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: oauth
+---
+# The ingress must pass the client's `Host` through unchanged (the default for
+# ingress-nginx and most controllers): the server resolves the tenant from it
+# and ignores X-Forwarded-Host. Issuer, redirects and the CSRF origin come from
+# PUBLIC_URL plus the tenant slug in the DB, so a client-chosen Host only
+# reaches a tenant it could visit anyway — but no shared cache / CDN in front
+# may key on the path without the Host. ingress-nginx: keep
+# `use-forwarded-headers` off unless a trusted proxy sits in front of it.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: oauth
+  labels:
+    app.kubernetes.io/name: oauth
+spec:
+  # Must be set on clusters with more than one ingress controller.
+  # ingressClassName: nginx
+  tls:
+    - hosts:
+        - id.example.com
+        - "*.id.example.com"
+      secretName: oauth-wildcard-tls
+  rules:
+    - host: id.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: oauth
+                port:
+                  name: http
+    - host: "*.id.example.com"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: oauth
+                port:
+                  name: http

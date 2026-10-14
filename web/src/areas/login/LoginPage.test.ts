@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createMemoryHistory, createRouter } from 'vue-router'
+import { createPinia } from 'pinia'
 import { ApiError } from '@/api/client'
 import type { TxView } from '@/api/authn'
 
@@ -24,10 +25,13 @@ const passwordView: TxView = {
 async function mountPage() {
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: [{ path: '/:tenant/login', component: LoginPage }],
+    routes: [{ path: '/login', component: LoginPage }],
   })
-  await router.push('/contoso/login?tx=tx-1')
-  const w = mount(LoginPage, { global: { plugins: [router] }, attachTo: document.body })
+  await router.push('/login?tx=tx-1')
+  const w = mount(LoginPage, {
+    global: { plugins: [createPinia(), router] },
+    attachTo: document.body,
+  })
   await flushPromises()
   return w
 }

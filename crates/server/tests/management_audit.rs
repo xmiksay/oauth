@@ -100,7 +100,7 @@ async fn audit_log_pages_newest_first_without_overlap() {
     let token = mint_user_token(&f.db, &f.config, &f.tenant, &ga).await;
     for n in 0..7 {
         let body = json!({ "display_name": format!("Group {n}") });
-        let (st, _) = post(&f, &token, "/api/v1/tenants/contoso/groups", body).await;
+        let (st, _) = post(&f, &token, "/api/v1/groups", body).await;
         assert_eq!(st, StatusCode::CREATED);
     }
     let total = audit_events::Entity::find()
@@ -113,7 +113,7 @@ async fn audit_log_pages_newest_first_without_overlap() {
     let mut seen: Vec<uuid::Uuid> = Vec::new();
     let mut cursor: Option<String> = None;
     loop {
-        let mut path = "/api/v1/tenants/contoso/audit-events?limit=3".to_owned();
+        let mut path = "/api/v1/audit-events?limit=3".to_owned();
         if let Some(c) = &cursor {
             path.push_str(&format!("&cursor={c}"));
         }
