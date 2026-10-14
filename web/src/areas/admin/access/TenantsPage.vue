@@ -11,6 +11,7 @@ import ModalDialog from '@/components/ModalDialog.vue'
 import ErrorAlert from '@/components/ErrorAlert.vue'
 import ConfirmButton from '@/components/ConfirmButton.vue'
 import SecretOnceDialog from '@/components/SecretOnceDialog.vue'
+import { tenantOrigin } from '@/stores/tenant'
 import EditTenantDialog from './EditTenantDialog.vue'
 
 const list = usePagedList<Tenant>(tenants.list)
@@ -39,7 +40,7 @@ async function create() {
   )
   if (!res) return
   creating.value = false
-  createdFor.value = `${res.admin.email} — sign in at ${window.location.origin}/${res.tenant.slug}/admin`
+  createdFor.value = `${res.admin.email} — sign in at ${tenantOrigin(res.tenant.slug)}/admin`
   oneTime.value = [res.one_time_password]
   await list.reload()
 }
@@ -157,11 +158,12 @@ function setDisabled(t: Tenant) {
             id="nt-slug"
             v-model="form.slug"
             class="input font-mono"
-            pattern="[a-z0-9][a-z0-9\-]{1,62}"
+            pattern="[a-z0-9][a-z0-9\-]{0,61}[a-z0-9]"
             required
           >
           <p class="hint">
-            2–63 lowercase letters, digits and dashes; appears in every URL of the tenant.
+            2–63 lowercase letters, digits and dashes (not at the end); the tenant's host is
+            <span class="font-mono">{{ tenantOrigin(form.slug || 'slug') }}</span>.
           </p>
         </div>
         <div>

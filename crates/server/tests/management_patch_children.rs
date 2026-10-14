@@ -16,12 +16,12 @@ use common::{
     flow::Fixture,
     mgmt::{app_admin_token, audited, call, mint_user_token, post},
 };
-use entity::users;
+use entity::{app_roles, users};
 use sea_orm::EntityTrait;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-const APPS: &str = "/api/v1/tenants/contoso/applications";
+const APPS: &str = "/api/v1/applications";
 
 async fn patch(f: &Fixture, token: &str, path: &str, body: Value) -> (StatusCode, Value) {
     call(&f.app, Method::PATCH, path, Some(token), Some(&body)).await
@@ -39,7 +39,7 @@ async fn new_app(f: &Fixture, token: &str) -> (Uuid, String) {
 async fn me_display_name_echo_is_no_change() {
     let f = Fixture::new().await;
     let token = mint_user_token(&f.db, &f.config, &f.tenant, &f.user).await;
-    let me = "/api/v1/tenants/contoso/me";
+    let me = "/api/v1/me";
     let before = users::Entity::find_by_id(f.user.id)
         .one(&f.db)
         .await
@@ -143,4 +143,26 @@ async fn role_echo_is_no_change_even_reordered() {
             .len(),
         1
     );
+}
+
+#[tokio::test]
+async fn role_member_types_are_stored_in_canonical_order() {
+    let f = Fixture::new().await;
+    let token = app_admin_token(&f).await;
+    let (_, app) = new_app(&f, &token).await;
+    let body = json!({
+        "value": "Orders.Both",
+        "display_name": "Both",
+        "allowed_member_types": ["application", "user"],
+    });
+    let (st, role) = post(&f, &token, &format!("{app}/roles"), body).await;
+    assert_eq!(st, StatusCode::CREATED, "{role}");
+    assert_eq!(role["allowed_member_types"], json!(["user", "application"]));
+    let id: Uuid = role["id"].as_str().unwrap().parse().unwrap();
+    let stored = app_roles::Entity::find_by_id(id)
+        .one(&f.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.allowed_member_types, ["user", "application"]);
 }

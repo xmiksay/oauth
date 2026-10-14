@@ -50,7 +50,7 @@ export interface FakeUser {
   state: unknown
 }
 
-/** Stand-in for oidc-client-ts' UserManager; one per (tenant, area). */
+/** Stand-in for oidc-client-ts' UserManager; one per area. */
 export class FakeManager {
   static instances: FakeManager[] = []
   stored: FakeUser | null = null
@@ -62,10 +62,7 @@ export class FakeManager {
     this.stored = null
   })
 
-  constructor(
-    readonly tenant: string,
-    readonly area: string,
-  ) {
+  constructor(readonly area: string) {
     FakeManager.instances.push(this)
   }
 

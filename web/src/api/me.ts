@@ -1,4 +1,4 @@
-// The signed-in user's self-service (`/api/v1/tenants/{t}/me/…`).
+// The signed-in user's self-service (`/api/v1/me/…` on the tenant's host).
 import { p, t } from './management'
 import type { Items, MyConsent, RecoveryCodes, Session, TotpEnrollment, UserDetail } from './types'
 

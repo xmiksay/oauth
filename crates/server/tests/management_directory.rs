@@ -22,10 +22,10 @@ use entity::{
 use sea_orm::{ConnectionTrait, EntityTrait};
 use serde_json::json;
 
-const USERS: &str = "/api/v1/tenants/contoso/users";
-const ROLES: &str = "/api/v1/tenants/contoso/directory-roles";
-const GROUPS: &str = "/api/v1/tenants/contoso/groups";
-const AUDIT: &str = "/api/v1/tenants/contoso/audit-events";
+const USERS: &str = "/api/v1/users";
+const ROLES: &str = "/api/v1/directory-roles";
+const GROUPS: &str = "/api/v1/groups";
+const AUDIT: &str = "/api/v1/audit-events";
 
 #[tokio::test]
 async fn last_global_admin_cannot_be_removed() {

@@ -141,7 +141,6 @@ pub async fn proceed(
 /// burnt transaction behind.
 async fn finish(ctx: &Ctx<'_>, tx: LoadedTx, from: LoginStage) -> AuthnResult<Outcome> {
     let config = &ctx.state.config;
-    let slug = &ctx.tenant.slug;
     let txn = ctx.state.db.begin().await?;
     // Claim the transaction first: a concurrent duplicate gets no second code.
     if !tx::take(&txn, tx.row.id, from).await? {
@@ -178,7 +177,7 @@ async fn finish(ctx: &Ctx<'_>, tx: LoadedTx, from: LoginStage) -> AuthnResult<Ou
                 },
             )
             .await?;
-            cookies.push(cookie::set(config, Kind::Session, slug, &token)?);
+            cookies.push(cookie::set(config, Kind::Session, &token)?);
             let details = json!({
                 "session_id": created.id,
                 "application_id": tx.row.application_id,
@@ -218,7 +217,7 @@ pub async fn consent(
     tenant: Tenant,
     ip: ClientIp,
     headers: HeaderMap,
-    Path((_, tx_id)): Path<(String, String)>,
+    Path(tx_id): Path<String>,
     JsonBody(body): JsonBody<ConsentBody>,
 ) -> AuthnResult<Outcome> {
     let ctx = Ctx::new(&state, &tenant, ip, &headers);

@@ -123,7 +123,7 @@ async fn insert_rows(
     for key in [&keys.rs256, &keys.es256] {
         keys::insert(conn, &config.master_key, tenant.id, key, KeyStatus::Active).await?;
     }
-    builtin_apps::provision(conn, &config.public_url, &tenant).await?;
+    builtin_apps::provision(conn, config, &tenant).await?;
     tracing::info!(tenant = %tenant.slug, is_system, "tenant created");
     Ok(tenant)
 }
@@ -137,6 +137,23 @@ pub async fn find_tenant_by_slug(
         .one(conn)
         .await
         .context("looking up tenant")
+}
+
+/// Slugs of enabled regular tenants that today's rules reject (created
+/// before the slug became a DNS label: `www`, `ab-`, `xn--…`). They would
+/// still be served on their host, so startup refuses to run with them.
+pub async fn invalid_enabled_slugs(conn: &impl ConnectionTrait) -> anyhow::Result<Vec<String>> {
+    let rows = tenants::Entity::find()
+        .filter(tenants::Column::IsSystem.eq(false))
+        .filter(tenants::Column::Disabled.eq(false))
+        .all(conn)
+        .await
+        .context("loading tenants")?;
+    Ok(rows
+        .into_iter()
+        .map(|t| t.slug)
+        .filter(|s| slug::validate(s).is_err())
+        .collect())
 }
 
 pub async fn find_system_tenant(

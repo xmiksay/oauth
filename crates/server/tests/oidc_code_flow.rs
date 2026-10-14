@@ -16,7 +16,7 @@ use axum::{
     http::{Request, StatusCode, header},
 };
 use common::{
-    PUBLIC_URL,
+    ORIGIN,
     browser::{authorize_url, current_totp, query_of, send},
     flow::{Fixture, SPA_CB, T, WEB_CB},
 };
@@ -25,11 +25,11 @@ use serde_json::{Value, json};
 #[tokio::test]
 async fn discovery_and_jwks() {
     let f = Fixture::new().await;
-    let get = |path: String| send(&f.app, Request::get(path).body(Body::empty()).unwrap());
-    let (status, _, body) = get(format!("/{T}/.well-known/openid-configuration")).await;
+    let get = |path: &str| send(&f.app, Request::get(path).body(Body::empty()).unwrap());
+    let (status, _, body) = get("/.well-known/openid-configuration").await;
     assert_eq!(status, StatusCode::OK);
     let doc: Value = serde_json::from_str(&body).unwrap();
-    let issuer = format!("{PUBLIC_URL}/{T}");
+    let issuer = ORIGIN;
     assert_eq!(doc["issuer"], issuer);
     assert_eq!(
         doc["authorization_endpoint"],
@@ -43,7 +43,7 @@ async fn discovery_and_jwks() {
         json!(["RS256", "ES256"])
     );
 
-    let (status, headers, body) = get(format!("/{T}/discovery/keys")).await;
+    let (status, headers, body) = get("/discovery/keys").await;
     assert_eq!(status, StatusCode::OK);
     assert!(
         headers[header::CACHE_CONTROL]
@@ -54,11 +54,11 @@ async fn discovery_and_jwks() {
     let jwks: Value = serde_json::from_str(&body).unwrap();
     assert_eq!(jwks["keys"].as_array().unwrap().len(), 2);
 
-    for path in [
-        "/nope/.well-known/openid-configuration",
-        "/Bad_Slug/discovery/keys",
+    for url in [
+        common::at("nope", "/.well-known/openid-configuration"),
+        common::at("bad_slug", "/discovery/keys"),
     ] {
-        assert_eq!(get(path.into()).await.0, StatusCode::NOT_FOUND, "{path}");
+        assert_eq!(get(&url).await.0, StatusCode::NOT_FOUND, "{url}");
     }
 }
 
@@ -72,7 +72,7 @@ async fn confidential_client_with_totp_and_consent() {
     let tx = browser.authorize(&url).await.expect("login page");
 
     // The SPA's view of the transaction.
-    let (status, _, body) = browser.get(&format!("/{T}/api/authn/tx/{tx}")).await;
+    let (status, _, body) = browser.get(&format!("/api/authn/tx/{tx}")).await;
     assert_eq!(status, StatusCode::OK);
     let view: Value = serde_json::from_str(&body).unwrap();
     assert_eq!(view["step"], "password");
@@ -122,11 +122,11 @@ async fn confidential_client_with_totp_and_consent() {
     );
     let q = query_of(redirect);
     assert_eq!(q["state"], "st-1");
-    assert_eq!(q["iss"], format!("{PUBLIC_URL}/{T}"));
+    assert_eq!(q["iss"], ORIGIN);
     assert!(browser.has_session());
     // The transaction is gone once used.
     assert_eq!(
-        browser.get(&format!("/{T}/api/authn/tx/{tx}")).await.0,
+        browser.get(&format!("/api/authn/tx/{tx}")).await.0,
         StatusCode::NOT_FOUND
     );
 
@@ -187,7 +187,7 @@ async fn confidential_client_with_totp_and_consent() {
 
     // A resource token is not a userinfo token.
     let userinfo = |token: String| {
-        let req = Request::get(format!("/{T}/oauth2/userinfo"))
+        let req = Request::get("/oauth2/userinfo")
             .header(header::AUTHORIZATION, format!("Bearer {token}"))
             .body(Body::empty())
             .unwrap();
@@ -208,7 +208,7 @@ async fn confidential_client_with_totp_and_consent() {
         "no offline_access requested"
     );
     let oidc_access = tokens["access_token"].as_str().unwrap().to_owned();
-    f.verify_jwt(&oidc_access, &format!("{PUBLIC_URL}/{T}/oauth2/userinfo"))
+    f.verify_jwt(&oidc_access, &format!("{ORIGIN}/oauth2/userinfo"))
         .await;
     let (status, headers, body) = userinfo(oidc_access).await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -237,9 +237,7 @@ async fn public_client_with_loopback_redirect() {
         ("client_id", "spa-app"),
         ("client_secret", "x"),
     ];
-    let (status, _, body) = f
-        .post_form(&format!("/{T}/oauth2/token"), &form, None)
-        .await;
+    let (status, _, body) = f.post_form("/oauth2/token", &form, None).await;
     assert_eq!(
         (status, body["error"].as_str()),
         (StatusCode::UNAUTHORIZED, Some("invalid_client"))
@@ -266,7 +264,7 @@ async fn authorize_rejects_bad_requests() {
         authorize_url("nobody", WEB_CB, "openid", &[]),
         authorize_url("web-app", "https://evil.example/cb", "openid", &[]),
         authorize_url("web-app", "http://127.0.0.1:8080/other", "openid", &[]),
-        format!("/{T}/oauth2/authorize?client_id=web-app&client_id=spa-app"),
+        "/oauth2/authorize?client_id=web-app&client_id=spa-app".to_owned(),
     ] {
         let (status, location, body) = browser.get(&url).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{url}: {body}");

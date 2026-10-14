@@ -1,4 +1,4 @@
-//! `/api/v1/tenants/{t}/users` CRUD.
+//! `/api/v1/users` CRUD.
 
 use axum::{
     extract::State,
@@ -82,7 +82,7 @@ pub async fn list(
 pub async fn get(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, id)): Path<(String, Uuid)>,
+    Path(id): Path<Uuid>,
 ) -> AppResult<axum::Json<Value>> {
     caller.require(Area::Directory, Access::Read)?;
     let conn = &state.db;
@@ -188,7 +188,7 @@ pub struct UpdateUser {
 pub async fn update(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, id)): Path<(String, Uuid)>,
+    Path(id): Path<Uuid>,
     Json(body): Json<UpdateUser>,
 ) -> AppResult<axum::Json<Value>> {
     caller.require(Area::Directory, Access::Write)?;
@@ -248,7 +248,7 @@ pub async fn update(
 pub async fn remove(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, id)): Path<(String, Uuid)>,
+    Path(id): Path<Uuid>,
 ) -> AppResult<StatusCode> {
     caller.require(Area::Directory, Access::Write)?;
     let tenant_id = caller.tenant_id();

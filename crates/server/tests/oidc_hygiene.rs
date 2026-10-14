@@ -27,7 +27,7 @@ use serde_json::{Value, json};
 async fn introspect(f: &Fixture, token: &str, client: &str, secret: &str) -> Value {
     let (status, _, body) = f
         .post_form(
-            "/contoso/oauth2/introspect",
+            "/oauth2/introspect",
             &[("token", token)],
             Some((client, secret)),
         )

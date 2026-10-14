@@ -79,9 +79,9 @@ pub async fn from_cookie(
     tenant: &tenants::Model,
     headers: &HeaderMap,
 ) -> anyhow::Result<Option<sessions::Model>> {
-    let (tenant_id, tenant_slug) = (tenant.id, tenant.slug.as_str());
+    let tenant_id = tenant.id;
     let now = chrono::Utc::now().fixed_offset();
-    for token in cookie::read(headers, config, Kind::Session, tenant_slug) {
+    for token in cookie::read(headers, config, Kind::Session) {
         let found = sessions::Entity::find()
             .filter(sessions::Column::TenantId.eq(tenant_id))
             .filter(sessions::Column::TokenHash.eq(secret::hash(token)))

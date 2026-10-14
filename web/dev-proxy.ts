@@ -1,13 +1,10 @@
-/** Same-origin backend routes, matched by Vite's dev proxy (keys starting with `^` are regexes). */
-export const API_PROXY_PATTERN = '^/api(/|$)'
-
-// The first segment is the tenant slug, but Vite serves its own modules under `/src/…`,
-// `/node_modules/…` and `/@vite|@id|@fs/…` — e.g. `/src/api/client.ts` must not be proxied.
-export const TENANT_PROXY_PATTERN =
-  '^/(?!(?:src|node_modules|@[^/]*)/)[^/]+/(oauth2|\\.well-known|discovery|api)(/|$)'
-
-export const PROXY_PATTERNS = [API_PROXY_PATTERN, TENANT_PROXY_PATTERN]
+/**
+ * Backend routes the Vite dev server proxies (a key starting with `^` is a regex). The tenant is
+ * the host (`acme.localhost:5173`), so these are root paths on every host; Vite's own modules
+ * (`/src`, `/node_modules`, `/@vite`…) never start with one of them.
+ */
+export const BACKEND_PROXY_PATTERN = '^/(api|oauth2|\\.well-known|discovery)(/|$)'
 
 export function isProxied(path: string): boolean {
-  return PROXY_PATTERNS.some((p) => new RegExp(p).test(path))
+  return new RegExp(BACKEND_PROXY_PATTERN).test(path)
 }

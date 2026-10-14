@@ -21,8 +21,8 @@ use entity::audit_events;
 use sea_orm::EntityTrait;
 use serde_json::{Value, json};
 
-const APPS: &str = "/api/v1/tenants/contoso/applications";
-const CONSENTS: &str = "/api/v1/tenants/contoso/consents";
+const APPS: &str = "/api/v1/applications";
+const CONSENTS: &str = "/api/v1/consents";
 
 #[tokio::test]
 async fn app_lifecycle_through_consent_and_tokens() {
@@ -118,7 +118,7 @@ async fn app_lifecycle_through_consent_and_tokens() {
         ("scope", "api://billing/.default"),
     ];
     let basic = Some(("billing-web", secret_value.as_str()));
-    let (st, _, body) = f.post_form("/contoso/oauth2/token", &creds, basic).await;
+    let (st, _, body) = f.post_form("/oauth2/token", &creds, basic).await;
     assert_eq!(st, StatusCode::OK, "{body}");
     let claims = f
         .verify_jwt(body["access_token"].as_str().unwrap(), "api://billing")
@@ -150,7 +150,7 @@ async fn app_lifecycle_through_consent_and_tokens() {
     assert_eq!(granted["role_assignments"].as_array().unwrap().len(), 1);
 
     // Client credentials now carry the role; the user flow passes.
-    let (_, _, body) = f.post_form("/contoso/oauth2/token", &creds, basic).await;
+    let (_, _, body) = f.post_form("/oauth2/token", &creds, basic).await;
     let claims = f
         .verify_jwt(body["access_token"].as_str().unwrap(), "api://billing")
         .await;
@@ -172,7 +172,7 @@ async fn app_lifecycle_through_consent_and_tokens() {
     let (st, _) = call(&f.app, Method::DELETE, &grant_path, Some(&token), None).await;
     assert_eq!(st, StatusCode::NO_CONTENT);
     let form = [("grant_type", "refresh_token"), ("refresh_token", refresh)];
-    let (st, _, body) = f.post_form("/contoso/oauth2/token", &form, basic).await;
+    let (st, _, body) = f.post_form("/oauth2/token", &form, basic).await;
     assert_eq!(
         (st, body["error"].as_str()),
         (StatusCode::BAD_REQUEST, Some("invalid_grant"))
@@ -204,6 +204,6 @@ async fn app_lifecycle_through_consent_and_tokens() {
     // Deleting the client removes its secrets with it.
     let (st, _) = call(&f.app, Method::DELETE, &client_path, Some(&token), None).await;
     assert_eq!(st, StatusCode::NO_CONTENT);
-    let (st, _, _) = f.post_form("/contoso/oauth2/token", &creds, basic).await;
+    let (st, _, _) = f.post_form("/oauth2/token", &creds, basic).await;
     assert_eq!(st, StatusCode::UNAUTHORIZED);
 }

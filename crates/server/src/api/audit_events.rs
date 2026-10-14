@@ -1,4 +1,4 @@
-//! `GET /api/v1/tenants/{t}/audit-events` — newest first, filterable.
+//! `GET /api/v1/audit-events` — newest first, filterable.
 
 use axum::extract::State;
 use chrono::DateTime;

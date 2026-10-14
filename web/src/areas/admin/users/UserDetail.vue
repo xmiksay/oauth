@@ -67,7 +67,7 @@ async function resetPassword() {
 
 async function remove() {
   await users.remove(id)
-  await router.replace({ name: 'admin-users', params: { tenant: route.params.tenant } })
+  await router.replace({ name: 'admin-users' })
 }
 
 async function resetMfa() {
@@ -89,7 +89,7 @@ async function revokeSessions() {
     >
       <template #breadcrumb>
         <RouterLink
-          :to="{ name: 'admin-users', params: { tenant: route.params.tenant } }"
+          :to="{ name: 'admin-users' }"
           class="btn-link"
         >
           Users

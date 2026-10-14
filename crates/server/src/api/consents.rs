@@ -1,4 +1,4 @@
-//! `/api/v1/tenants/{t}/consents` — consent grants. `POST` is Entra's
+//! `/api/v1/consents` — consent grants. `POST` is Entra's
 //! "Grant admin consent": a tenant-wide delegated grant (`user_id: null`)
 //! for the requested scopes and, for application permissions, app role
 //! assignments to the client app. Only permissions the client declared as
@@ -219,7 +219,7 @@ async fn assign_app_role(
 pub async fn revoke(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, id)): Path<(String, Uuid)>,
+    Path(id): Path<Uuid>,
 ) -> AppResult<StatusCode> {
     caller.require(Area::Applications, Access::Write)?;
     let tenant_id = caller.tenant_id();

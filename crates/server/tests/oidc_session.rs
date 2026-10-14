@@ -13,7 +13,7 @@ mod common;
 use axum::http::StatusCode;
 use common::{
     browser::{authorize_url, query_of},
-    flow::{Fixture, T, WEB_CB},
+    flow::{Fixture, WEB_CB},
 };
 use entity::consent_grants;
 use sea_orm::{ActiveValue::Set, EntityTrait};
@@ -67,12 +67,12 @@ async fn prompt_none_login_and_max_age() {
         .authorize(&url(&[("prompt", "consent")]))
         .await
         .unwrap();
-    let (_, _, body) = browser.get(&format!("/{T}/api/authn/tx/{tx}")).await;
+    let (_, _, body) = browser.get(&format!("/api/authn/tx/{tx}")).await;
     assert!(body.contains(r#""step":"consent""#), "{body}");
     // prompt=login and max_age=0 force a fresh sign-in despite the session.
     for extra in [("prompt", "login"), ("max_age", "0")] {
         let tx = browser.authorize(&url(&[extra])).await.unwrap();
-        let (_, _, body) = browser.get(&format!("/{T}/api/authn/tx/{tx}")).await;
+        let (_, _, body) = browser.get(&format!("/api/authn/tx/{tx}")).await;
         assert!(body.contains(r#""step":"password""#), "{extra:?}: {body}");
     }
     let redirect = browser
@@ -167,7 +167,7 @@ async fn admin_consent_required_blocks_until_granted() {
 async fn builtin_spa_is_pre_consented() {
     let f = Fixture::new().await;
     let mut browser = f.browser();
-    let cb = format!("{}/{T}/admin/callback", common::PUBLIC_URL);
+    let cb = format!("{}/admin/callback", common::ORIGIN);
     let url = authorize_url(
         "admin-portal",
         &cb,

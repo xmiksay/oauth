@@ -21,7 +21,7 @@ use oauth_server::authn::totp;
 use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
 use serde_json::{Value, json};
 
-const ME: &str = "/api/v1/tenants/contoso/me";
+const ME: &str = "/api/v1/me";
 
 fn code_for(secret: &[u8]) -> String {
     let now = u64::try_from(chrono::Utc::now().timestamp()).unwrap();

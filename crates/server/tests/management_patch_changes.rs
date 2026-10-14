@@ -23,7 +23,7 @@ use oauth_server::{bootstrap, directory};
 use serde_json::json;
 use uuid::Uuid;
 
-const APPS: &str = "/api/v1/tenants/contoso/applications";
+const APPS: &str = "/api/v1/applications";
 
 async fn global_admin(f: &Fixture) -> String {
     let ga = user_with_roles(&f.db, f.tenant.id, "ga@example.com", &[GlobalAdmin]).await;
@@ -91,7 +91,7 @@ async fn application_admin_renames_privileged_app_resending_its_redirect_uris() 
         .clone();
     let assign =
         json!({ "app_role_id": rw, "principal_type": "application", "principal_id": svc_id });
-    let (st, _) = post(&f, &ga, "/api/v1/tenants/contoso/role-assignments", assign).await;
+    let (st, _) = post(&f, &ga, "/api/v1/role-assignments", assign).await;
     assert_eq!(st, StatusCode::CREATED);
 
     let edit = json!({
@@ -134,7 +134,7 @@ async fn unchanged_tenant_values_are_not_audited() {
         "display_name": f.tenant.display_name,
         "audit_retention_days": f.tenant.audit_retention_days,
     });
-    let path = "/api/v1/tenants/contoso";
+    let path = &common::at("system", "/api/v1/tenants/contoso");
     let (st, body) = call(&f.app, Method::PATCH, path, Some(&root), Some(&echo)).await;
     assert_eq!(st, StatusCode::OK, "{body}");
     assert!(
@@ -149,7 +149,7 @@ async fn unchanged_tenant_values_are_not_audited() {
     let (st, _) = call(
         &f.app,
         Method::PATCH,
-        "/api/v1/tenants/contoso/settings",
+        "/api/v1/settings",
         Some(&ga),
         Some(&settings),
     )

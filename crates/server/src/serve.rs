@@ -90,7 +90,7 @@ pub async fn run_with(
     });
 
     let migration = tokio::select! {
-        result = db::migrate(&state.db) => Some(result),
+        result = db::migrate_and_reconcile(&state.db, &state.config) => Some(result),
         // Dropping the migration future rolls its transaction back.
         () = shutdown.cancelled() => None,
     };

@@ -1,10 +1,11 @@
-//! Interactive sign-in: the login JSON API the SPA (`/{t}/login?tx=…`)
+//! Interactive sign-in: the login JSON API the SPA (`/login?tx=…`)
 //! drives, sessions, second factors and rate limiting. Contract documented
 //! in `docs/api/authn.md`.
 //!
 //! CSRF model: every non-GET call must be `Content-Type: application/json`
 //! (not sendable cross-site without a CORS preflight, which we never grant)
-//! AND carry an `Origin` equal to `PUBLIC_URL`'s origin.
+//! AND carry an `Origin` equal to the tenant's own origin (so another
+//! tenant's pages, being a different origin, can't drive this one).
 
 mod complete;
 pub mod cookie;
@@ -31,13 +32,13 @@ use serde_json::{Value, json};
 
 use crate::{
     app::AppState, directory::DirectoryError, error::AppError, headers::content_type_is,
-    oidc::error::no_store,
+    oidc::error::no_store, tenancy::Tenant,
 };
 
 pub use complete::{evaluate_consent, force_consent};
 
 pub fn router(state: AppState) -> Router<AppState> {
-    const TX: &str = "/{tenant}/api/authn/tx/{tx}";
+    const TX: &str = "/api/authn/tx/{tx}";
     Router::new()
         .route(TX, get(tx::get))
         .route(&format!("{TX}/password"), post(password::submit))
@@ -49,7 +50,7 @@ pub fn router(state: AppState) -> Router<AppState> {
 }
 
 /// CSRF guard for state-changing browser calls (also used by
-/// `POST /{t}/oauth2/logout`).
+/// `POST /oauth2/logout`). Runs behind the host gate, so the tenant is known.
 pub(crate) async fn csrf(State(state): State<AppState>, req: Request, next: Next) -> Response {
     if matches!(*req.method(), Method::GET | Method::HEAD) {
         return next.run(req).await;
@@ -57,10 +58,14 @@ pub(crate) async fn csrf(State(state): State<AppState>, req: Request, next: Next
     if !content_type_is(req.headers(), "application/json") {
         return AuthnError::Invalid("Content-Type must be application/json".into()).into_response();
     }
+    let Some(tenant) = req.extensions().get::<Tenant>() else {
+        return AuthnError::NotFound.into_response();
+    };
+    let expected = state.config.tenant_origin(&tenant.slug);
     let origin_ok = req
         .headers()
         .get(header::ORIGIN)
-        .is_some_and(|o| o.as_bytes() == state.config.public_origin().as_bytes());
+        .is_some_and(|o| o.as_bytes() == expected.as_bytes());
     if !origin_ok {
         return AuthnError::Csrf.into_response();
     }

@@ -26,15 +26,17 @@ async fn requests_are_counted_with_bounded_labels() {
     let app = app::router(
         AppState::new(
             DatabaseConnection::default(),
-            common::test_config("postgres://unused"),
+            common::test_config("postgres://unused", common::PUBLIC_URL),
             true,
         ),
         common::no_web_dist(),
     );
     common::get(&app, "/healthz").await;
     common::get(&app, "/healthz").await;
-    common::get(&app, "/acme/admin/users").await;
-    common::get(&app, "/no/such/file.js").await;
+    // On the apex (no tenant lookup, so no database needed): both 404.
+    let apex = common::PUBLIC_URL;
+    common::get(&app, &format!("{apex}/admin/users")).await;
+    common::get(&app, &format!("{apex}/no/such/file.js")).await;
     let custom = Request::builder()
         .method("XYZZY1")
         .uri("/healthz")
@@ -64,9 +66,9 @@ async fn requests_are_counted_with_bounded_labels() {
         body.contains(r#"http_requests_total{method="GET",path="/healthz",status="200"} 2"#),
         "{body}"
     );
-    // Tenant slug must not become a label value.
-    assert!(body.contains(r#"path="/{tenant}/admin/{*rest}""#), "{body}");
-    assert!(!body.contains("acme"), "{body}");
+    // The route template, never the raw path.
+    assert!(body.contains(r#"path="/admin/{*rest}""#), "{body}");
+    assert!(!body.contains("users"), "{body}");
     // Fallback traffic is recorded under one bounded path value.
     assert!(
         body.contains(r#"http_requests_total{method="GET",path="unmatched",status="404"} 1"#),

@@ -21,7 +21,7 @@ use entity::{audit_events, enums::Outcome};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 use serde_json::{Value, json};
 
-const TOKEN: &str = "/contoso/oauth2/token";
+const TOKEN: &str = "/oauth2/token";
 
 async fn refresh(f: &Fixture, token: &str, scope: Option<&str>) -> (StatusCode, Value) {
     let mut form = vec![("grant_type", "refresh_token"), ("refresh_token", token)];
@@ -147,9 +147,7 @@ async fn code_replay_is_rejected_and_revokes_issued_tokens() {
     );
     let introspect = [("token", tokens["access_token"].as_str().unwrap())];
     let basic = Some(("ledger", f.ledger_secret.as_str()));
-    let (_, _, body) = f
-        .post_form("/contoso/oauth2/introspect", &introspect, basic)
-        .await;
+    let (_, _, body) = f.post_form("/oauth2/introspect", &introspect, basic).await;
     assert_eq!(
         body,
         json!({ "active": false }),
@@ -174,7 +172,7 @@ async fn opaque_tokens_introspection_and_revocation() {
         async move {
             let (status, headers, body) = f
                 .post_form(
-                    "/contoso/oauth2/introspect",
+                    "/oauth2/introspect",
                     &[("token", &token)],
                     Some((client, &secret)),
                 )
@@ -201,7 +199,7 @@ async fn opaque_tokens_introspection_and_revocation() {
     // Public clients can't introspect.
     let (status, _, _) = f
         .post_form(
-            "/contoso/oauth2/introspect",
+            "/oauth2/introspect",
             &[("token", access), ("client_id", "spa-app")],
             None,
         )
@@ -223,7 +221,7 @@ async fn opaque_tokens_introspection_and_revocation() {
                     None,
                 ),
             };
-            f.post_form("/contoso/oauth2/revoke", &form, basic).await.0
+            f.post_form("/oauth2/revoke", &form, basic).await.0
         }
     };
     assert_eq!(revoke(access, None).await, StatusCode::OK);

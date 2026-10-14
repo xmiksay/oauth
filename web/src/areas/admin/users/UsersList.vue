@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useTenantStore } from '@/stores/tenant'
 import { useAuthStore } from '@/stores/auth'
 import { users } from '@/api/directory'
 import type { User } from '@/api/types'
@@ -12,7 +11,6 @@ import ListShell from '@/components/ListShell.vue'
 import SecretOnceDialog from '@/components/SecretOnceDialog.vue'
 import CreateUserDialog from './CreateUserDialog.vue'
 
-const { slug } = storeToRefs(useTenantStore())
 const { canWriteUsers } = storeToRefs(useAuthStore())
 const list = usePagedList<User>(users.list)
 const creating = ref(false)
@@ -76,7 +74,7 @@ function created(password: string | null) {
           >
             <td>
               <RouterLink
-                :to="{ name: 'admin-user', params: { tenant: slug, id: u.id } }"
+                :to="{ name: 'admin-user', params: { id: u.id } }"
                 class="btn-link"
               >
                 {{ u.display_name || '(no name)' }}

@@ -42,7 +42,7 @@ async fn bootstrap_is_idempotent_and_resets_only_on_request() {
     // Unmigrated database: bootstrap migrates by itself.
     let pg = common::start_postgres().await;
     let conn = db::connect(&pg.url).await.unwrap();
-    let config = common::test_config(&pg.url);
+    let config = common::test_config(&pg.url, common::PUBLIC_URL);
 
     let first = bootstrap::run(&conn, &config, &opts(false)).await.unwrap();
     assert!(first.tenant_created);
@@ -108,7 +108,7 @@ async fn bootstrap_is_idempotent_and_resets_only_on_request() {
 async fn concurrent_bootstraps_create_one_admin() {
     let pg = common::start_postgres().await;
     let conn = db::connect(&pg.url).await.unwrap();
-    let config = common::test_config(&pg.url);
+    let config = common::test_config(&pg.url, common::PUBLIC_URL);
 
     let run = || {
         let (conn, config) = (conn.clone(), config.clone());

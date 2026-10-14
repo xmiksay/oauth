@@ -1,4 +1,4 @@
-//! `GET|POST /{t}/oauth2/userinfo` (OIDC Core §5.3). Accepts access tokens
+//! `GET|POST /oauth2/userinfo` (OIDC Core §5.3). Accepts access tokens
 //! whose audience is this endpoint (i.e. requested with OIDC scopes only, as
 //! Entra's userinfo requires a Graph token) and whose `scp` has `openid`.
 //! The token is read from the `Authorization` header only.

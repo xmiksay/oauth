@@ -12,7 +12,7 @@ use std::{collections::HashMap, path::Path};
 use axum::{
     Router,
     body::{Body, to_bytes},
-    http::{Request, StatusCode},
+    http::{HeaderValue, Request, StatusCode, header},
 };
 use oauth_server::{config::Config, db::MIGRATION_LOCK_KEY};
 use sea_orm::{ConnectionTrait, DatabaseConnection, Statement};
@@ -46,11 +46,9 @@ pub async fn start_postgres() -> TestDb {
 }
 
 pub async fn get(app: &Router, uri: &str) -> (StatusCode, String) {
-    let resp = app
-        .clone()
-        .oneshot(Request::get(uri).body(Body::empty()).expect("request"))
-        .await
-        .expect("infallible router");
+    let mut req = Request::get(uri).body(Body::empty()).expect("request");
+    default_host(&mut req);
+    let resp = app.clone().oneshot(req).await.expect("infallible router");
     let status = resp.status();
     let bytes = to_bytes(resp.into_body(), usize::MAX).await.expect("body");
     (status, String::from_utf8_lossy(&bytes).into_owned())
@@ -72,19 +70,41 @@ pub async fn advisory(conn: &impl ConnectionTrait, func: &str) {
 }
 
 pub const PUBLIC_URL: &str = "https://id.example.test";
+/// Host and origin (= issuer) of the fixture tenant `contoso`.
+pub const HOST: &str = "contoso.id.example.test";
+pub const ORIGIN: &str = "https://contoso.id.example.test";
 
-/// Config pointing at `db_url` with a fixed master key and [`PUBLIC_URL`].
-pub fn test_config(db_url: &str) -> Config {
+/// Absolute URL of `path` on tenant `slug`'s host.
+pub fn at(slug: &str, path: &str) -> String {
+    format!("https://{slug}.id.example.test{path}")
+}
+
+/// A request with neither an absolute URI nor a `Host` goes to [`HOST`],
+/// as a browser on the fixture tenant's pages would send it.
+pub fn default_host(req: &mut Request<Body>) {
+    if req.uri().authority().is_none() && !req.headers().contains_key(header::HOST) {
+        req.headers_mut()
+            .insert(header::HOST, HeaderValue::from_static(HOST));
+    }
+}
+
+/// Config pointing at `db_url` with a fixed master key and `public_url`
+/// (normally [`PUBLIC_URL`]); `Err` when the config is rejected.
+pub fn try_config(db_url: &str, public_url: &str) -> anyhow::Result<Config> {
     let env = HashMap::from([
         ("DATABASE_URL", db_url.to_owned()),
-        ("PUBLIC_URL", PUBLIC_URL.to_owned()),
+        ("PUBLIC_URL", public_url.to_owned()),
         // 32 bytes of 0x2a.
         (
             "OAUTH_MASTER_KEY",
             "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio=".to_owned(),
         ),
     ]);
-    Config::from_lookup(|k| env.get(k).cloned()).expect("test config")
+    Config::from_lookup(|k| env.get(k).cloned())
+}
+
+pub fn test_config(db_url: &str, public_url: &str) -> Config {
+    try_config(db_url, public_url).expect("test config")
 }
 
 /// Fresh Postgres, migrated, plus a config pointing at it.
@@ -92,6 +112,6 @@ pub async fn migrated_db() -> (TestDb, DatabaseConnection, Config) {
     let pg = start_postgres().await;
     let conn = oauth_server::db::connect(&pg.url).await.expect("connect");
     oauth_server::db::migrate(&conn).await.expect("migrate");
-    let config = test_config(&pg.url);
+    let config = test_config(&pg.url, PUBLIC_URL);
     (pg, conn, config)
 }

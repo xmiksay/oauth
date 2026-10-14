@@ -2,7 +2,6 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
-import { useTenantStore } from '@/stores/tenant'
 import { useAuthStore } from '@/stores/auth'
 import { applications } from '@/api/applications'
 import type { Application, ClientType } from '@/api/types'
@@ -15,7 +14,6 @@ import ModalDialog from '@/components/ModalDialog.vue'
 import ErrorAlert from '@/components/ErrorAlert.vue'
 
 const router = useRouter()
-const { slug } = storeToRefs(useTenantStore())
 const { canWriteApps } = storeToRefs(useAuthStore())
 const list = usePagedList<Application>(applications.list)
 
@@ -42,7 +40,7 @@ async function create() {
       ...(uri ? { redirect_uris: [uri] } : {}),
     }),
   )
-  if (app) await router.push({ name: 'admin-app', params: { tenant: slug.value, id: app.id } })
+  if (app) await router.push({ name: 'admin-app', params: { id: app.id } })
 }
 </script>
 
@@ -100,7 +98,7 @@ async function create() {
           >
             <td>
               <RouterLink
-                :to="{ name: 'admin-app', params: { tenant: slug, id: a.id } }"
+                :to="{ name: 'admin-app', params: { id: a.id } }"
                 class="btn-link"
               >
                 {{ a.display_name }}

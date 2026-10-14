@@ -2,7 +2,6 @@
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
-import { useTenantStore } from '@/stores/tenant'
 import { useAuthStore } from '@/stores/auth'
 import { groups } from '@/api/directory'
 import type { Group } from '@/api/types'
@@ -14,7 +13,6 @@ import ModalDialog from '@/components/ModalDialog.vue'
 import ErrorAlert from '@/components/ErrorAlert.vue'
 
 const router = useRouter()
-const { slug } = storeToRefs(useTenantStore())
 const { canWriteUsers } = storeToRefs(useAuthStore())
 const list = usePagedList<Group>(groups.list)
 
@@ -37,7 +35,7 @@ async function create() {
       ...(description.value.trim() ? { description: description.value.trim() } : {}),
     }),
   )
-  if (g) await router.push({ name: 'admin-group', params: { tenant: slug.value, id: g.id } })
+  if (g) await router.push({ name: 'admin-group', params: { id: g.id } })
 }
 </script>
 
@@ -83,7 +81,7 @@ async function create() {
           >
             <td>
               <RouterLink
-                :to="{ name: 'admin-group', params: { tenant: slug, id: g.id } }"
+                :to="{ name: 'admin-group', params: { id: g.id } }"
                 class="btn-link"
               >
                 {{ g.display_name }}

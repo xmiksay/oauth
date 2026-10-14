@@ -15,7 +15,6 @@ import PrincipalPicker, { type Picked } from '@/components/PrincipalPicker.vue'
 
 const route = useRoute()
 const router = useRouter()
-const tenant = route.params.tenant
 const id = String(route.params.id)
 const { canWriteUsers } = storeToRefs(useAuthStore())
 
@@ -47,7 +46,7 @@ async function addMember(p: Picked) {
 
 async function remove() {
   await groups.remove(id)
-  await router.replace({ name: 'admin-groups', params: { tenant } })
+  await router.replace({ name: 'admin-groups' })
 }
 
 function removeMember(userId: string) {
@@ -60,7 +59,7 @@ function removeMember(userId: string) {
     <PageHeader :title="group?.display_name ?? 'Group'">
       <template #breadcrumb>
         <RouterLink
-          :to="{ name: 'admin-groups', params: { tenant } }"
+          :to="{ name: 'admin-groups' }"
           class="btn-link"
         >
           Groups
@@ -161,7 +160,7 @@ function removeMember(userId: string) {
               >
                 <td>
                   <RouterLink
-                    :to="{ name: 'admin-user', params: { tenant, id: m.id } }"
+                    :to="{ name: 'admin-user', params: { id: m.id } }"
                     class="btn-link"
                   >
                     {{ m.display_name || m.email }}

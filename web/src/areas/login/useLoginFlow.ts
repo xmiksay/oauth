@@ -44,7 +44,7 @@ function isWebUrl(raw: string): boolean {
 }
 
 /** Drives one login transaction through its steps (docs/api/authn.md). */
-export function useLoginFlow(tenant: string, tx: string | null, deps: LoginDeps = defaultDeps) {
+export function useLoginFlow(tx: string | null, deps: LoginDeps = defaultDeps) {
   const phase = ref<Phase>(tx ? 'loading' : 'missing')
   const view = shallowRef<TxView | null>(null)
   const error = ref<string | null>(null)
@@ -112,7 +112,7 @@ export function useLoginFlow(tenant: string, tx: string | null, deps: LoginDeps 
     phase.value = 'loading'
     error.value = null
     try {
-      apply(await deps.api.get(tenant, tx))
+      apply(await deps.api.get(tx))
     } catch (err) {
       if (err instanceof ApiError && err.status === 404) {
         phase.value = 'expired'
@@ -151,13 +151,13 @@ export function useLoginFlow(tenant: string, tx: string | null, deps: LoginDeps 
     rateLimited,
     load,
     password: (email: string, password: string) =>
-      run((id) => a.password(tenant, id, email, password)),
-    totp: (code: string) => run((id) => a.totp(tenant, id, code.replace(/\s/g, ''))),
-    recovery: (code: string) => run((id) => a.recovery(tenant, id, code)),
-    changePassword: (next: string) => run((id) => a.changePassword(tenant, id, next)),
+      run((id) => a.password(id, email, password)),
+    totp: (code: string) => run((id) => a.totp(id, code.replace(/\s/g, ''))),
+    recovery: (code: string) => run((id) => a.recovery(id, code)),
+    changePassword: (next: string) => run((id) => a.changePassword(id, next)),
     consent: (approve: boolean) =>
       run((id) =>
-        a.consent(tenant, id, approve, view.value?.consent?.scopes.map((s) => s.value) ?? []),
+        a.consent(id, approve, view.value?.consent?.scopes.map((s) => s.value) ?? []),
       ),
     dispose: stopTimer,
   }

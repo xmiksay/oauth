@@ -15,7 +15,7 @@ use crate::error::AppError;
 pub(crate) use tenants::create_system_tenant;
 pub use tenants::{
     NewTenant, TenantKeys, create_tenant, find_system_tenant, find_tenant_by_slug,
-    generate_tenant_keys, insert_tenant,
+    generate_tenant_keys, insert_tenant, invalid_enabled_slugs,
 };
 pub use users::{
     NewUser, assign_directory_role, create_user, find_user_by_email, normalize_email,

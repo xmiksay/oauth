@@ -2,15 +2,17 @@
 
 Graph-like REST API for the admin and My Account SPAs (step 5) and for
 service apps. JSON in, JSON out. Implemented in `crates/server/src/api/`,
-authorization rules in `crates/server/src/authz.rs`.
+authorization rules in `crates/server/src/authz.rs`. It is served on each
+tenant's own host `{origin}` = `{scheme}://{t}.{PUBLIC_URL host}[:port]`:
+`{origin}/api/v1/…` is tenant `{t}`'s directory (no tenant in the path).
 
 ## Authentication
 
 `Authorization: Bearer <access token>` on every call (no cookies, so no CSRF
-surface). For `/api/v1/tenants/{t}/…` the token must be:
+surface). On tenant `{t}`'s host the token must be:
 
 - a valid access token **of tenant `{t}`**: a JWT signed by a key `{t}`
-  still publishes (issuer `{PUBLIC_URL}/{t}`), or an active opaque token of
+  still publishes (issuer `{origin}`), or an active opaque token of
   `{t}` (the management API issues JWTs unless its format is changed);
 - with `tid` = the tenant's id;
 - for the tenant's built-in **`management-api`** (audience
@@ -36,10 +38,11 @@ The built-in SPAs get such tokens with
 management-API app role `Directory.Read.All` or `Directory.ReadWrite.All`
 (`POST role-assignments`), then the app uses client credentials.
 
-`/api/v1/tenants` and `/api/v1/tenants/{t}` (GET / PATCH) are system-tenant
-endpoints: the token must be a delegated token **of the `system` tenant**
-whose user is a GlobalAdmin there (404 if no system tenant exists). A
-tenant's own admins use `/api/v1/tenants/{t}/settings`.
+`/api/v1/tenants` and `/api/v1/tenants/{slug}` (GET / PATCH) exist only on
+the **system tenant's host** (`system.{PUBLIC_URL host}`; 404 on every other
+host): the token must be a delegated token **of the `system` tenant** whose
+user is a GlobalAdmin there. A tenant's own admins use `/api/v1/settings` on
+their host.
 
 `me/…` endpoints accept delegated tokens only.
 
@@ -160,27 +163,31 @@ Additional rules:
   "outcome": "success|failure", "ip": "203.0.113.7", "details": {} }
 ```
 
-## Tenants (system GlobalAdmin)
+## Tenants (system GlobalAdmin, system host only)
 
 | Method & path | Body | Response |
 |---|---|---|
 | `GET /api/v1/tenants` *paged* `?search=` (slug, name) | – | `Tenant`s |
 | `POST /api/v1/tenants` | `{ slug, display_name, admin_email, admin_display_name? }` | 201 `{ tenant, admin: { id, email }, one_time_password }` |
-| `GET /api/v1/tenants/{t}` | – | `Tenant` (also disabled ones) |
-| `PATCH /api/v1/tenants/{t}` | `{ display_name?, disabled?, audit_retention_days? (30–3650) }` | `Tenant` |
+| `GET /api/v1/tenants/{slug}` | – | `Tenant` (also disabled ones) |
+| `PATCH /api/v1/tenants/{slug}` | `{ display_name?, disabled?, audit_retention_days? (30–3650) }` | `Tenant` |
 
 Create provisions keys, built-in apps and the first GlobalAdmin (password
 must be changed at first sign-in) in one transaction; slug rules as in
-`directory::slug` (reserved slugs → 400, taken → 409). Disabling makes the
+`directory::slug` (a DNS label: no trailing `-`, no `--` as characters 3–4
+like punycode `xn--`; reserved service names like `www`, `mail`, `api` → 400; taken → 409).
+The new tenant lives at `{scheme}://{slug}.{PUBLIC_URL host}[:port]`. Disabling makes the
 tenant 404 everywhere (sign-in, tokens, API); the system tenant can't be
-disabled (403).
+disabled (403). A disabled tenant whose slug fails today's rules (created
+before they existed, e.g. `www`) can't be re-enabled (`disabled: false` →
+400): the server refuses to start with such a tenant enabled.
 
 ## Tenant settings — read: any role, `Read.All`; write: the tenant's GlobalAdmin (delegated)
 
 | Method & path | Body | Response |
 |---|---|---|
-| `GET /api/v1/tenants/{t}/settings` | – | `Tenant` |
-| `PATCH /api/v1/tenants/{t}/settings` | `{ display_name?, audit_retention_days? (30–3650) }` | `Tenant` (audited as `tenant.update` in the tenant's own log) |
+| `GET /api/v1/settings` | – | `Tenant` |
+| `PATCH /api/v1/settings` | `{ display_name?, audit_retention_days? (30–3650) }` | `Tenant` (audited as `tenant.update` in the tenant's own log) |
 
 Creating, disabling and enabling tenants stay with the system tenant's
 GlobalAdmins (`disabled` here → 400, unknown field).
@@ -199,7 +206,7 @@ GlobalAdmins (`disabled` here → 400, unknown field).
 | `GET users/{id}/sessions` | – | `{ items: Session[] }` (unexpired) |
 | `POST users/{id}/revoke-sessions` | – | 204: sessions deleted, refresh + opaque access tokens revoked |
 
-Paths are relative to `/api/v1/tenants/{t}/`. Password rules: 12–256
+Paths are relative to `{origin}/api/v1/`. Password rules: 12–256
 characters. A password reset and disabling a user also end all their
 sessions and revoke refresh / opaque access tokens (JWTs expire).
 
@@ -277,7 +284,9 @@ Public clients can't have secrets (400).
 `value`: 1–120 printable ASCII without space, `"`, `\` or `/`; unique per
 app (409); immutable (`value` in PATCH → 400). Scope values must not be
 `openid`, `profile`, `email`, `offline_access` or `.default` in any case
-(400). `allowed_member_types` ⊆ `user`, `application`, non-empty.
+(400). `allowed_member_types` is a non-empty set ⊆ {`user`, `application`}:
+duplicates collapse and it is stored and returned in canonical order
+(`["user","application"]`), so a reordered PATCH is no change.
 
 ### Required permissions
 

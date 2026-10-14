@@ -1,5 +1,5 @@
-//! OAuth 2.1 / OpenID Connect protocol endpoints under `/{tenant}`. Issuer =
-//! `{PUBLIC_URL}/{tenant}`.
+//! OAuth 2.1 / OpenID Connect protocol endpoints on each tenant host.
+//! Issuer = the tenant origin `{scheme}://{tenant}.{PUBLIC_URL host}[:port]`.
 
 mod authorize;
 pub mod client_auth;
@@ -30,20 +30,20 @@ pub fn router(state: AppState) -> Router<AppState> {
     let csrf = middleware::from_fn_with_state(state, crate::authn::csrf);
     Router::new()
         .route(
-            "/{tenant}/.well-known/openid-configuration",
+            "/.well-known/openid-configuration",
             get(discovery::configuration),
         )
-        .route("/{tenant}/discovery/keys", get(discovery::jwks))
-        .route("/{tenant}/oauth2/authorize", get(authorize::authorize))
-        .route("/{tenant}/oauth2/token", post(token::token))
+        .route("/discovery/keys", get(discovery::jwks))
+        .route("/oauth2/authorize", get(authorize::authorize))
+        .route("/oauth2/token", post(token::token))
         .route(
-            "/{tenant}/oauth2/userinfo",
+            "/oauth2/userinfo",
             get(userinfo::userinfo).post(userinfo::userinfo),
         )
-        .route("/{tenant}/oauth2/introspect", post(introspect::introspect))
-        .route("/{tenant}/oauth2/revoke", post(revoke::revoke))
+        .route("/oauth2/introspect", post(introspect::introspect))
+        .route("/oauth2/revoke", post(revoke::revoke))
         .route(
-            "/{tenant}/oauth2/logout",
+            "/oauth2/logout",
             get(logout::logout).post(logout::sign_out.layer(csrf)),
         )
 }

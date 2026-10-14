@@ -6,12 +6,11 @@ import { useAuthStore } from '@/stores/auth'
 const route = useRoute()
 const router = useRouter()
 const failed = ref(false)
-const tenant = String(route.params.tenant ?? '')
 const area = route.meta.area ?? 'myaccount'
 
 onMounted(async () => {
   try {
-    const next = await useAuthStore().completeSignIn(tenant, area)
+    const next = await useAuthStore().completeSignIn(area)
     await router.replace(next)
   } catch {
     // An `error` from the authorize endpoint (e.g. access_denied) or a stale/replayed callback.
@@ -31,7 +30,7 @@ onMounted(async () => {
       </p>
       <RouterLink
         class="btn btn-primary"
-        :to="`/${tenant}/${area}`"
+        :to="`/${area}`"
       >
         Try again
       </RouterLink>

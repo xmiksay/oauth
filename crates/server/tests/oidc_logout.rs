@@ -13,9 +13,9 @@ mod common;
 
 use axum::http::StatusCode;
 use common::{
-    PUBLIC_URL,
+    ORIGIN,
     browser::{Browser, authorize_url, query_of},
-    flow::{Fixture, T, WEB_BYE, WEB_CB},
+    flow::{Fixture, WEB_BYE, WEB_CB},
     seed::add_user,
 };
 use serde_json::json;
@@ -24,7 +24,7 @@ fn logout(extra: &[(&str, &str)]) -> String {
     let q = form_urlencoded::Serializer::new(String::new())
         .extend_pairs(extra)
         .finish();
-    format!("/{T}/oauth2/logout?{q}")
+    format!("/oauth2/logout?{q}")
 }
 
 /// `true` if the browser still has a working session (silent authorize).
@@ -38,7 +38,7 @@ async fn signed_in(browser: &mut Browser) -> bool {
 async fn logout_without_valid_hint_needs_confirmation() {
     let f = Fixture::new().await;
     let (mut browser, _) = f.web_tokens("openid", "ann@example.com").await;
-    let confirm = format!("{PUBLIC_URL}/{T}/logout");
+    let confirm = format!("{ORIGIN}/logout");
 
     // No hint, or an invalid one: never an external redirect, session kept.
     for url in [
@@ -56,13 +56,13 @@ async fn logout_without_valid_hint_needs_confirmation() {
     assert!(signed_in(&mut browser).await);
 
     // The confirmation page signs out with a same-origin JSON POST.
-    let path = format!("/{T}/oauth2/logout");
+    let path = "/oauth2/logout";
     let (status, _, _) = browser
-        .post_json(&path, &json!({}), "https://evil.example")
+        .post_json(path, &json!({}), "https://evil.example")
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert!(signed_in(&mut browser).await);
-    let (status, _, body) = browser.post_json(&path, &json!({}), PUBLIC_URL).await;
+    let (status, _, body) = browser.post_json(path, &json!({}), ORIGIN).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["signed_out"], true);
     assert!(!browser.has_session());
@@ -94,7 +94,7 @@ async fn logout_with_hint_ends_session_and_redirects() {
         )]))
         .await;
     assert_eq!(status, StatusCode::FOUND);
-    assert_eq!(location, Some(format!("{PUBLIC_URL}/{T}/logout")));
+    assert_eq!(location, Some(format!("{ORIGIN}/logout")));
     assert!(signed_in(&mut browser).await);
 
     // A hint-authorized logout without a client target lands on the SPA.
@@ -102,10 +102,7 @@ async fn logout_with_hint_ends_session_and_redirects() {
     let hint = other_tokens["id_token"].as_str().unwrap();
     let (status, location, _) = other.get(&logout(&[("id_token_hint", hint)])).await;
     assert_eq!(status, StatusCode::FOUND);
-    assert_eq!(
-        location,
-        Some(format!("{PUBLIC_URL}/{T}/logout?signed_out=1"))
-    );
+    assert_eq!(location, Some(format!("{ORIGIN}/logout?signed_out=1")));
     assert!(!other.has_session());
 
     let target = logout(&[

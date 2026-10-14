@@ -1,4 +1,4 @@
-// Users, groups and directory roles (`/api/v1/tenants/{t}/…`).
+// Users, groups and directory roles (`/api/v1/…` on the tenant's host).
 import { query } from './client'
 import { p, t } from './management'
 import type {

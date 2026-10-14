@@ -74,7 +74,7 @@ pub async fn totp(
     tenant: Tenant,
     ip: ClientIp,
     headers: HeaderMap,
-    Path((_, tx_id)): Path<(String, String)>,
+    Path(tx_id): Path<String>,
     JsonBody(body): JsonBody<CodeBody>,
 ) -> AuthnResult<Outcome> {
     second_factor(state, tenant, ip, headers, tx_id, body.code, Factor::Totp).await
@@ -85,7 +85,7 @@ pub async fn recovery(
     tenant: Tenant,
     ip: ClientIp,
     headers: HeaderMap,
-    Path((_, tx_id)): Path<(String, String)>,
+    Path(tx_id): Path<String>,
     JsonBody(body): JsonBody<CodeBody>,
 ) -> AuthnResult<Outcome> {
     second_factor(

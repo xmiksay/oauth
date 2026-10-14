@@ -21,7 +21,7 @@ use common::{
 use entity::enums::DirectoryRole::GlobalAdmin;
 use serde_json::{Value, json};
 
-const APPS: &str = "/api/v1/tenants/contoso/applications";
+const APPS: &str = "/api/v1/applications";
 
 #[tokio::test]
 async fn builtin_apps_are_protected() {
@@ -145,7 +145,7 @@ async fn credentials_of_privileged_apps_need_a_global_admin() {
         .clone();
     let assign =
         json!({ "app_role_id": rw, "principal_type": "application", "principal_id": svc["id"] });
-    let (st, _) = post(&f, &ga, "/api/v1/tenants/contoso/role-assignments", assign).await;
+    let (st, _) = post(&f, &ga, "/api/v1/role-assignments", assign).await;
     assert_eq!(st, StatusCode::CREATED);
 
     // …so its credentials and redirect URIs are now GlobalAdmin-only.
@@ -284,7 +284,7 @@ async fn registration_input_is_validated() {
     )
     .await;
     assert_eq!(st, StatusCode::CREATED, "{role}");
-    let assign = "/api/v1/tenants/contoso/role-assignments";
+    let assign = "/api/v1/role-assignments";
     let to_app = json!({ "app_role_id": role["id"], "principal_type": "application", "principal_id": f.web.id });
     assert_eq!(
         post(&f, &token, assign, to_app).await.0,

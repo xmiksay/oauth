@@ -107,7 +107,7 @@ pub async fn resolved(
 pub async fn list(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, app_id)): Path<(String, Uuid)>,
+    Path(app_id): Path<Uuid>,
 ) -> AppResult<axum::Json<Value>> {
     caller.require(Area::Applications, Access::Read)?;
     let app = find_app(&state.db, caller.tenant_id(), app_id).await?;
@@ -131,7 +131,7 @@ pub struct CreatePermission {
 pub async fn create(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, app_id)): Path<(String, Uuid)>,
+    Path(app_id): Path<Uuid>,
     Json(body): Json<CreatePermission>,
 ) -> AppResult<Response> {
     caller.require(Area::Applications, Access::Write)?;
@@ -221,7 +221,7 @@ pub async fn create(
 pub async fn remove(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, app_id, permission_id)): Path<(String, Uuid, Uuid)>,
+    Path((app_id, permission_id)): Path<(Uuid, Uuid)>,
 ) -> AppResult<StatusCode> {
     caller.require(Area::Applications, Access::Write)?;
     let txn = state.db.begin().await?;

@@ -25,11 +25,12 @@ async fn spa_areas_fall_back_to_index() {
     let dist = dist_with_index();
     let app: Router = spa::router(dist.path());
     for uri in [
-        "/acme/login",
-        "/acme/login/totp",
-        "/system/admin",
-        "/system/admin/apps/123/overview",
-        "/acme/myaccount/sessions",
+        "/login",
+        "/login/totp",
+        "/admin",
+        "/admin/apps/123/overview",
+        "/myaccount/sessions",
+        "/logout",
     ] {
         let (status, body) = common::get(&app, uri).await;
         assert_eq!(status, StatusCode::OK, "{uri}");
@@ -47,7 +48,7 @@ async fn static_assets_are_served_and_unknown_paths_404() {
     );
     // Only the three SPA areas get the history fallback.
     assert_eq!(
-        common::get(&app, "/acme/oauth2/authorize").await.0,
+        common::get(&app, "/oauth2/authorize").await.0,
         StatusCode::NOT_FOUND
     );
     assert_eq!(
@@ -59,9 +60,6 @@ async fn static_assets_are_served_and_unknown_paths_404() {
 #[tokio::test]
 async fn missing_dist_serves_404_instead_of_crashing() {
     let app: Router = spa::router(common::no_web_dist());
-    assert_eq!(
-        common::get(&app, "/acme/login").await.0,
-        StatusCode::NOT_FOUND
-    );
+    assert_eq!(common::get(&app, "/login").await.0, StatusCode::NOT_FOUND);
     assert_eq!(common::get(&app, "/").await.0, StatusCode::NOT_FOUND);
 }

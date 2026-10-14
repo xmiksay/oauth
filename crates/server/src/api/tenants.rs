@@ -1,6 +1,7 @@
-//! `/api/v1/tenants[/{tenant}]` — Global Admins of the system tenant only
-//! (delegated tokens of the `system` tenant; app-only tokens never manage
-//! tenants) — and `/api/v1/tenants/{t}/settings` for a tenant's own admins.
+//! `/api/v1/tenants[/{slug}]` on the system tenant's host — Global Admins of
+//! the system tenant only (delegated tokens of the `system` tenant; app-only
+//! tokens never manage tenants) — and `/api/v1/settings` on any tenant host
+//! for that tenant's own admins.
 
 use axum::{
     extract::State,
@@ -233,13 +234,24 @@ pub async fn update(
     Path(slug): Path<String>,
     Json(body): Json<UpdateTenant>,
 ) -> AppResult<axum::Json<Value>> {
+    if body.disabled == Some(false) {
+        // Startup refuses enabled tenants whose slug fails today's rules, so
+        // enabling one would stop every new replica.
+        let tenant = by_slug(&state.db, &slug).await?;
+        if !tenant.is_system && slug::validate(&tenant.slug).is_err() {
+            return Err(AppError::BadRequest(format!(
+                "tenant slug `{}` is no longer a valid host name; the tenant can't be re-enabled",
+                tenant.slug
+            )));
+        }
+    }
     let txn = state.db.begin().await?;
     let updated = save(&txn, &caller, &slug, &body).await?;
     txn.commit().await?;
     Ok(axum::Json(view(&updated)))
 }
 
-/// `GET …/tenants/{t}/settings`: the caller's own tenant (any directory
+/// `GET /api/v1/settings`: the caller's own tenant (any directory
 /// role or app with read access).
 pub async fn get_settings(caller: Caller) -> AppResult<axum::Json<Value>> {
     caller.require(Area::Directory, Access::Read)?;
@@ -253,7 +265,7 @@ pub struct Settings {
     audit_retention_days: Option<i32>,
 }
 
-/// `PATCH …/tenants/{t}/settings`: a tenant's own Global Admin renames it
+/// `PATCH /api/v1/settings`: a tenant's own Global Admin renames it
 /// or sets its audit retention (creating, disabling and enabling tenants
 /// stay with the system tenant's admins).
 pub async fn update_settings(

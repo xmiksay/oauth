@@ -37,7 +37,7 @@ onUnmounted(() => window.removeEventListener('keydown', closeOnEscape))
       @toggle-menu="menuOpen = !menuOpen"
     >
       <RouterLink
-        :to="{ name: 'myaccount', params: { tenant: slug } }"
+        :to="{ name: 'myaccount' }"
         class="btn-link hidden sm:inline"
       >
         My Account
@@ -56,7 +56,7 @@ onUnmounted(() => window.removeEventListener('keydown', closeOnEscape))
           Application Administrator). Ask an administrator of this directory to assign you one.
         </p>
         <RouterLink
-          :to="{ name: 'myaccount', params: { tenant: slug } }"
+          :to="{ name: 'myaccount' }"
           class="btn mt-4"
         >
           Go to My Account
@@ -81,7 +81,7 @@ onUnmounted(() => window.removeEventListener('keydown', closeOnEscape))
           <ul class="space-y-1">
             <li>
               <RouterLink
-                :to="{ name: 'admin', params: { tenant: slug } }"
+                :to="{ name: 'admin' }"
                 class="nav-link"
                 exact-active-class="nav-link-active"
               >
@@ -93,7 +93,7 @@ onUnmounted(() => window.removeEventListener('keydown', closeOnEscape))
               :key="item.name"
             >
               <RouterLink
-                :to="{ name: item.name, params: { tenant: slug } }"
+                :to="{ name: item.name }"
                 class="nav-link"
                 active-class="nav-link-active"
               >

@@ -43,7 +43,7 @@ fn role_view(r: &app_roles::Model) -> Value {
 pub async fn list_roles(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, app_id)): Path<(String, Uuid)>,
+    Path(app_id): Path<Uuid>,
 ) -> AppResult<axum::Json<Value>> {
     caller.require(Area::Applications, Access::Read)?;
     let app = find_app(&state.db, caller.tenant_id(), app_id).await?;
@@ -91,7 +91,7 @@ fn member_types(raw: &[String]) -> AppResult<Vec<String>> {
 pub async fn create_role(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, app_id)): Path<(String, Uuid)>,
+    Path(app_id): Path<Uuid>,
     Json(body): Json<RoleBody>,
 ) -> AppResult<Response> {
     caller.require(Area::Applications, Access::Write)?;
@@ -154,7 +154,7 @@ async fn find_role(
 pub async fn update_role(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, app_id, role_id)): Path<(String, Uuid, Uuid)>,
+    Path((app_id, role_id)): Path<(Uuid, Uuid)>,
     Json(body): Json<RoleBody>,
 ) -> AppResult<axum::Json<Value>> {
     caller.require(Area::Applications, Access::Write)?;
@@ -212,7 +212,7 @@ pub async fn update_role(
 pub async fn remove_role(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, app_id, role_id)): Path<(String, Uuid, Uuid)>,
+    Path((app_id, role_id)): Path<(Uuid, Uuid)>,
 ) -> AppResult<StatusCode> {
     caller.require(Area::Applications, Access::Write)?;
     let txn = state.db.begin().await?;

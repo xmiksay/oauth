@@ -1,4 +1,4 @@
-//! `/api/v1/tenants/{t}/role-assignments` — app roles of a resource app
+//! `/api/v1/role-assignments` — app roles of a resource app
 //! assigned to users, groups (→ `roles` in delegated tokens) or client apps
 //! (→ `roles` in client-credentials tokens). Roles of the built-in
 //! management API are assignable by Global Admins only: they ARE directory
@@ -235,7 +235,7 @@ pub async fn create(
 pub async fn remove(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, id)): Path<(String, Uuid)>,
+    Path(id): Path<Uuid>,
 ) -> AppResult<StatusCode> {
     caller.require(Area::Applications, Access::Write)?;
     let tenant_id = caller.tenant_id();

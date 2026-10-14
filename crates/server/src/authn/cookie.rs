@@ -2,12 +2,11 @@
 //! browser then insists on `Secure`, `Path=/` and no `Domain`, so a sibling
 //! subdomain can't plant ("toss") a cookie that shadows ours.
 //!
-//! - `__Host-oauth_sid_{tenant}`: the browser session of one tenant (the
-//!   tenant is in the name because `__Host-` forbids a per-tenant `Path`).
+//! - `__Host-oauth_sid`: the browser session of the tenant whose host set
+//!   it (host-only cookies: every tenant has its own host, so its own jar).
 //! - `__Host-oauth_tx`: binds login transactions to the browser that
-//!   started them, shared by all tenants (transaction rows are
-//!   tenant-scoped anyway). Each `/authorize` refreshes its `Max-Age`; it is
-//!   never cleared explicitly, so parallel sign-ins in several tabs work.
+//!   started them. Each `/authorize` refreshes its `Max-Age`; it is never
+//!   cleared explicitly, so parallel sign-ins in several tabs work.
 //!
 //! All `HttpOnly`, `SameSite=Lax` (sent on the relying party's top-level GET
 //! to `/authorize`, not on cross-site POSTs). With `COOKIE_SECURE=false`
@@ -26,46 +25,34 @@ pub enum Kind {
     TxBinding,
 }
 
-/// Cookie name; tenant slugs are `[a-z0-9-]`, valid in a cookie name.
-pub fn name(config: &Config, kind: Kind, tenant_slug: &str) -> String {
+pub fn name(config: &Config, kind: Kind) -> String {
     let prefix = if config.cookie_secure { "__Host-" } else { "" };
     match kind {
-        Kind::Session => format!("{prefix}oauth_sid_{tenant_slug}"),
+        Kind::Session => format!("{prefix}oauth_sid"),
         Kind::TxBinding => format!("{prefix}oauth_tx"),
     }
 }
 
-fn build(
-    config: &Config,
-    kind: Kind,
-    tenant_slug: &str,
-    value: &str,
-    max_age: i64,
-) -> anyhow::Result<HeaderValue> {
+fn build(config: &Config, kind: Kind, value: &str, max_age: i64) -> anyhow::Result<HeaderValue> {
     let secure = if config.cookie_secure { "; Secure" } else { "" };
     let raw = format!(
         "{}={value}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Lax{secure}",
-        name(config, kind, tenant_slug),
+        name(config, kind),
     );
     HeaderValue::from_str(&raw).context("building cookie")
 }
 
-pub fn set(
-    config: &Config,
-    kind: Kind,
-    tenant_slug: &str,
-    value: &str,
-) -> anyhow::Result<HeaderValue> {
+pub fn set(config: &Config, kind: Kind, value: &str) -> anyhow::Result<HeaderValue> {
     let max_age = match kind {
         Kind::Session => i64::from(config.session_ttl_hours) * 3600,
         Kind::TxBinding => TX_TTL_MINUTES * 60,
     };
-    build(config, kind, tenant_slug, value, max_age)
+    build(config, kind, value, max_age)
 }
 
 /// Same name and attributes as [`set`], so the browser replaces the cookie.
-pub fn clear(config: &Config, kind: Kind, tenant_slug: &str) -> anyhow::Result<HeaderValue> {
-    build(config, kind, tenant_slug, "", 0)
+pub fn clear(config: &Config, kind: Kind) -> anyhow::Result<HeaderValue> {
+    build(config, kind, "", 0)
 }
 
 /// At most this many values of one cookie are considered: each costs a DB
@@ -77,9 +64,8 @@ pub fn read<'a>(
     headers: &'a HeaderMap,
     config: &Config,
     kind: Kind,
-    tenant_slug: &str,
 ) -> impl Iterator<Item = &'a str> {
-    let name = name(config, kind, tenant_slug);
+    let name = name(config, kind);
     headers
         .get_all(header::COOKIE)
         .iter()
@@ -113,50 +99,47 @@ mod tests {
 
     #[test]
     fn host_prefixed_cookies() {
-        let c = config("https://id.example.com/idp", true);
-        let v = set(&c, Kind::Session, "contoso", "tok").unwrap();
+        let c = config("https://id.example.com", true);
+        let v = set(&c, Kind::Session, "tok").unwrap();
         assert_eq!(
             v.to_str().unwrap(),
-            "__Host-oauth_sid_contoso=tok; Path=/; Max-Age=86400; HttpOnly; SameSite=Lax; Secure"
+            "__Host-oauth_sid=tok; Path=/; Max-Age=86400; HttpOnly; SameSite=Lax; Secure"
         );
-        let v = set(&c, Kind::TxBinding, "contoso", "b").unwrap();
+        let v = set(&c, Kind::TxBinding, "b").unwrap();
         assert_eq!(
             v.to_str().unwrap(),
             "__Host-oauth_tx=b; Path=/; Max-Age=900; HttpOnly; SameSite=Lax; Secure"
         );
-        let cleared = clear(&c, Kind::Session, "contoso").unwrap();
+        let cleared = clear(&c, Kind::Session).unwrap();
         assert_eq!(
             cleared.to_str().unwrap(),
-            "__Host-oauth_sid_contoso=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax; Secure"
+            "__Host-oauth_sid=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax; Secure"
         );
     }
 
     #[test]
     fn dev_cookies_drop_secure_and_prefix() {
         let c = config("http://localhost:8080", false);
-        let v = set(&c, Kind::Session, "contoso", "tok").unwrap();
+        let v = set(&c, Kind::Session, "tok").unwrap();
         assert_eq!(
             v.to_str().unwrap(),
-            "oauth_sid_contoso=tok; Path=/; Max-Age=86400; HttpOnly; SameSite=Lax"
+            "oauth_sid=tok; Path=/; Max-Age=86400; HttpOnly; SameSite=Lax"
         );
-        assert_eq!(name(&c, Kind::TxBinding, "contoso"), "oauth_tx");
+        assert_eq!(name(&c, Kind::TxBinding), "oauth_tx");
     }
 
     #[test]
-    fn reads_cookie_values_per_tenant() {
+    fn reads_cookie_values() {
         let c = config("http://localhost", false);
         let mut headers = HeaderMap::new();
         headers.insert(
             header::COOKIE,
-            HeaderValue::from_static("a=1; oauth_sid_contoso=x; oauth_sid_other=z; oauth_tx="),
+            HeaderValue::from_static("a=1; oauth_sid=x; oauth_sid_other=z; oauth_tx="),
         );
-        headers.append(
-            header::COOKIE,
-            HeaderValue::from_static("oauth_sid_contoso=y"),
-        );
-        let values: Vec<_> = read(&headers, &c, Kind::Session, "contoso").collect();
+        headers.append(header::COOKIE, HeaderValue::from_static("oauth_sid=y"));
+        let values: Vec<_> = read(&headers, &c, Kind::Session).collect();
         assert_eq!(values, ["x", "y"]);
-        assert_eq!(read(&headers, &c, Kind::TxBinding, "contoso").count(), 0);
+        assert_eq!(read(&headers, &c, Kind::TxBinding).count(), 0);
     }
 
     #[test]
@@ -165,6 +148,6 @@ mod tests {
         let line = vec!["oauth_tx=v"; 3000].join("; ");
         let mut headers = HeaderMap::new();
         headers.insert(header::COOKIE, HeaderValue::from_str(&line).unwrap());
-        assert_eq!(read(&headers, &c, Kind::TxBinding, "x").count(), MAX_VALUES);
+        assert_eq!(read(&headers, &c, Kind::TxBinding).count(), MAX_VALUES);
     }
 }

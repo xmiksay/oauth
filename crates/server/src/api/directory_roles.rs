@@ -1,4 +1,4 @@
-//! `/api/v1/tenants/{t}/directory-roles`: directory role assignments.
+//! `/api/v1/directory-roles`: directory role assignments.
 //! Readable by any directory role; assigned and removed by Global Admins
 //! (delegated) only — never by app-only tokens.
 
@@ -120,7 +120,7 @@ pub async fn assign(
 pub async fn unassign(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, id)): Path<(String, Uuid)>,
+    Path(id): Path<Uuid>,
 ) -> AppResult<StatusCode> {
     caller.require(Area::DirectoryRoles, Access::Write)?;
     let tenant_id = caller.tenant_id();

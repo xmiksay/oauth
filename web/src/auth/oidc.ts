@@ -15,18 +15,18 @@ const CLIENT_IDS: Record<SpaArea, string> = {
   myaccount: 'my-account',
 }
 
-export function areaUrl(tenant: string, area: SpaArea, origin = window.location.origin): string {
-  return `${origin}/${encodeURIComponent(tenant)}/${area}`
+export function areaUrl(area: SpaArea, origin = window.location.origin): string {
+  return `${origin}/${area}`
 }
 
+/** The page's host is the tenant, so its origin is the OIDC authority (= issuer). */
 export function buildOidcSettings(
-  tenant: string,
   area: SpaArea,
   origin: string = window.location.origin,
 ): UserManagerSettings {
-  const base = areaUrl(tenant, area, origin)
+  const base = areaUrl(area, origin)
   return {
-    authority: `${origin}/${encodeURIComponent(tenant)}`,
+    authority: origin,
     client_id: CLIENT_IDS[area],
     redirect_uri: `${base}/callback`,
     post_logout_redirect_uri: base,
@@ -35,11 +35,11 @@ export function buildOidcSettings(
   }
 }
 
-export function createUserManager(tenant: string, area: SpaArea): UserManager {
+export function createUserManager(area: SpaArea): UserManager {
   // Tokens and PKCE state stay in sessionStorage (per tab, gone with it) — never localStorage.
   const store = new WebStorageStateStore({ store: window.sessionStorage })
   return new UserManager({
-    ...buildOidcSettings(tenant, area),
+    ...buildOidcSettings(area),
     userStore: store,
     stateStore: store,
     // Renewal is on demand (stores/auth `accessToken`, single-flight): a background timer per

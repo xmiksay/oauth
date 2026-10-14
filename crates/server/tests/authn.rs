@@ -14,7 +14,7 @@ mod common;
 use axum::http::{StatusCode, header};
 use common::{
     browser::authorize_url,
-    flow::{Fixture, PASSWORD, T, WEB_CB},
+    flow::{Fixture, PASSWORD, WEB_CB},
     seed::add_user,
 };
 use entity::{user_recovery_codes, users};
@@ -32,7 +32,7 @@ async fn csrf_requires_json_and_matching_origin() {
     let f = Fixture::new().await;
     let mut browser = f.browser();
     let tx = browser.authorize(&openid()).await.unwrap();
-    let path = format!("/{T}/api/authn/tx/{tx}/password");
+    let path = format!("/api/authn/tx/{tx}/password");
     let body = json!({ "email": "ann@example.com", "password": PASSWORD });
     let (status, _, resp) = browser
         .post_json(&path, &body, "https://evil.example")
@@ -44,7 +44,7 @@ async fn csrf_requires_json_and_matching_origin() {
 
     let req = axum::http::Request::post(&path)
         .header(header::CONTENT_TYPE, "text/plain")
-        .header(header::ORIGIN, common::PUBLIC_URL)
+        .header(header::ORIGIN, common::ORIGIN)
         .body(axum::body::Body::from(body.to_string()))
         .unwrap();
     let (status, _, _) = browser.request(req).await;
@@ -121,9 +121,9 @@ async fn password_attempts_are_rate_limited() {
         let (status, _) = browser.step(&tx, "password", wrong.clone()).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
-    let path = format!("/{T}/api/authn/tx/{tx}/password");
+    let path = format!("/api/authn/tx/{tx}/password");
     let right = json!({ "email": "ann@example.com", "password": PASSWORD });
-    let (status, headers, resp) = browser.post_json(&path, &right, common::PUBLIC_URL).await;
+    let (status, headers, resp) = browser.post_json(&path, &right, common::ORIGIN).await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{resp}");
     assert_eq!(resp["error"], "rate_limited");
     let retry: u64 = headers[header::RETRY_AFTER]

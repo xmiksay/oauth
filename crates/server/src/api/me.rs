@@ -1,4 +1,4 @@
-//! `/api/v1/tenants/{t}/me…` — the signed-in user's own account (My Account).
+//! `/api/v1/me…` — the signed-in user's own account (My Account).
 //! Any user of the tenant with a delegated token carrying
 //! `Directory.AccessAsUser`; no directory role needed.
 
@@ -172,7 +172,7 @@ pub async fn sessions(
 pub async fn revoke_session(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, id)): Path<(String, Uuid)>,
+    Path(id): Path<Uuid>,
 ) -> AppResult<StatusCode> {
     let user_id = caller.user_id()?;
     let tenant_id = caller.tenant_id();
@@ -267,7 +267,7 @@ pub async fn consents(
 pub async fn revoke_consent(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, id)): Path<(String, Uuid)>,
+    Path(id): Path<Uuid>,
 ) -> AppResult<StatusCode> {
     let user_id = caller.user_id()?;
     let txn = state.db.begin().await?;

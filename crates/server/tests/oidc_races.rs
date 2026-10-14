@@ -123,7 +123,7 @@ async fn wrong_verifier_does_not_burn_the_code() {
         ("code_verifier", other.as_str()),
     ];
     let basic = Some(("web-app", f.web_secret.as_str()));
-    let (status, _, body) = f.post_form("/contoso/oauth2/token", &form, basic).await;
+    let (status, _, body) = f.post_form("/oauth2/token", &form, basic).await;
     assert_eq!(
         (status, body["error"].as_str()),
         (StatusCode::BAD_REQUEST, Some("invalid_grant"))
@@ -212,7 +212,7 @@ async fn revocation_during_a_rotation_leaves_no_live_token() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let basic = Some(("web-app", f.web_secret.as_str()));
     let (_, _, body) = f
-        .post_form("/contoso/oauth2/introspect", &[("token", &b)], basic)
+        .post_form("/oauth2/introspect", &[("token", &b)], basic)
         .await;
     assert_eq!(body, json!({ "active": false }));
 }
@@ -245,7 +245,7 @@ async fn a_revoked_row_kills_the_whole_family() {
 
     let basic = Some(("web-app", f.web_secret.as_str()));
     let (_, _, body) = f
-        .post_form("/contoso/oauth2/introspect", &[("token", &current)], basic)
+        .post_form("/oauth2/introspect", &[("token", &current)], basic)
         .await;
     assert_eq!(body, json!({ "active": false }), "family has a revoked row");
     let (status, body) = f.refresh(&current, None).await;

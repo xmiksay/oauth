@@ -1,4 +1,4 @@
-//! `POST /{t}/oauth2/revoke` (RFC 7009). A refresh token revokes its whole
+//! `POST /oauth2/revoke` (RFC 7009). A refresh token revokes its whole
 //! family; an opaque access token is revoked; JWT access tokens can't be
 //! recalled and simply expire. Unknown tokens and tokens of other clients
 //! still get 200 (§2.2), so the endpoint is no token oracle.

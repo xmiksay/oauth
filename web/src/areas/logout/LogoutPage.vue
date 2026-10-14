@@ -1,13 +1,15 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRoute } from 'vue-router'
+import { storeToRefs } from 'pinia'
+import { useTenantStore } from '@/stores/tenant'
 import AuthCard from '@/components/AuthCard.vue'
 import ErrorAlert from '@/components/ErrorAlert.vue'
 import { authn } from '@/api/authn'
 import { useAction } from '@/composables/useAction'
 
 const route = useRoute()
-const tenant = String(route.params.tenant ?? '')
+const { slug } = storeToRefs(useTenantStore())
 // `?signed_out=1` is just a link anyone can craft, so that view still offers the sign-out
 // action (a no-op POST when the session is already gone).
 const linkSaysSignedOut = route.query.signed_out === '1'
@@ -15,7 +17,7 @@ const confirmed = ref(false)
 const { busy, error, run } = useAction()
 
 async function signOut() {
-  const res = await run(() => authn.signOut(tenant))
+  const res = await run(() => authn.signOut())
   if (res?.signed_out) confirmed.value = true
 }
 </script>
@@ -23,7 +25,7 @@ async function signOut() {
 <template>
   <AuthCard
     :title="confirmed || linkSaysSignedOut ? 'You have been signed out' : 'Sign out?'"
-    :tenant="tenant"
+    :tenant="slug"
   >
     <p
       v-if="confirmed"

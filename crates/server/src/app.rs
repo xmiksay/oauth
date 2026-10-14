@@ -14,7 +14,7 @@ use sea_orm::DatabaseConnection;
 use tower_http::trace::{DefaultOnFailure, TraceLayer};
 use tracing::{Level, Span};
 
-use crate::{api, authn, config::Config, headers, health, metrics, oidc, spa};
+use crate::{api, authn, config::Config, headers, health, metrics, oidc, spa, tenancy};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -36,8 +36,8 @@ impl AppState {
 
 /// Request span without the query string: authorize / logout URLs carry
 /// codes, `id_token_hint`s and transaction ids that must not reach logs.
-/// The route template is used when there is one (it also hides tenant
-/// slugs and transaction ids in paths).
+/// The route template is used when there is one (it also hides
+/// transaction ids and object ids in paths).
 fn request_span(req: &Request) -> Span {
     let path = req
         .extensions()
@@ -48,12 +48,20 @@ fn request_span(req: &Request) -> Span {
 
 pub fn router(state: AppState, web_dist: &Path) -> Router {
     let [frame, csp, referrer] = headers::security_layers();
-    Router::new()
-        .merge(health::router())
+    // Everything but the probes is scoped to a tenant host (probes hit the
+    // pod IP, so they must answer on any host).
+    let tenant_scoped = Router::new()
         .merge(oidc::router(state.clone()))
         .merge(authn::router(state.clone()))
         .merge(api::router())
         .merge(spa::router(web_dist))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            tenancy::resolve_host,
+        ));
+    Router::new()
+        .merge(health::router())
+        .merge(tenant_scoped)
         // `layer` (not `route_layer`) so fallback traffic is counted too; axum
         // applies it per route, so `MatchedPath` is still visible inside.
         .layer(middleware::from_fn(metrics::track))

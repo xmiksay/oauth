@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
-import { useTenantStore } from '@/stores/tenant'
 import { useAuthStore } from '@/stores/auth'
 import { settings } from '@/api/access'
 import { ROLE_LABELS, type Tenant } from '@/api/types'
@@ -11,7 +10,6 @@ import PageHeader from '@/components/PageHeader.vue'
 import ErrorAlert from '@/components/ErrorAlert.vue'
 import { adminNav } from './nav'
 
-const { slug } = storeToRefs(useTenantStore())
 const { me, roles } = storeToRefs(useAuthStore())
 const tenant = ref<Tenant | null>(null)
 const { error, run } = useAction()
@@ -86,7 +84,7 @@ onMounted(async () => {
       <RouterLink
         v-for="item in adminNav.filter((i) => !i.systemOnly)"
         :key="item.name"
-        :to="{ name: item.name, params: { tenant: slug } }"
+        :to="{ name: item.name }"
         class="card text-sm font-medium hover:border-blue-600 sm:p-4"
       >
         {{ item.label }}

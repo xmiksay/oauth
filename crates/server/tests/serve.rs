@@ -63,7 +63,11 @@ async fn serves_before_migrating_and_turns_ready_after() {
     let (listeners, addr) = listeners().await;
     let shutdown = CancellationToken::new();
     let server = tokio::spawn({
-        let state = AppState::new(conn.clone(), common::test_config(&pg.url), false);
+        let state = AppState::new(
+            conn.clone(),
+            common::test_config(&pg.url, common::PUBLIC_URL),
+            false,
+        );
         let shutdown = shutdown.clone();
         async move {
             serve::run_with(
@@ -98,6 +102,57 @@ async fn serves_before_migrating_and_turns_ready_after() {
         .unwrap();
 }
 
+/// Serves `config` until `/readyz` is 200, then shuts down cleanly.
+async fn serve_until_ready(
+    conn: sea_orm::DatabaseConnection,
+    config: oauth_server::config::Config,
+) {
+    let (listeners, addr) = listeners().await;
+    let shutdown = CancellationToken::new();
+    let state = AppState::new(conn, config, false);
+    let server = tokio::spawn(serve::run_with(
+        listeners,
+        state,
+        common::no_web_dist(),
+        Router::new(),
+        shutdown.clone(),
+    ));
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while http_status(addr, "/readyz").await != 200 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("never became ready");
+    shutdown.cancel();
+    server.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn startup_rewrites_stale_builtin_redirect_uris_before_ready() {
+    let (_pg, conn, config) = common::migrated_db().await;
+    let new = oauth_server::directory::NewTenant {
+        slug: "contoso",
+        display_name: "Contoso",
+    };
+    let tenant = oauth_server::directory::create_tenant(&conn, &config, new)
+        .await
+        .unwrap();
+    // As M1a stored them: path-based on the apex.
+    conn.execute_unprepared(
+        "UPDATE applications SET redirect_uris = ARRAY['https://id.example.test/contoso/admin/callback'] \
+         WHERE client_id = 'admin-portal'",
+    )
+    .await
+    .unwrap();
+    serve_until_ready(conn.clone(), config).await;
+    let app = common::mgmt::app_by_client_id(&conn, tenant.id, "admin-portal").await;
+    assert_eq!(
+        app.redirect_uris,
+        [format!("{}/admin/callback", common::ORIGIN)]
+    );
+}
+
 #[tokio::test]
 async fn migration_failure_stops_the_server_with_an_error() {
     let pg = common::start_postgres().await;
@@ -119,7 +174,7 @@ async fn migration_failure_stops_the_server_with_an_error() {
         Duration::from_secs(20),
         serve::run_with(
             listeners,
-            AppState::new(conn, common::test_config(&url), false),
+            AppState::new(conn, common::test_config(&url, common::PUBLIC_URL), false),
             common::no_web_dist(),
             Router::new(),
             shutdown.clone(),

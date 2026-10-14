@@ -116,7 +116,7 @@ pub struct ResetPassword {
 pub async fn reset_password(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, id)): Path<(String, Uuid)>,
+    Path(id): Path<Uuid>,
     Json(body): Json<ResetPassword>,
 ) -> AppResult<axum::Json<Value>> {
     caller.require(Area::Directory, Access::Write)?;
@@ -150,7 +150,7 @@ pub async fn reset_password(
 pub async fn reset_mfa(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, id)): Path<(String, Uuid)>,
+    Path(id): Path<Uuid>,
 ) -> AppResult<StatusCode> {
     caller.require(Area::Directory, Access::Write)?;
     let tenant_id = caller.tenant_id();
@@ -173,7 +173,7 @@ pub async fn reset_mfa(
 pub async fn sessions(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, id)): Path<(String, Uuid)>,
+    Path(id): Path<Uuid>,
 ) -> AppResult<axum::Json<Value>> {
     caller.require(Area::Directory, Access::Read)?;
     let conn = &state.db;
@@ -191,7 +191,7 @@ pub async fn sessions(
 pub async fn revoke_sessions(
     State(state): State<AppState>,
     caller: Caller,
-    Path((_, id)): Path<(String, Uuid)>,
+    Path(id): Path<Uuid>,
 ) -> AppResult<StatusCode> {
     caller.require(Area::Directory, Access::Write)?;
     let tenant_id = caller.tenant_id();

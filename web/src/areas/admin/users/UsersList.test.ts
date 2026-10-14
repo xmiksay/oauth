@@ -9,7 +9,6 @@ vi.mock('@/api/directory', () => ({ users: { list: (q: PageQuery) => list(q) } }
 
 const { default: UsersList } = await import('./UsersList.vue')
 const { useAuthStore } = await import('@/stores/auth')
-const { useTenantStore } = await import('@/stores/tenant')
 
 function user(n: number): User {
   return {
@@ -29,7 +28,6 @@ function user(n: number): User {
 async function mountList(roles: ('UserAdmin' | 'ApplicationAdmin')[] = ['UserAdmin']) {
   const pinia = createPinia()
   setActivePinia(pinia)
-  useTenantStore().setFromParam('contoso')
   useAuthStore().setMe({
     ...user(0),
     directory_roles: roles,
@@ -38,8 +36,8 @@ async function mountList(roles: ('UserAdmin' | 'ApplicationAdmin')[] = ['UserAdm
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
-      { path: '/:tenant/admin/users', name: 'admin-users', component: UsersList },
-      { path: '/:tenant/admin/users/:id', name: 'admin-user', component: UsersList },
+      { path: '/admin/users', name: 'admin-users', component: UsersList },
+      { path: '/admin/users/:id', name: 'admin-user', component: UsersList },
     ],
   })
   const w = mount(UsersList, { global: { plugins: [pinia, router] } })
@@ -62,7 +60,7 @@ describe('UsersList', () => {
 
     expect(w.findAll('tbody tr')).toHaveLength(2)
     expect(w.find('tbody').text()).toContain('Disabled')
-    expect(w.find('a[href="/contoso/admin/users/u1"]').text()).toBe('User 1')
+    expect(w.find('a[href="/admin/users/u1"]').text()).toBe('User 1')
     const button = (name: string) => w.findAll('button').find((b) => b.text() === name)
     expect(button('Previous')?.attributes('disabled')).toBeDefined()
 
