@@ -127,7 +127,7 @@ Additional rules:
   "created_at", "updated_at" }
 // UserDetail (GET users/{id}, GET me) = User +
 { "directory_roles": ["GlobalAdmin"],
-  "mfa": { "totp": false, "totp_pending": false, "recovery_codes_remaining": 0, "passkeys": 0 } }
+  "mfa": { "totp": false, "totp_pending": false, "recovery_codes_remaining": 0, "passkeys": 0, "telegram": false } }
 // Session
 { "id", "amr": ["pwd"], "auth_time", "ip", "user_agent", "created_at", "expires_at",
   "current": false }   // `current`: the session the calling token came from (me only)
@@ -203,7 +203,7 @@ GlobalAdmins (`disabled` here → 400, unknown field).
 | `POST users/{id}/invite` | – | 204: re-sends the invitation, the older link stops working (409 if the user has a password or a passkey, 400 email not configured) |
 | `DELETE users/{id}` | – | 204 (sessions, tokens, memberships, roles, grants cascade) |
 | `POST users/{id}/reset-password` | `{ password?, must_change_password? (default true) }` (send `{}` to generate) | `{ one_time_password, must_change_password }` |
-| `POST users/{id}/reset-mfa` | – | 204: TOTP, recovery codes and passkeys deleted. 409 for a user without a password who has passkeys (it would lock them out): `reset-password` first |
+| `POST users/{id}/reset-mfa` | – | 204: TOTP, recovery codes and passkeys deleted, Telegram unlinked (audit details `passkeys_removed`, `telegram_unlinked`). 409 for a user without a password who has passkeys (it would lock them out): `reset-password` first |
 | `GET users/{id}/passkeys` | – | `{ items: Passkey[] }` (see [me.md](me.md)) |
 | `DELETE users/{id}/passkeys/{passkey_id}` | – | 204; 409 when it is the last sign-in method of a user without a password |
 | `GET users/{id}/sessions` | – | `{ items: Session[] }` (unexpired) |

@@ -12,6 +12,8 @@ import type {
   Reauth,
   RecoveryCodes,
   Session,
+  TelegramLink,
+  TelegramStatus,
   TotpEnrollment,
   Me,
 } from './types'
@@ -49,6 +51,11 @@ export const me = {
   /** The link goes to `newEmail`; the address changes only once it's opened. */
   changeEmail: (newEmail: string, reauth: Reauth) =>
     t.post<{ sent: boolean }>('me/email', { new_email: newEmail, ...reauth }),
+  /** 404 when the server has no Telegram bot. */
+  getTelegram: () => t.get<TelegramStatus>('me/telegram'),
+  /** A fresh deep link replaces any unused one; linking again replaces the chat. */
+  linkTelegram: (reauth: Reauth) => t.post<TelegramLink>('me/telegram/link', reauth),
+  unlinkTelegram: (reauth: Reauth) => t.del('me/telegram', reauth),
   notifications: () => t.get<NotificationSettings>('me/notifications'),
   updateNotifications: (items: NotificationPreference[]) =>
     t.put<NotificationSettings>('me/notifications', { items }),

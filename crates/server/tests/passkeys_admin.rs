@@ -111,7 +111,10 @@ async fn admins_list_remove_and_reset_passkeys_without_locking_users_out() {
             .is_empty()
     );
     let resets = audited(&f.db, "user.mfa_reset", f.user.id).await;
-    assert_eq!(resets, vec![json!({ "passkeys_removed": 1 })]);
+    assert_eq!(
+        resets,
+        vec![json!({ "passkeys_removed": 1, "telegram_unlinked": false })]
+    );
     let removals = audited(&f.db, "user.mfa.passkey_remove", f.user.id).await;
     assert_eq!(removals[0]["via"], "admin");
 

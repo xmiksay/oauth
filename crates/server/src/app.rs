@@ -16,7 +16,10 @@ use tokio_util::task::TaskTracker;
 use tower_http::trace::{DefaultOnFailure, TraceLayer};
 use tracing::{Level, Span};
 
-use crate::{api, authn, config::Config, headers, health, metrics, oidc, spa, tenancy};
+use crate::{
+    api, authn, config::Config, headers, health, metrics, oidc, spa, telegram, telegram::BotApi,
+    tenancy,
+};
 
 /// Detached handler jobs allowed in flight (beyond: dropped).
 pub const MAX_DETACHED: usize = 64;
@@ -32,16 +35,31 @@ pub struct AppState {
     pub tasks: TaskTracker,
     /// Caps how many such detached jobs may be in flight at once.
     pub detached: Arc<Semaphore>,
+    /// Bot API client, when Telegram is configured.
+    pub telegram: Option<BotApi>,
 }
 
 impl AppState {
-    pub fn new(db: DatabaseConnection, config: Config, migrated: bool) -> Self {
+    pub fn new(db: DatabaseConnection, mut config: Config, migrated: bool) -> Self {
+        let telegram = config.telegram.as_ref().and_then(|t| {
+            BotApi::new(t)
+                .map_err(|err| {
+                    tracing::error!(error = ?err, "Telegram client setup failed; Telegram is off");
+                })
+                .ok()
+        });
+        // One source of truth: everything asking `config.telegram_enabled()`
+        // must agree with whether a client exists.
+        if telegram.is_none() {
+            config.telegram = None;
+        }
         Self {
             db,
             config: Arc::new(config),
             migrated: Arc::new(AtomicBool::new(migrated)),
             tasks: TaskTracker::new(),
             detached: Arc::new(Semaphore::new(MAX_DETACHED)),
+            telegram,
         }
     }
 }
@@ -66,6 +84,7 @@ pub fn router(state: AppState, web_dist: &Path) -> Router {
         .merge(oidc::router(state.clone()))
         .merge(authn::router(state.clone()))
         .merge(api::router())
+        .merge(telegram::webhook::router())
         .merge(spa::router(web_dist))
         .layer(middleware::from_fn_with_state(
             state.clone(),

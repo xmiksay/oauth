@@ -137,7 +137,7 @@ async fn patch_me_keeps_the_me_shape() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(me["features"], json!({ "email": true }));
+    assert_eq!(me["features"], json!({ "email": true, "telegram": false }));
     let (_, me) = call(
         &f.app,
         Method::PATCH,
@@ -146,7 +146,11 @@ async fn patch_me_keeps_the_me_shape() {
         Some(&body),
     )
     .await;
-    assert_eq!(me["features"], json!({ "email": true }), "unchanged PATCH");
+    assert_eq!(
+        me["features"],
+        json!({ "email": true, "telegram": false }),
+        "unchanged PATCH"
+    );
 }
 
 #[tokio::test]

@@ -7,12 +7,12 @@ and objects there).
 
 | Method & path | Body | Response |
 |---|---|---|
-| `GET me` | – | `Me` = `UserDetail` + `features: { email }` (whether the server can send email) |
+| `GET me` | – | `Me` = `UserDetail` + `features: { email, telegram }` (whether the server can send email / has a Telegram bot) |
 | `PATCH me` | `{ display_name }` | `Me` (same shape as `GET me`) |
 | `POST me/change-password` | `{ current_password, new_password }` or `{ passkey, new_password }` | 204 (the passkey variant lets a passkey-only user set a first password) |
 | `POST me/verify-email` | – | 202 `{ sent: true }`: a 24 h verification link to the current address (409 already verified, 400 email not configured) |
 | `POST me/email` | `{ new_email, password }` or `{ new_email, passkey }` | 202 `{ sent: true }`: a 24 h link to the NEW address; the change applies when it is opened (`POST /api/authn/email/verify`, 409 if the address is taken by then) and notifies the old address if it was verified. Always 202 for a well-formed request with a valid re-authentication — also for an address that is taken (no probing for accounts). 403 wrong re-authentication, 400 invalid / same as current / not configured |
-| `GET me/notifications` | – | `{ channels: { email, telegram }, items: [{ event, email, telegram }] }` — all five events (`password_changed`, `mfa_changed`, `email_changed`, `new_sign_in`, `token_reuse`), default on |
+| `GET me/notifications` | – | `{ channels: { email, telegram }, items: [{ event, email, telegram }] }` (`channels.telegram` only while a chat is linked) — all five events (`password_changed`, `mfa_changed`, `email_changed`, `new_sign_in`, `token_reuse`), default on |
 | `PUT me/notifications` | `{ items: [{ event, email, telegram? }] }` (any subset; unknown / repeated event → 400) | same as `GET` |
 | `POST me/reauth/options` | `{}` | `{ publicKey: PublicKeyCredentialRequestOptionsJSON }` for the user's passkeys (409 if none) |
 | `GET me/passkeys` | – | `{ items: Passkey[] }` |
@@ -24,6 +24,9 @@ and objects there).
 | `POST me/totp/confirm` | `{ code }` | `{ recovery_codes: [10 × "xxxx-xxxx-xxxx"] }` |
 | `DELETE me/totp` | Reauth | 204: TOTP and recovery codes removed |
 | `POST me/recovery-codes` | Reauth | `{ recovery_codes }` (replaces all) |
+| `GET me/telegram` | – | `{ linked, username, linked_at }` (SPA polls it while linking); 404 without a Telegram bot |
+| `POST me/telegram/link` | Reauth | `{ url: "https://t.me/<bot>?start=<code>", expires_at }`: a single-use 10-min deep link (replaces an unused one; linking again moves the user to the new chat). The link happens when the user presses Start in the bot |
+| `DELETE me/telegram` | Reauth | 204: chat unlinked (also pending codes); 404 when not linked |
 | `GET me/sessions` | – | `{ items: Session[] }` (`current` marks the token's session) |
 | `DELETE me/sessions/{id}` | – | 204 |
 | `POST me/sessions/revoke-all` | – | 204 |
@@ -32,7 +35,7 @@ and objects there).
 
 - **Security info changes need re-authentication** (`POST me/totp`,
   `DELETE me/totp`, `POST me/recovery-codes`, `POST me/passkeys/options`,
-  `DELETE me/passkeys/{id}`; also `change-password` and `email`): a stolen
+  `DELETE me/passkeys/{id}`, `POST me/telegram/link`, `DELETE me/telegram`; also `change-password` and `email`): a stolen
   access token alone can't add, remove or read out a factor. **Reauth** =
   `{ "password": "…" }` OR `{ "passkey": AssertionJSON }` answering a
   `POST me/reauth/options` challenge (single use, 5 min) — exactly one (else
@@ -45,6 +48,12 @@ and objects there).
   options (after re-auth) carry a `register` challenge, `POST me/passkeys`
   answers it. Adding or removing a passkey sends the "MFA changed" notice.
   Shapes in [authn.md](authn.md#passkeys), policy in [../passkeys.md](../passkeys.md).
+- **Telegram** ([../telegram.md](../telegram.md)): a linked chat is a second
+  factor (sign-in asks for a code sent there) and receives the notices whose
+  `telegram` toggle is on. Linking and unlinking (here or by `/stop` in the
+  bot) send the "MFA changed" notice and are audited `user.mfa.telegram_link`
+  / `_unlink` (`via` bot \| me); an admin's Reset MFA unlinks too, recorded as
+  `user.mfa_reset` with `telegram_unlinked`.
 - `verify-email` and `email` count against a per-account mail limit
   (5 / 15 min, 429). Notices go to a verified address only (the
   email-change notice to the old address regardless); see [../email.md](../email.md).

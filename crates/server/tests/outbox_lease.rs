@@ -47,7 +47,10 @@ async fn a_claim_leases_the_message_until_it_runs_out() {
     queue_invite(&f).await;
     let now = chrono::Utc::now().fixed_offset();
     // A run that claims and then dies before sending.
-    let claimed = claim(&f.db, now).await.unwrap().unwrap();
+    let claimed = claim(&f.db, now, entity::enums::Channel::Email)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(claimed.len(), 1);
     assert_eq!(row(&f).await.attempts, 1);
     // Inside the lease nobody picks it up again …

@@ -17,6 +17,7 @@ use crate::{
     mail::links,
     notify::{self, Pref},
     passkey::AssertionJson,
+    telegram,
 };
 
 /// Bounds the mail one account can make the server send.
@@ -128,15 +129,20 @@ pub async fn change_email(
     Ok(sent())
 }
 
-fn prefs_view(state: &AppState, prefs: &[Pref]) -> Value {
+/// `channels.telegram`: only while the user has a linked chat.
+async fn prefs_view(state: &AppState, caller: &Caller, prefs: &[Pref]) -> AppResult<Value> {
     let items: Vec<Value> = prefs
         .iter()
         .map(|p| json!({ "event": p.event.to_value(), "email": p.email, "telegram": p.telegram }))
         .collect();
-    json!({
-        "channels": { "email": state.config.email_enabled(), "telegram": false },
+    let telegram = state.config.telegram_enabled()
+        && telegram::links::find(&state.db, caller.tenant_id(), caller.user_id()?)
+            .await?
+            .is_some();
+    Ok(json!({
+        "channels": { "email": state.config.email_enabled(), "telegram": telegram },
         "items": items,
-    })
+    }))
 }
 
 pub async fn notifications(
@@ -144,7 +150,7 @@ pub async fn notifications(
     caller: Caller,
 ) -> AppResult<axum::Json<Value>> {
     let prefs = notify::prefs(&state.db, caller.tenant_id(), caller.user_id()?).await?;
-    Ok(axum::Json(prefs_view(&state, &prefs)))
+    Ok(axum::Json(prefs_view(&state, &caller, &prefs).await?))
 }
 
 #[derive(Deserialize)]
@@ -192,7 +198,7 @@ pub async fn update_notifications(
         }
     }
     if changed.is_empty() {
-        return Ok(axum::Json(prefs_view(&state, &current)));
+        return Ok(axum::Json(prefs_view(&state, &caller, &current).await?));
     }
     let txn = state.db.begin().await?;
     notify::set_prefs(&txn, tenant_id, user_id, &changed).await?;
@@ -207,5 +213,5 @@ pub async fn update_notifications(
         .await?;
     let prefs = notify::prefs(&txn, tenant_id, user_id).await?;
     txn.commit().await?;
-    Ok(axum::Json(prefs_view(&state, &prefs)))
+    Ok(axum::Json(prefs_view(&state, &caller, &prefs).await?))
 }

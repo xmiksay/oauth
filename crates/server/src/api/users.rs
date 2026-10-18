@@ -31,7 +31,7 @@ use crate::{
     directory::{self, DirectoryError, NewUser, display_name, normalize_email},
     error::{AppError, AppResult},
     mail::links,
-    passkey,
+    passkey, telegram,
 };
 
 pub fn view(u: &users::Model) -> Value {
@@ -114,6 +114,9 @@ pub async fn detailed_view(
         .count(conn)
         .await?;
     let passkeys = passkey::store::count(conn, user.tenant_id, user.id).await?;
+    let telegram = telegram::links::find(conn, user.tenant_id, user.id)
+        .await?
+        .is_some();
     let mut out = view(user);
     if let Some(obj) = out.as_object_mut() {
         obj.insert("directory_roles".into(), json!(roles));
@@ -124,6 +127,7 @@ pub async fn detailed_view(
                 "totp_pending": totp.as_ref().is_some_and(|t| t.confirmed_at.is_none()),
                 "recovery_codes_remaining": recovery_left,
                 "passkeys": passkeys,
+                "telegram": telegram,
             }),
         );
     }

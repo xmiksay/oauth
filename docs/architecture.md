@@ -11,6 +11,7 @@ Single binary `oauth` (crate `crates/server`):
   of the Service. A failed migration shuts both listeners down and exits
   non-zero; SIGTERM / ctrl-c drains both listeners gracefully (and rolls back an
   in-flight migration).
+- `oauth telegram set-webhook` — registers `{PUBLIC_URL}/telegram/webhook` with the bot.
 - `oauth bootstrap --admin-email … [--display-name …] [--reset-password]` —
   runs migrations, then (in one transaction holding a dedicated advisory lock,
   so concurrent runs serialize) creates the `system` tenant if missing and the
@@ -33,9 +34,9 @@ Spawned by `serve::run_with` after migrations; stop on the shutdown token (a run
 
 | Job | Every | Does |
 |---|---|---|
-| `sweeper` | 60 s | `DELETE … WHERE expires_at < now()` on `login_transactions`, `authorization_codes`, `sessions`, `refresh_tokens`, `opaque_access_tokens`, `rate_limit_buckets`, `outbox`, `email_tokens`, `known_devices`, `webauthn_challenges` (readers already ignore expired rows; this bounds growth), and `audit_events` older than their tenant's `audit_retention_days` |
+| `sweeper` | 60 s | `DELETE … WHERE expires_at < now()` on `login_transactions`, `authorization_codes`, `sessions`, `refresh_tokens`, `opaque_access_tokens`, `rate_limit_buckets`, `outbox`, `email_tokens`, `known_devices`, `webauthn_challenges`, `telegram_link_codes`, `telegram_otps` (readers already ignore expired rows; this bounds growth), and `audit_events` older than their tenant's `audit_retention_days` |
 | `rotation` | 5 min | Per (tenant, alg), each tenant in its own transaction (one failing tenant doesn't block the others) while the run's lock transaction holds the leader lock: `KEY_PREPUBLISH_HOURS` before the active key is `KEY_ROTATION_DAYS` old, publish a `next` key (in JWKS, not signing); once it has been published that long, retire the active key (`expires_at` = now + the tenant's longest access-token TTL, min 1 h, + 1 h) and activate the next one — retire first, in one transaction, because the partial unique indexes allow one active key per (tenant, alg) per statement. Runs on an explicit `now` (tests move the clock) |
-| `outbox` | 10 s | Only with SMTP configured. Claim-then-send: a short transaction (holding the job lock) leases up to 8 due `email` messages (`attempts + 1`, `next_attempt_at = now + 10 min`, `SKIP LOCKED`; 8 × 60 s + 30 s skew margin < 10 min is a compile-time check), then each is sent outside any transaction (60 s per send) — never starting a send that could end within 30 s of the lease's end, skipping a row whose lease was taken over — and recorded with its own statement fenced on the claimed `(attempts, next_attempt_at)`: sent / backoff 1 m, 5 m, 30 m, 2 h, then 6 h / dead after 8 attempts or a permanent rejection (bodies of sent and dead rows dropped, enforced by a CHECK), times taken at the outcome. Rows a run stops before (shutdown — checked between messages — or the deadline) are released (due now, attempt undone); after a crash they retry after the lease. A message past its `expires_at` is never attempted again. Each job run is its own task, so a panic is logged and the loop goes on. Logs carry id, kind and error kind only. Explicit clock. Details in [email.md](email.md#delivery) |
+| `outbox` | 10 s | Per channel, each only when configured: `email` (SMTP), then `telegram` (bot; chat looked up at send time, no link → dead — [telegram.md](telegram.md#notices)). Claim-then-send: a short transaction (holding the job lock) leases up to 8 due messages of the channel (`attempts + 1`, `next_attempt_at = now + 10 min`, `SKIP LOCKED`; 8 × 60 s + 30 s skew margin < 10 min is a compile-time check), then each is sent outside any transaction (60 s per send) — never starting a send that could end within 30 s of the lease's end, skipping a row whose lease was taken over — and recorded with its own statement fenced on the claimed `(attempts, next_attempt_at)`: sent / backoff 1 m, 5 m, 30 m, 2 h, then 6 h / dead after 8 attempts or a permanent rejection (bodies of sent and dead rows dropped, enforced by a CHECK), times taken at the outcome. Rows a run stops before (shutdown — checked between messages — or the deadline) are released (due now, attempt undone); after a crash they retry after the lease. A message past its `expires_at` is never attempted again. Each job run is its own task, so a panic is logged and the loop goes on. Logs carry id, kind and error kind only. Explicit clock. Details in [email.md](email.md#delivery) |
 
 ## HTTP surface (current)
 
@@ -47,7 +48,8 @@ default port (`:443` for https, `:80` for http) spelled out counts as none; anot
 IP literal → 404. `X-Forwarded-Host` / `Forwarded` are never trusted. Unknown or disabled
 tenants are 404 everywhere, and so are enabled tenants whose slug today's rules reject
 (startup refuses to run with any — rename or disable them). The apex serves only
-`GET /` → 302 `{scheme}://system.{host}/admin`. Paths below are per tenant host.
+`GET /` → 302 `{scheme}://system.{host}/admin` and the Telegram webhook (404 on tenant
+hosts). Other paths below are per tenant host.
 
 Trust model: issuer, redirect URLs and the CSRF origin all derive from `PUBLIC_URL` plus
 the tenant's slug in the DB, never from request text, so a client choosing its `Host`
@@ -61,6 +63,7 @@ proxy sits in front; the server ignores the forwarded host either way).
 | `GET /healthz` — process alive, no DB dependency (any host) | app | `health` |
 | `GET /readyz` — migrations done + DB ping, else 503 (any host) | app | `health` |
 | `GET /` on the apex → 302 to the system admin portal | app | `tenancy` |
+| `POST /telegram/webhook` on the apex — bot updates, secret-token authenticated ([telegram.md](telegram.md)) | app | `telegram::webhook` |
 | `GET /.well-known/openid-configuration` | app | `oidc::discovery` |
 | `GET /discovery/keys` — JWKS (next + active + unexpired retired), `max-age=300` | app | `oidc::discovery` |
 | `GET /oauth2/authorize` | app | `oidc::authorize` |
@@ -69,7 +72,7 @@ proxy sits in front; the server ignores the forwarded host either way).
 | `POST /oauth2/introspect` (RFC 7662) | app | `oidc::introspect` |
 | `POST /oauth2/revoke` (RFC 7009) | app | `oidc::revoke` |
 | `GET /oauth2/logout` (RP-initiated), `POST` (confirmation page, CSRF-checked) | app | `oidc::logout` |
-| `GET /api/authn/tx/{id}`, `POST …/{password,totp,recovery,passkey/options,passkey,change-password,consent}` — login JSON API, contract in [api/authn.md](api/authn.md) | app | `authn` |
+| `GET /api/authn/tx/{id}`, `POST …/{password,totp,recovery,passkey/options,passkey,telegram/send,telegram,change-password,consent}` — login JSON API, contract in [api/authn.md](api/authn.md) | app | `authn` |
 | `POST /api/authn/password-reset`, `POST /api/authn/email/{verify,reset,invite,invite/passkey/options,invite/passkey}` — email links (the token is the credential), same contract | app | `authn::{reset,email}` |
 | `/api/v1/{settings,users,groups,directory-roles,applications,role-assignments,consents,audit-events}[/…]`, `/api/v1/me[/…]`, and on the system host only `/api/v1/tenants[/{slug}]` (system Global Admins) — management REST API, bearer tokens for the host tenant's `management-api`; contract in [api/management.md](api/management.md) | app | `api` |
 | `/{login,logout,myaccount,admin}[/…]` → `index.html` (incl. the public link pages `/login/reset`, `/login/invite`, `/myaccount/verify-email`) | app | `spa` |
@@ -84,9 +87,9 @@ Implemented:
 
 | Module | Responsibility |
 |---|---|
-| `config` | Env parsing + validation (`env.rs`, `Config::from_lookup` for tests); `PublicUrl` (`public_url.rs`: origin-only `PUBLIC_URL`, `tenant_origin`, `host_kind`); `SmtpConfig` (`smtp.rs`: optional `SMTP_URL` + `SMTP_FROM`, both or neither, URL redacted); redacting `Debug` |
+| `config` | Env parsing + validation (`env.rs`, `Config::from_lookup` for tests); `PublicUrl` (`public_url.rs`: origin-only `PUBLIC_URL`, `tenant_origin`, `host_kind`); `SmtpConfig` (`smtp.rs`: optional `SMTP_URL` + `SMTP_FROM`, both or neither, URL redacted); `TelegramConfig` (`telegram.rs`: bot token / username / webhook secret all or none, API URL https or loopback); redacting `Debug` |
 | `error` | `AppError` → JSON `{error, error_description}`; 5xx causes logged, never leaked |
-| `app` | `AppState { db, config, migrated, tasks, detached }` (`tasks`: `TaskTracker` of work handlers leave running after answering, awaited at shutdown; `detached`: `Semaphore` capping it at 64 in flight) and router assembly (trace + metrics layers) |
+| `app` | `AppState { db, config, migrated, tasks, detached, telegram }` (`telegram`: the Bot API client; `tasks`: `TaskTracker` of work handlers leave running after answering, awaited at shutdown; `detached`: `Semaphore` capping it at 64 in flight) and router assembly (trace + metrics layers) |
 | `db` | Pool connect; `migrate()` in one transaction holding `pg_advisory_xact_lock`; `migrate_and_reconcile()` (startup) adds `builtin_apps::reconcile_all` to it |
 | `health` | `/healthz`, `/readyz` |
 | `metrics` | Global Prometheus recorder, `/metrics` router, `http_requests_total` + `http_request_duration_seconds`. Labels are bounded: `path` = route template (fallback → `unmatched`), `method` = standard verb or `other` |
@@ -100,12 +103,13 @@ Implemented:
 | `secret` | Random bearer secrets (256-bit, base64url), random UUIDv4 handles, SHA-256 storage hash, constant-time compare |
 | `oidc` | Protocol endpoints; `params` (duplicate-rejecting form/query parsing, `AuthRequest`), `pkce`, `redirect` (matching + building), `scope` (parsing, resource resolution), `client_auth`, `error` (`OAuthError`, RFC 6749 JSON + `WWW-Authenticate`, `no-store`) |
 | `mail` | `Mailer` trait (`Email`, `MailError` transient/permanent) + `SmtpMailer` (lettre, rustls on AWS-LC, webpki roots, 15 s command timeout); `templates` (plain-text link messages and security notices); `outbox` (`enqueue` on the caller's transaction, body sealed, backoff schedule); `tokens` (email link tokens: issue voids the user's older ones of that purpose, atomic single-use `consume` scoped to the tenant); `links::send` (token + message + outbox row) |
-| `notify` | Security notices (`notify::event`, `email_changed` to the old address) honouring `notification_prefs` (no row = on); email only to a verified address |
-| `authn` | Login JSON API + CSRF guard (`AuthnError`, `JsonBody`), `passkey` (passkey sign-in), `invite_passkey` (invitation accepted with a passkey), `cookie` (session, tx-binding and device cookies), `device` (known devices + new sign-in notice), `reset` (password-reset request / completion), `email` (verify / invite link redemption), `ctx`, `tx` (login transactions + browser binding + view), `password`, `mfa` (TOTP / recovery), `complete` (next step, consent, session + code), `session` (cookie), `totp` (RFC 6238 via AWS-LC HMAC, sealed secret, replay-protected step), `recovery`, `rate_limit`, `ip` |
+| `notify` | Security notices (`notify::event`, `email_changed` to the old address) honouring `notification_prefs` (no row = on); email only to a verified address, Telegram to a linked chat |
+| `telegram` | Bot: `api` (reqwest `sendMessage` / `setWebhook`, token never logged; outbox `Courier`), `update` (pure update parsing), `links` (link codes, links), `otp` (sign-in codes), `webhook`, `set_webhook` (CLI) — [telegram.md](telegram.md) |
+| `authn` | Login JSON API + CSRF guard (`AuthnError`, `JsonBody`), `passkey` (passkey sign-in), `invite_passkey` (invitation accepted with a passkey), `cookie` (session, tx-binding and device cookies), `device` (known devices + new sign-in notice), `telegram` (sending sign-in codes), `reset` (password-reset request / completion), `email` (verify / invite link redemption), `ctx`, `tx` (login transactions + browser binding + view), `password`, `mfa` (TOTP / recovery / Telegram codes), `complete` (next step, consent, session + code), `session` (cookie), `totp` (RFC 6238 via AWS-LC HMAC, sealed secret, replay-protected step), `recovery`, `rate_limit`, `ip` |
 | `consent` | Pure evaluation (granted / needs user / needs admin) + grant lookup / merge-upsert |
 | `tokens` | Issuance (`issue_delegated`, `issue_app_only`), `inspect` (access-token resolution incl. user-disabled check), `claims` (pure builders), `jwt` (sign with active key, verify against published keys + `typ`), `opaque`, `refresh` (family state machine, rotation, revocation), `code`, `principal` (groups, roles) |
-| `jobs` | `sweeper` (incl. audit retention), `rotation`, `outbox` (email delivery), leader lock helper |
-| `api` | Management REST API: `auth` (`Caller` / `SystemAdmin` bearer extractors), `guard` (administrator protection, last-GlobalAdmin lock), `page` (UUIDv7 keyset pagination), `validate` (client ids, redirect / identifier URIs, scope values), `app_rules` (app lookup + row lock, built-in protection, credential protection of privileged apps, lifetime and per-app caps), `extract` (JSON-error extractors), one module per resource (`tenants`, `users`, `user_actions`, `user_invite`, `groups`, `directory_roles`, `applications`, `apps_secrets`, `apps_scopes`, `apps_roles`, `apps_permissions`, `role_assignments`, `consents`, `audit_events`, `me`, `me_mfa`, `me_email`, `me_passkeys`, `user_passkeys`), `reauth` (password-or-passkey re-authentication) |
+| `jobs` | `sweeper` (incl. audit retention), `rotation`, `outbox` (delivery per channel `Courier`: email, Telegram), leader lock helper |
+| `api` | Management REST API: `auth` (`Caller` / `SystemAdmin` bearer extractors), `guard` (administrator protection, last-GlobalAdmin lock), `page` (UUIDv7 keyset pagination), `validate` (client ids, redirect / identifier URIs, scope values), `app_rules` (app lookup + row lock, built-in protection, credential protection of privileged apps, lifetime and per-app caps), `extract` (JSON-error extractors), one module per resource (`tenants`, `users`, `user_actions`, `user_invite`, `groups`, `directory_roles`, `applications`, `apps_secrets`, `apps_scopes`, `apps_roles`, `apps_permissions`, `role_assignments`, `consents`, `audit_events`, `me`, `me_mfa`, `me_email`, `me_passkeys`, `me_telegram`, `user_passkeys`), `reauth` (password-or-passkey re-authentication) |
 | `webauthn` | Own WebAuthn verifier on AWS-LC + `ciborium`: `cbor`, `authdata`, `cose`, `client_data`, `register`, `assert` — see [passkeys.md](passkeys.md) |
 | `passkey` | Passkey ceremonies over the DB: `challenge` (single-use, 5 min), `store` (credentials, user handle, last-method rule), `wire` (browser JSON, options) |
 | `authz` | Pure permission matrix (directory roles, `Directory.Read.All` / `ReadWrite.All`) and administrator protection |
@@ -170,6 +174,7 @@ migration transaction). Deleting a tenant cascades to everything it owns.
 | `outbox` | `channel` email\|telegram, `recipient`, `kind` (shape-checked), `subject`, `body_enc` (sealed: bodies carry link tokens; NULL once sent or dead), `attempts`, `next_attempt_at`, `last_error` (error kind only), `sent_at`, `dead_at`, `expires_at` (= the link's lifetime, notices 24 h). Only the tenant FK |
 | `email_tokens` | `token_hash` (unique), user, `email` (the address at issue time; redeeming requires it unchanged), `purpose` verify\|reset\|invite\|change (24 h / 30 min / 7 d / 24 h), `new_email` (change only, CHECK), `consumed_at` (single use) |
 | `known_devices` | (tenant, user, SHA-256 of user id ‖ device cookie) unique, user agent, `first_seen` / `last_seen`, `expires_at` 1 y (refreshed per sign-in) |
+| `telegram_links` · `telegram_link_codes` · `telegram_otps` | linked chat per user, single-use 10-min link codes, per-transaction 5-min sign-in codes — [telegram.md](telegram.md#data) |
 | `notification_prefs` | PK (tenant, user, event ∈ password_changed, mfa_changed, email_changed, new_sign_in, token_reuse); `email`, `telegram` booleans; no row = both on |
 | `audit_events` | `at`, `actor_type` user\|application\|system + `actor_id`, `event_type` (closed Rust enum `audit::EventType`, DB only checks the dotted shape so retired types stay valid history), `target_type` + `target_id`, `outcome` success\|failure, `ip`, `details` jsonb (never secrets). No FKs besides the tenant: events outlive what they mention. Indexed `(tenant_id, id DESC)` for newest-first listing, `(tenant_id, at)` for retention |
 
@@ -262,7 +267,7 @@ need no consent (grants are keyed by a resource app).
 | ID token | JWT signed with the **client** app's `signing_alg`, `typ: JWT`, 1 h | `aud = client_id`, `azp`, `nonce`, `auth_time`, `amr`, `sid`, `oid`, `tid`, `at_hash`, `ver`, plus `name preferred_username` (profile) and `email email_verified` (email) |
 | Refresh | opaque, rotating | — |
 
-`amr`: `["pwd"]`, `["pwd","otp","mfa"]` after a TOTP or recovery code, `["pwd","hwk"|"swk","mfa"]`
+`amr`: `["pwd"]`, `["pwd","otp","mfa"]` after a TOTP, recovery or Telegram code, `["pwd","hwk"|"swk","mfa"]`
 after a passkey as second factor, `["hwk"|"swk","user","mfa"]` for a passwordless passkey sign-in.
 Opaque access tokens store the same claim set as `claims` jsonb. JWT
 verification (userinfo, introspection, `id_token_hint`) accepts only keys the
@@ -369,13 +374,11 @@ opaque access tokens for the resource (one user, or everyone for an admin
 grant); deleting a scope revokes the families holding it, and refresh
 never re-mints a scope the resource no longer exposes.
 
-## Email
+## Email, passkeys, Telegram
 
-Optional; flows, links, tokens and notices in [email.md](email.md).
-
-## Passkeys
-
-WebAuthn verifier, state, flows and policy in [passkeys.md](passkeys.md).
+Email (optional): flows, links, tokens and notices in [email.md](email.md). Passkeys:
+WebAuthn verifier, state, flows and policy in [passkeys.md](passkeys.md). Telegram
+(optional): bot, linking, sign-in codes and notices in [telegram.md](telegram.md).
 
 ## Frontend (`web/`)
 

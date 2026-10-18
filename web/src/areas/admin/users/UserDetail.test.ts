@@ -20,7 +20,7 @@ const { useAuthStore } = await import('@/stores/auth')
 
 const passkeyOnly: UserDetail = {
   ...fakeMe({ id: 'u1', email: 'bob@example.com', has_password: false }),
-  mfa: { totp: false, totp_pending: false, recovery_codes_remaining: 0, passkeys: 1 },
+  mfa: { totp: false, totp_pending: false, recovery_codes_remaining: 0, passkeys: 1, telegram: false },
 }
 
 async function mountPage() {
@@ -82,5 +82,28 @@ describe('UserDetail passkeys', () => {
     await button(w, 'Reset MFA')[1]?.trigger('click')
     await flushPromises()
     expect(w.find('[role=alert]').text()).toMatch(/Set a password first \(reset password\)/)
+  })
+})
+
+describe('UserDetail Telegram', () => {
+  const telegramOnly: UserDetail = {
+    ...passkeyOnly,
+    has_password: true,
+    mfa: { ...passkeyOnly.mfa, passkeys: 0, telegram: true },
+  }
+
+  it('shows a linked Telegram and lets MFA reset unlink it', async () => {
+    users.get.mockResolvedValue(telegramOnly)
+    users.passkeys.mockResolvedValue({ items: [] })
+    const w = await mountPage()
+    expect(w.text()).toContain('Telegram linked')
+    expect(button(w, 'Reset MFA')[0]?.attributes('disabled')).toBeUndefined()
+    await button(w, 'Reset MFA')[0]?.trigger('click')
+    expect(w.text()).toContain('Telegram is unlinked')
+  })
+
+  it('says nothing about Telegram while none is linked', async () => {
+    const w = await mountPage()
+    expect(w.text()).not.toContain('Telegram linked')
   })
 })

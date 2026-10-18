@@ -128,7 +128,8 @@ pub async fn submit(
         return Err(AuthnError::AccountDisabled);
     }
     let has_second_factor = totp::confirmed(conn, tenant.id, user.id).await?.is_some()
-        || passkey::store::count(conn, tenant.id, user.id).await? > 0;
+        || passkey::store::count(conn, tenant.id, user.id).await? > 0
+        || super::telegram::is_factor(&state, tenant.id, user.id).await?;
     let next = if has_second_factor {
         Some(LoginStage::Mfa)
     } else if user.must_change_password {

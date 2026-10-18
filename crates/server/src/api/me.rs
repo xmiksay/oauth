@@ -43,7 +43,10 @@ async fn me_view(state: &AppState, user: &users::Model) -> AppResult<Value> {
     if let Some(obj) = view.as_object_mut() {
         obj.insert(
             "features".into(),
-            json!({ "email": state.config.email_enabled() }),
+            json!({
+                "email": state.config.email_enabled(),
+                "telegram": state.config.telegram_enabled(),
+            }),
         );
     }
     Ok(view)

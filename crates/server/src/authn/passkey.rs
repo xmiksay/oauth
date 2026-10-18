@@ -185,6 +185,14 @@ pub async fn factors(state: &AppState, tx: &tx::LoadedTx) -> AuthnResult<Vec<&'s
             if store::count(&state.db, tenant_id, user_id).await? > 0 {
                 out.push("passkey");
             }
+            // Without a bot the factor can't work; it is offered only when
+            // nothing else is, and then answers `telegram_unavailable`, so
+            // the user learns why the step is stuck.
+            if super::telegram::is_factor(state, tenant_id, user_id).await?
+                && (state.telegram.is_some() || out.is_empty())
+            {
+                out.push("telegram");
+            }
             out
         }
         _ => Vec::new(),

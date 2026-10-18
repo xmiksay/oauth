@@ -89,7 +89,7 @@ also bounds the rows a client can create.
   (password acceptance refused, resend 409; an admin email change sends a
   verification link instead of a new invitation).
 - **Admin**: the user detail lists passkeys and can remove one. **Reset
-  MFA** removes TOTP, recovery codes and passkeys — except for a user
+  MFA** removes TOTP, recovery codes and passkeys (and unlinks Telegram) — except for a user
   without a password who has passkeys: then it is refused (409), because it
   would lock them out. The recovery is explicit: `reset-password` (a
   one-time password the user must change), then `reset-mfa`.

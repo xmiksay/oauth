@@ -1,28 +1,55 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
 import type { LoginFactor } from '@/api/authn'
+import TelegramFactor from './TelegramFactor.vue'
 
-/** `factors`: what this user has; `passkeys`: whether this browser can use one. */
-const props = defineProps<{ locked: boolean; factors: LoginFactor[]; passkeys: boolean }>()
-const emit = defineEmits<{ totp: [code: string]; recovery: [code: string]; passkey: [] }>()
+/**
+ * `factors`: what this user has; `passkeys`: whether this browser can use one;
+ * `telegramSent`: a Telegram code went out in this step.
+ */
+const props = defineProps<{
+  locked: boolean
+  factors: LoginFactor[]
+  passkeys: boolean
+  telegramSent?: boolean
+}>()
+const emit = defineEmits<{
+  totp: [code: string]
+  recovery: [code: string]
+  passkey: []
+  telegramSend: []
+  telegram: [code: string]
+}>()
 
+type CodeMode = 'totp' | 'telegram' | 'recovery'
+
+// Order = preference for the initial mode; recovery codes are the fallback.
 const codeModes = computed(() =>
-  (['totp', 'recovery'] as const).filter((f) => props.factors.includes(f)),
+  (['totp', 'telegram', 'recovery'] as const).filter((f) => props.factors.includes(f)),
 )
+const SWITCH_LABELS: Record<CodeMode, string> = {
+  totp: 'Use my authenticator app instead',
+  telegram: 'Get a code via Telegram instead',
+  recovery: 'Use a recovery code instead',
+}
 const offersPasskey = computed(() => props.factors.includes('passkey'))
-const mode = ref<'totp' | 'recovery' | null>(codeModes.value[0] ?? null)
+const mode = ref<CodeMode | null>(codeModes.value[0] ?? null)
+const others = computed(() => codeModes.value.filter((m) => m !== mode.value))
 const code = ref('')
 const input = ref<HTMLInputElement | null>(null)
 const focusTarget = ref<HTMLButtonElement | null>(null)
 
-async function toggle() {
-  mode.value = mode.value === 'totp' ? 'recovery' : 'totp'
+async function switchTo(next: CodeMode) {
+  mode.value = next
   code.value = ''
   await nextTick()
   input.value?.focus()
 }
 
-onMounted(() => (input.value ?? focusTarget.value)?.focus())
+// TelegramFactor focuses its own control.
+onMounted(() => {
+  if (mode.value !== 'telegram') (input.value ?? focusTarget.value)?.focus()
+})
 
 function submit() {
   if (mode.value === 'recovery') emit('recovery', code.value.trim())
@@ -32,8 +59,15 @@ function submit() {
 
 <template>
   <div class="space-y-4">
+    <TelegramFactor
+      v-if="mode === 'telegram'"
+      :locked="locked"
+      :sent="telegramSent ?? false"
+      @send="emit('telegramSend')"
+      @submit="(c) => emit('telegram', c)"
+    />
     <form
-      v-if="mode"
+      v-else-if="mode"
       class="space-y-4"
       @submit.prevent="submit"
     >
@@ -80,15 +114,21 @@ function submit() {
       >
         Verify
       </button>
+    </form>
+    <div
+      v-if="others.length"
+      class="flex flex-col items-start gap-1"
+    >
       <button
-        v-if="codeModes.length > 1"
+        v-for="m in others"
+        :key="m"
         type="button"
         class="btn-link"
-        @click="toggle"
+        @click="switchTo(m)"
       >
-        {{ mode === 'recovery' ? 'Use my authenticator app instead' : 'Use a recovery code instead' }}
+        {{ SWITCH_LABELS[m] }}
       </button>
-    </form>
+    </div>
     <template v-if="offersPasskey">
       <p
         v-if="!mode"

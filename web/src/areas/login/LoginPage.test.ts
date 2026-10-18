@@ -12,6 +12,8 @@ const api = {
   requestPasswordReset: vi.fn(),
   passkeyOptions: vi.fn(),
   passkey: vi.fn(),
+  sendTelegramCode: vi.fn(),
+  submitTelegram: vi.fn(),
 }
 vi.mock('@/api/authn', async (orig) => ({
   ...(await orig<typeof import('@/api/authn')>()),
@@ -80,6 +82,36 @@ describe('LoginPage', () => {
     await flushPromises()
     expect(w.find('[data-testid=retry-countdown]').text()).toBe('Try again in 3 s.')
     expect(w.find('button[type=submit]').attributes('disabled')).toBeDefined()
+  })
+
+  it('sends a Telegram code after a failed delivery and submits it', async () => {
+    api.get.mockResolvedValue({
+      ...passwordView,
+      step: 'mfa',
+      factors: ['telegram'],
+      user: { email: 'ann@example.com', display_name: 'Ann' },
+    })
+    api.sendTelegramCode
+      .mockRejectedValueOnce(new ApiError(502, { error: 'delivery_failed' }))
+      .mockResolvedValueOnce({ sent: true, expires_in: 300 })
+    api.submitTelegram.mockRejectedValue(new ApiError(401, { error: 'invalid_code' }))
+    const w = await mountPage()
+    const send = () =>
+      w.findAll('button').find((b) => b.text() === 'Send code via Telegram')?.trigger('click')
+    await send()
+    await flushPromises()
+    expect(w.find('[role=alert]').text()).toBe("Couldn't send the code via Telegram. Try again.")
+    await send()
+    await flushPromises()
+    expect(w.find('[role=status]').text()).toContain('We sent a code to your Telegram.')
+    expect(document.activeElement?.id).toBe('telegram-code')
+    await w.find('#telegram-code').setValue('123456')
+    await w.find('form').trigger('submit')
+    await flushPromises()
+    expect(api.submitTelegram).toHaveBeenCalledWith('tx-1', '123456')
+    expect(w.find('[role=alert]').text()).toBe(
+      'Wrong or expired code. Request a new code if needed.',
+    )
   })
 
   it('hides "Forgot password?" when the server cannot send email', async () => {

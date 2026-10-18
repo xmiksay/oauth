@@ -17,7 +17,7 @@ const { slug } = storeToRefs(useTenantStore())
 const tx = typeof route.query.tx === 'string' && route.query.tx ? route.query.tx : null
 
 const flow = useLoginFlow(tx)
-const { phase, view, error, notice, locked, rateLimited, retryIn } = flow
+const { phase, view, error, notice, locked, rateLimited, retryIn, telegramSent } = flow
 
 onMounted(flow.load)
 onUnmounted(flow.dispose)
@@ -176,8 +176,11 @@ const subtitle = computed(() => {
         :locked="locked"
         :factors="factors"
         :passkeys="canUsePasskeys"
+        :telegram-sent="telegramSent"
         @totp="flow.totp"
         @recovery="flow.recovery"
+        @telegram-send="flow.sendTelegram"
+        @telegram="flow.telegram"
         @passkey="flow.passkey"
       />
       <ChangePasswordStep

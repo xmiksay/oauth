@@ -23,6 +23,7 @@ pub mod passkey;
 pub mod secret;
 pub mod serve;
 pub mod spa;
+pub mod telegram;
 pub mod tenancy;
 pub mod tokens;
 pub mod webauthn;

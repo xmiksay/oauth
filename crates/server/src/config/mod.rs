@@ -4,6 +4,7 @@
 mod env;
 mod public_url;
 mod smtp;
+mod telegram;
 
 use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr};
 
@@ -11,6 +12,7 @@ use anyhow::bail;
 
 pub use public_url::{HostKind, PublicUrl};
 pub use smtp::SmtpConfig;
+pub use telegram::TelegramConfig;
 
 const MASTER_KEY_LEN: usize = 32;
 
@@ -55,6 +57,8 @@ pub struct Config {
     pub trusted_proxy_header: Option<String>,
     /// Outgoing mail; `None` hides every email feature.
     pub smtp: Option<SmtpConfig>,
+    /// Telegram bot; `None` hides every Telegram feature.
+    pub telegram: Option<TelegramConfig>,
 }
 
 // Hand-written so secrets never reach logs through `{:?}`.
@@ -74,6 +78,7 @@ impl fmt::Debug for Config {
             .field("cookie_secure", &self.cookie_secure)
             .field("trusted_proxy_header", &self.trusted_proxy_header)
             .field("smtp", &self.smtp)
+            .field("telegram", &self.telegram)
             .finish()
     }
 }
@@ -117,6 +122,11 @@ impl Config {
     /// Whether email can be sent (verification, reset, invites, notices).
     pub fn email_enabled(&self) -> bool {
         self.smtp.is_some()
+    }
+
+    /// Whether the Telegram bot is configured (linking, codes, notices).
+    pub fn telegram_enabled(&self) -> bool {
+        self.telegram.is_some()
     }
 
     /// OIDC issuer of a tenant (= its origin, no path).

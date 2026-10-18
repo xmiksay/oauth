@@ -55,13 +55,34 @@ export interface UserDetail extends User {
     totp_pending: boolean
     recovery_codes_remaining: number
     passkeys: number
+    /** A Telegram chat is linked (sign-in codes and notifications can go there). */
+    telegram: boolean
   }
 }
 
 /** `GET` / `PATCH me`: the caller's own `UserDetail` plus what the server offers. */
 export type Me = UserDetail & {
-  /** `email`: the server can send email (verification, invitations, notifications). */
-  features: { email: boolean }
+  /**
+   * `email`: the server can send email (verification, invitations, notifications);
+   * `telegram`: a Telegram bot is configured (sign-in codes, notifications).
+   */
+  features: { email: boolean; telegram: boolean }
+}
+
+/** `GET me/telegram`; `username` (no `@`) may be null even when linked. */
+export interface TelegramStatus {
+  linked: boolean
+  username: string | null
+  linked_at: string | null
+}
+
+/**
+ * `POST me/telegram/link`: the bot deep link carries a single-use bearer code — hold it only
+ * in the showing component's state, never in a store, storage or logs.
+ */
+export interface TelegramLink {
+  url: string
+  expires_at: string
 }
 
 export type NotificationEvent =

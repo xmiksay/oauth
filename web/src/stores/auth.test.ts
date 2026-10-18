@@ -205,8 +205,8 @@ describe('auth store', () => {
       has_password: true,
       created_at: '',
       updated_at: '',
-      mfa: { totp: false, totp_pending: false, recovery_codes_remaining: 0, passkeys: 0 },
-      features: { email: false },
+      mfa: { totp: false, totp_pending: false, recovery_codes_remaining: 0, passkeys: 0, telegram: false },
+      features: { email: false, telegram: false },
     }
     auth.setMe({ ...base, directory_roles: ['UserAdmin'] })
     expect([auth.isAdmin, auth.canWriteUsers, auth.canWriteApps, auth.isGlobalAdmin]).toEqual([

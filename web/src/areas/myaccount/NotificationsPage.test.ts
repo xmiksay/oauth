@@ -32,14 +32,19 @@ async function mountPage(over: Partial<Me> = {}) {
     created_at: '',
     updated_at: '',
     directory_roles: [],
-    mfa: { totp: false, totp_pending: false, recovery_codes_remaining: 0, passkeys: 0 },
-    features: { email: true },
+    mfa: { totp: false, totp_pending: false, recovery_codes_remaining: 0, passkeys: 0, telegram: false },
+    features: { email: true, telegram: false },
     ...over,
   })
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: [{ path: '/myaccount', name: 'myaccount', component: NotificationsPage }],
+    routes: [
+      { path: '/myaccount', name: 'myaccount', component: NotificationsPage },
+      { path: '/myaccount/security', name: 'myaccount-security', component: NotificationsPage },
+      { path: '/myaccount/notifications', component: NotificationsPage },
+    ],
   })
+  await router.push('/myaccount/notifications')
   const w = mount(NotificationsPage, { global: { plugins: [pinia, router] } })
   await flushPromises()
   return w
@@ -75,6 +80,22 @@ describe('NotificationsPage', () => {
     notifications.mockResolvedValue(settings({ email: true, telegram: true }))
     const w = await mountPage()
     expect(w.find('[data-testid=telegram-token_reuse]').exists()).toBe(true)
+    expect(w.findAll('thead th').map((th) => th.text())).toEqual(['Event', 'Email', 'Telegram'])
+    expect(w.text()).not.toContain('Link Telegram')
+  })
+
+  it('hides the Telegram column until a chat is linked, pointing to Security info', async () => {
+    notifications.mockResolvedValue(settings({ email: true, telegram: false }))
+    const w = await mountPage({ features: { email: true, telegram: true } })
+    expect(w.find('[data-testid=telegram-token_reuse]').exists()).toBe(false)
+    expect(w.findAll('thead th').map((th) => th.text())).toEqual(['Event', 'Email'])
+    expect(w.find('a[href="/myaccount/security"]').text()).toBe('Link Telegram in Security info')
+  })
+
+  it('says nothing about Telegram when the server has no bot', async () => {
+    notifications.mockResolvedValue(settings())
+    const w = await mountPage()
+    expect(w.text()).not.toContain('Telegram')
   })
 
   it('explains that email is unavailable and disables its toggles', async () => {

@@ -31,6 +31,9 @@ a one-time password that must be changed at first sign-in):
 make bootstrap ADMIN_EMAIL=you@example.com            # RESET=1 re-issues the password
 ```
 
+With a Telegram bot configured (`TELEGRAM_*`, see `.env.example`), register its
+webhook once with `make telegram-webhook` (`oauth telegram set-webhook`).
+
 Sign in at <http://system.localhost:5173/admin> with that password (you are
 asked to choose a new one). A tenant created there, say `acme`, is at
 <http://acme.localhost:5173/admin>; its issuer is `http://acme.localhost:5173`.
@@ -45,8 +48,8 @@ One Vue SPA served by the backend on every tenant host `{t}.{PUBLIC_URL host}`:
 | URL | What |
 |---|---|
 | `/admin` | Admin center (Entra-portal-like): users, groups, app registrations (authentication, secrets, token configuration, expose an API, app roles, API permissions + admin consent), role assignments, directory roles, audit log, settings; in the `system` tenant also tenants |
-| `/myaccount` | My Account: profile, password, authenticator app + recovery codes, sessions, app permissions |
-| `/login?tx=…` | Sign-in steps (password → authenticator / recovery code → forced password change → consent) |
+| `/myaccount` | My Account: profile, email, password, authenticator app + recovery codes, passkeys, Telegram, notifications, sessions, app permissions |
+| `/login?tx=…` | Sign-in steps (password or passkey → authenticator / recovery / Telegram code / passkey → forced password change → consent) |
 | `/logout` | Sign-out confirmation / "signed out" page |
 
 Admin center and My Account are the tenant's built-in OIDC clients
@@ -73,5 +76,6 @@ the tenant host without the port).
 - [Management API](docs/api/management.md) — `/api/v1` REST contract for the admin / My Account SPAs and service apps ([`me`](docs/api/me.md))
 - [Email](docs/email.md) — verification, password reset, invitations, security notices
 - [Passkeys](docs/passkeys.md) — WebAuthn verifier, passwordless / MFA sign-in, re-authentication
+- [Telegram](docs/telegram.md) — bot setup, webhook, sign-in codes, notices
 - [Roadmap](docs/roadmap.md)
 - Deployment: [`deploy/k8s/deploy.yml`](deploy/k8s/deploy.yml), `Dockerfile`

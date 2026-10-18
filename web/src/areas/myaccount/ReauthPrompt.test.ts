@@ -24,7 +24,7 @@ function mountPrompt(over: Partial<Me>, action = vi.fn(async () => {}), slot = '
   return { w, action }
 }
 
-const withPasskeys = { mfa: { totp: false, totp_pending: false, recovery_codes_remaining: 0, passkeys: 1 } }
+const withPasskeys = { mfa: { totp: false, totp_pending: false, recovery_codes_remaining: 0, passkeys: 1, telegram: false } }
 const button = (w: ReturnType<typeof mount>, text: string) =>
   w.findAll('button').find((b) => b.text() === text)
 

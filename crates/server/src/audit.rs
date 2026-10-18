@@ -52,6 +52,8 @@ event_types! {
     MfaPasskeyRename => "user.mfa.passkey_rename",
     MfaPasskeyRemove => "user.mfa.passkey_remove",
     PasskeySignCountRegression => "user.mfa.passkey_sign_count_regression",
+    TelegramLink => "user.mfa.telegram_link",
+    TelegramUnlink => "user.mfa.telegram_unlink",
     EmailVerifyRequest => "user.email_verify_request",
     EmailVerify => "user.email_verify",
     PasswordResetRequest => "user.password_reset_request",

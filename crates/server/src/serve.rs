@@ -35,6 +35,10 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     {
         tracing::debug!("a rustls crypto provider was already set");
     }
+    // Fail now rather than run with Telegram half on.
+    if let Some(telegram) = &config.telegram {
+        crate::telegram::BotApi::new(telegram)?;
+    }
     let metrics_handle = metrics::install()?;
     let db = db::connect(&config.database_url).await?;
 
@@ -111,6 +115,7 @@ pub async fn run_with(
         Some(Ok(())) => {
             state.migrated.store(true, Ordering::Release);
             tracing::info!("migrations applied; ready");
+            warn_orphaned_telegram_links(&state).await;
             // Jobs need the schema, so they start only now.
             let jobs = jobs::spawn(state.clone(), shutdown.clone());
             let result = join(servers).await;
@@ -164,4 +169,25 @@ async fn forward_shutdown_signal(token: CancellationToken) {
     }
     tracing::info!("shutdown signal received, draining connections");
     token.cancel();
+}
+
+/// Linked users keep Telegram as a required factor even without a bot
+/// (fail closed), so an operator who unset it must hear about them.
+async fn warn_orphaned_telegram_links(state: &AppState) {
+    use sea_orm::{EntityTrait, PaginatorTrait};
+    if state.telegram.is_some() {
+        return;
+    }
+    match entity::telegram_links::Entity::find()
+        .count(&state.db)
+        .await
+    {
+        Ok(0) => {}
+        Ok(linked) => tracing::warn!(
+            linked,
+            "Telegram is not configured, but users have it linked as a second factor: \
+             they can't sign in with it until it is configured again (or an admin resets their MFA)"
+        ),
+        Err(err) => tracing::warn!(error = ?err, "counting Telegram links failed"),
+    }
 }

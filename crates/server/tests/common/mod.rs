@@ -9,6 +9,7 @@ pub mod mail;
 pub mod mgmt;
 pub mod passkeys;
 pub mod seed;
+pub mod telegram;
 
 use std::{collections::HashMap, path::Path};
 
