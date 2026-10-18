@@ -135,6 +135,10 @@ async function revokeSessions() {
           v-if="user.mfa.passkeys"
           class="badge"
         >Passkeys: {{ user.mfa.passkeys }}</span>
+        <span
+          v-if="user.mfa.telegram"
+          class="badge"
+        >Telegram linked</span>
         <span class="badge">{{ user.user_type }}</span>
       </p>
       <div
@@ -168,8 +172,8 @@ async function revokeSessions() {
         <ConfirmButton
           label="Reset MFA"
           title="Reset MFA?"
-          message="The user's authenticator app, recovery codes and passkeys are removed. They can set up new ones in My Account."
-          :disabled="!user.mfa.totp && !user.mfa.totp_pending && !user.mfa.passkeys"
+          message="The user's authenticator app, recovery codes and passkeys are removed and Telegram is unlinked. They can set up new ones in My Account."
+          :disabled="!user.mfa.totp && !user.mfa.totp_pending && !user.mfa.passkeys && !user.mfa.telegram"
           :action="resetMfa"
         />
         <ConfirmButton

@@ -21,6 +21,7 @@ pub mod rate_limit;
 pub mod recovery;
 mod reset;
 pub mod session;
+mod telegram;
 pub mod totp;
 pub mod tx;
 
@@ -51,6 +52,8 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(&format!("{TX}/recovery"), post(mfa::recovery))
         .route(&format!("{TX}/passkey/options"), post(passkey::options))
         .route(&format!("{TX}/passkey"), post(passkey::submit))
+        .route(&format!("{TX}/telegram/send"), post(telegram::send))
+        .route(&format!("{TX}/telegram"), post(mfa::telegram))
         .route(&format!("{TX}/change-password"), post(password::change))
         .route(&format!("{TX}/consent"), post(complete::consent))
         .route("/api/authn/password-reset", post(reset::request))
@@ -133,6 +136,14 @@ pub enum AuthnError {
     /// Email features without SMTP configured: they don't exist.
     #[error("email is not available on this server")]
     EmailDisabled,
+    /// A Telegram factor (fail-closed: the user is linked) on a server
+    /// without a bot. Not 404: the transaction is alive, the user may still
+    /// have another factor.
+    #[error("Telegram sign-in is unavailable on this server")]
+    TelegramUnavailable,
+    /// Telegram didn't take the message; the user may try again.
+    #[error("the code could not be sent; try again")]
+    DeliveryFailed,
     #[error("{0}")]
     Invalid(String),
     #[error(transparent)]
@@ -174,6 +185,8 @@ impl IntoResponse for AuthnError {
             Self::RateLimited { .. } => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
             Self::Csrf => (StatusCode::FORBIDDEN, "csrf_rejected"),
             Self::NotFound | Self::EmailDisabled => (StatusCode::NOT_FOUND, "not_found"),
+            Self::TelegramUnavailable => (StatusCode::SERVICE_UNAVAILABLE, "telegram_unavailable"),
+            Self::DeliveryFailed => (StatusCode::BAD_GATEWAY, "delivery_failed"),
             Self::InvalidLink => (StatusCode::BAD_REQUEST, "invalid_token"),
             Self::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
             Self::Invalid(_) => (StatusCode::BAD_REQUEST, "invalid_request"),

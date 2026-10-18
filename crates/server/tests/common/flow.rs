@@ -59,20 +59,41 @@ pub struct Fixture {
     pub tasks: tokio_util::task::TaskTracker,
     /// Its cap on detached work (`AppState::detached`).
     pub detached: std::sync::Arc<tokio::sync::Semaphore>,
+    /// The fake Bot API, for Telegram-enabled fixtures.
+    pub bot: Option<super::telegram::FakeBot>,
 }
 
 impl Fixture {
     pub async fn new() -> Self {
-        Self::build(&[]).await
+        Self::build(&[], false).await
     }
 
     /// A fixture whose server can send email (SMTP configured).
     pub async fn with_email() -> Self {
-        Self::build(&super::SMTP_ENV).await
+        Self::build(&super::SMTP_ENV, false).await
     }
 
-    async fn build(env: &[(&'static str, &str)]) -> Self {
-        let (pg, db, config) = super::migrated_db_with(env).await;
+    /// A fixture with a Telegram bot (talking to a fake Bot API), and with
+    /// email when `email` is set.
+    pub async fn with_telegram(email: bool) -> Self {
+        let env: &[(&'static str, &str)] = if email { &super::SMTP_ENV } else { &[] };
+        Self::build(env, true).await
+    }
+
+    /// The fake Bot API (Telegram fixtures only).
+    pub fn bot(&self) -> &super::telegram::FakeBot {
+        self.bot.as_ref().expect("a Telegram fixture")
+    }
+
+    async fn build(env: &[(&'static str, &str)], telegram: bool) -> Self {
+        let bot = match telegram {
+            true => Some(super::telegram::FakeBot::start().await),
+            false => None,
+        };
+        let bot_env = bot.as_ref().map(super::telegram::env).unwrap_or_default();
+        let mut env = env.to_vec();
+        env.extend(bot_env.iter().map(|(k, v)| (*k, v.as_str())));
+        let (pg, db, config) = super::migrated_db_with(&env).await;
         let tenant = directory::create_tenant(
             &db,
             &config,
@@ -170,6 +191,7 @@ impl Fixture {
             spa,
             tasks,
             detached,
+            bot,
         }
     }
 

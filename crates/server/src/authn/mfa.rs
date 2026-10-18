@@ -1,5 +1,5 @@
-//! Second factor: TOTP code or a one-time recovery code. Both count against
-//! the same rate limits as passwords.
+//! Second factor: TOTP code, a one-time recovery code or a code sent via
+//! Telegram. All count against the same rate limits as passwords.
 
 use axum::{
     extract::{Path, State},
@@ -13,10 +13,10 @@ use super::{
     AuthnError, AuthnResult, JsonBody, Outcome, complete::proceed, ctx::Ctx, ip::ClientIp,
     password::limit, rate_limit, recovery, totp, tx,
 };
-use crate::{app::AppState, metrics, tenancy::Tenant};
+use crate::{app::AppState, metrics, telegram::otp, tenancy::Tenant};
 
-/// RFC 8176: password + one-time code = multi-factor. Recovery codes are
-/// one-time passwords too.
+/// RFC 8176: password + one-time code = multi-factor. Recovery codes and
+/// Telegram codes are one-time passwords too.
 const MFA_AMR: [&str; 3] = ["pwd", "otp", "mfa"];
 
 #[derive(Deserialize)]
@@ -28,6 +28,7 @@ pub struct CodeBody {
 enum Factor {
     Totp,
     Recovery,
+    Telegram,
 }
 
 async fn second_factor(
@@ -42,6 +43,9 @@ async fn second_factor(
     let ctx = Ctx::new(&state, &tenant, ip, &headers);
     let conn = &state.db;
     let mut tx = tx::load_at(&ctx, &tx_id, LoginStage::Mfa).await?;
+    if matches!(factor, Factor::Telegram) && state.telegram.is_none() {
+        return Err(AuthnError::TelegramUnavailable);
+    }
     let user = tx::user_of(conn, &tx).await?;
     limit(&ctx, &rate_limit::user_key(user.id)).await?;
     let ok = match factor {
@@ -50,12 +54,14 @@ async fn second_factor(
             None => false,
         },
         Factor::Recovery => recovery::redeem(conn, tenant.id, user.id, &code).await?,
+        Factor::Telegram => otp::verify(conn, tenant.id, tx.row.id, user.id, &code).await?,
     };
     if !ok {
         metrics::login("mfa_failed");
         let factor = match factor {
             Factor::Totp => "totp",
             Factor::Recovery => "recovery_code",
+            Factor::Telegram => "telegram",
         };
         let details = json!({ "reason": "mfa_failed", "factor": factor });
         ctx.audit_sign_in(conn, Some(user.id), AuditOutcome::Failure, details)
@@ -96,6 +102,27 @@ pub async fn recovery(
         tx_id,
         body.code,
         Factor::Recovery,
+    )
+    .await
+}
+
+/// `POST …/tx/{tx}/telegram`: the code sent by `…/telegram/send`.
+pub async fn telegram(
+    State(state): State<AppState>,
+    tenant: Tenant,
+    ip: ClientIp,
+    headers: HeaderMap,
+    Path(tx_id): Path<String>,
+    JsonBody(body): JsonBody<CodeBody>,
+) -> AuthnResult<Outcome> {
+    second_factor(
+        state,
+        tenant,
+        ip,
+        headers,
+        tx_id,
+        body.code,
+        Factor::Telegram,
     )
     .await
 }

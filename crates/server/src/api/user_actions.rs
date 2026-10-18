@@ -22,7 +22,7 @@ use crate::{
     authz::{Access, Area},
     directory::{self, password},
     error::{AppError, AppResult},
-    notify, passkey,
+    notify, passkey, telegram,
 };
 
 pub fn session_view(s: &sessions::Model, current: Option<Uuid>) -> Value {
@@ -156,7 +156,7 @@ pub async fn reset_password(
     })))
 }
 
-/// Removes TOTP, recovery codes and passkeys: the user signs in with the
+/// Removes TOTP, recovery codes, passkeys and the Telegram link: the user signs in with the
 /// password only and may enroll again. A user WITHOUT a password who has
 /// passkeys is refused (409): their passkeys are their only way in, so
 /// an administrator resets the password first (`reset-password`, a
@@ -182,6 +182,7 @@ pub async fn reset_mfa(
     }
     delete_mfa(&txn, tenant_id, id).await?;
     passkey::store::remove_all(&txn, tenant_id, id).await?;
+    let telegram_unlinked = telegram::links::unlink(&txn, tenant_id, id).await?;
     let facts = notify::change("second factors removed by an administrator");
     notify::event(
         &txn,
@@ -197,7 +198,7 @@ pub async fn reset_mfa(
             &txn,
             EventType::UserMfaReset,
             Some(Target::User(id)),
-            json!({ "passkeys_removed": passkeys }),
+            json!({ "passkeys_removed": passkeys, "telegram_unlinked": telegram_unlinked }),
         )
         .await?;
     txn.commit().await?;

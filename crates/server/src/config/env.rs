@@ -5,7 +5,7 @@ use std::{fmt, net::SocketAddr, path::PathBuf, str::FromStr};
 use anyhow::{Context, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
 
-use super::{Config, LogFormat, MASTER_KEY_LEN, PublicUrl, SmtpConfig};
+use super::{Config, LogFormat, MASTER_KEY_LEN, PublicUrl, SmtpConfig, TelegramConfig};
 
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
@@ -59,6 +59,12 @@ impl Config {
                 .map(|h| parse_header_name(&h))
                 .transpose()?,
             smtp: SmtpConfig::parse(get("SMTP_URL"), get("SMTP_FROM"))?,
+            telegram: TelegramConfig::parse(
+                get("TELEGRAM_BOT_TOKEN"),
+                get("TELEGRAM_BOT_USERNAME"),
+                get("TELEGRAM_WEBHOOK_SECRET"),
+                get("TELEGRAM_API_URL"),
+            )?,
         };
         config.validate()?;
         Ok(config)
@@ -127,6 +133,25 @@ mod tests {
         assert!(cfg.cookie_secure);
         assert_eq!(cfg.trusted_proxy_header, None);
         assert!(cfg.smtp.is_none() && !cfg.email_enabled());
+        assert!(cfg.telegram.is_none() && !cfg.telegram_enabled());
+    }
+
+    #[test]
+    fn telegram_settings() {
+        let mut env = base_env();
+        env.insert("TELEGRAM_BOT_TOKEN", "42:tok-secret".into());
+        assert!(parse(&env).is_err(), "token without username and secret");
+        env.insert("TELEGRAM_BOT_USERNAME", "oauth_bot".into());
+        env.insert("TELEGRAM_WEBHOOK_SECRET", "hook-secret".into());
+        let cfg = parse(&env).unwrap();
+        assert!(cfg.telegram_enabled());
+        let dbg = format!("{cfg:?}");
+        assert!(
+            !dbg.contains("tok-secret") && !dbg.contains("hook-secret"),
+            "{dbg}"
+        );
+        env.insert("TELEGRAM_API_URL", "http://10.0.0.1:8081".into());
+        assert!(parse(&env).is_err(), "plain http off loopback");
     }
 
     #[test]

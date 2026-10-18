@@ -34,6 +34,9 @@ metrics-exporter-prometheus = { version = "0.18", default-features = false }
 sea-orm = { version = "2", default-features = false, features = ["sqlx-postgres", "runtime-tokio-rustls", "macros", "with-uuid", "with-chrono", "with-json", "postgres-array"] }
 sea-orm-migration = { version = "2", default-features = false, features = ["sqlx-postgres", "runtime-tokio-rustls"] }
 percent-encoding = "2"
+# Telegram Bot API client: rustls handed a preconfigured AWS-LC config with
+# webpki roots (no OpenSSL / native-tls, no ring of our own, no proxy lookup).
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
 # Only to make AWS-LC the process-wide rustls provider (lettre's TLS).
 rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs"] }
 serde = { version = "1", features = ["derive"] }
@@ -47,6 +50,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 url = "2"
 uuid = { version = "1", features = ["v7"] }
+webpki-roots = "1"
 zeroize = "1"
 
 # dev

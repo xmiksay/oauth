@@ -21,7 +21,7 @@ NVM = want=$$(cat .nvmrc); have=$$(node --version 2>/dev/null | sed 's/^v\([0-9]
 DOTENV = set -a; [ -f .env ] && . ./.env; set +a;
 
 .PHONY: help build run dev-db web-dev lint lint-rust lint-web fmt test test-unit \
-	test-integration web-test web-build docker bootstrap clean
+	test-integration web-test web-build docker bootstrap telegram-webhook clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -72,6 +72,9 @@ docker: ## Build the container image ($(IMAGE))
 bootstrap: ## Create system tenant + Global Admin (idempotent): make bootstrap ADMIN_EMAIL=you@example.com [RESET=1]
 	@[ -n "$(ADMIN_EMAIL)" ] || { echo "usage: make bootstrap ADMIN_EMAIL=you@example.com [RESET=1]" >&2; exit 1; }
 	$(DOTENV) cargo run -- bootstrap --admin-email "$(ADMIN_EMAIL)" $(if $(RESET),--reset-password)
+
+telegram-webhook: ## Register {PUBLIC_URL}/telegram/webhook with the Telegram bot (loads .env; needs TELEGRAM_*)
+	$(DOTENV) cargo run -- telegram set-webhook
 
 clean: ## Remove build artifacts
 	cargo clean

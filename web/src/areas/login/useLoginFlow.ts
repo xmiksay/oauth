@@ -23,6 +23,9 @@ const defaultDeps: LoginDeps = {
 
 export const PASSKEY_FAILED = "That passkey couldn't be verified. Try again or use another method."
 export const PASSKEY_CANCELLED = 'Passkey sign-in was cancelled.'
+export const TELEGRAM_FAILED = 'Wrong or expired code. Request a new code if needed.'
+export const TELEGRAM_UNAVAILABLE =
+  'Telegram sign-in is unavailable on this server. Use another method or contact your administrator.'
 
 function messageFor(err: ApiError): string {
   switch (err.code) {
@@ -30,6 +33,10 @@ function messageFor(err: ApiError): string {
       return 'Your email or password is incorrect.'
     case 'invalid_code':
       return "That code didn't work. Check it and try again."
+    case 'delivery_failed':
+      return "Couldn't send the code via Telegram. Try again."
+    case 'telegram_unavailable':
+      return TELEGRAM_UNAVAILABLE
     case 'account_disabled':
       return 'Your account has been disabled. Contact your administrator.'
     case 'csrf_rejected':
@@ -54,10 +61,12 @@ export function useLoginFlow(tx: string | null, deps: LoginDeps = defaultDeps) {
   const phase = ref<Phase>(tx ? 'loading' : 'missing')
   const view = shallowRef<TxView | null>(null)
   const error = ref<string | null>(null)
-  /** A soft note (a dismissed passkey dialog), not an error. */
+  /** A soft note (a dismissed passkey dialog, a sent code), not an error. */
   const notice = ref<string | null>(null)
   const busy = ref(false)
   const retryIn = ref(0)
+  /** A Telegram code was sent during this MFA step, so its input can be shown. */
+  const telegramSent = ref(false)
   let timer: ReturnType<typeof setInterval> | null = null
 
   const locked = computed(() => busy.value || retryIn.value > 0)
@@ -93,6 +102,7 @@ export function useLoginFlow(tx: string | null, deps: LoginDeps = defaultDeps) {
       deps.navigate(result.redirect)
       return
     }
+    if (result.step !== 'mfa') telegramSent.value = false
     view.value = result
     phase.value = 'step'
   }
@@ -119,7 +129,8 @@ export function useLoginFlow(tx: string | null, deps: LoginDeps = defaultDeps) {
     } else if (err.status === 429) {
       startCountdown(err.retryAfter ?? 30)
     } else {
-      error.value = failed && err.code === 'invalid_credentials' ? failed : messageFor(err)
+      const rejected = err.code === 'invalid_credentials' || err.code === 'invalid_code'
+      error.value = failed && rejected ? failed : messageFor(err)
     }
   }
 
@@ -143,14 +154,14 @@ export function useLoginFlow(tx: string | null, deps: LoginDeps = defaultDeps) {
     }
   }
 
-  /** `failed`: the `invalid_credentials` message when the step isn't email + password. */
-  async function run(call: (tx: string) => Promise<StepResult>, failed?: string) {
+  /** One request at a time; `failed`: the step's own rejection (`invalid_credentials` / `invalid_code`) message. */
+  async function guarded(call: (tx: string) => Promise<void>, failed?: string) {
     if (!tx || locked.value) return
     busy.value = true
     error.value = null
     notice.value = null
     try {
-      apply(await call(tx))
+      await call(tx)
     } catch (err) {
       await handleError(err, failed)
     } finally {
@@ -158,7 +169,20 @@ export function useLoginFlow(tx: string | null, deps: LoginDeps = defaultDeps) {
     }
   }
 
+  const run = (call: (tx: string) => Promise<StepResult>, failed?: string) =>
+    guarded(async (id) => apply(await call(id)), failed)
+
   const a = deps.api
+
+  /** Not a step POST: it answers `{ sent, expires_in }` and the MFA step stays. */
+  const sendTelegram = () =>
+    guarded(async (id) => {
+      const { expires_in } = await a.sendTelegramCode(id)
+      telegramSent.value = true
+      const minutes = Math.max(1, Math.round(expires_in / 60))
+      notice.value = `We sent a code to your Telegram. It's valid for ${minutes} minutes.`
+    })
+
   // The pending autofill (conditional mediation) request, if any.
   let conditional: AbortController | null = null
 
@@ -211,11 +235,15 @@ export function useLoginFlow(tx: string | null, deps: LoginDeps = defaultDeps) {
     retryIn,
     locked,
     rateLimited,
+    telegramSent,
     load,
     password: (email: string, password: string) =>
       run((id) => a.password(id, email, password)),
     totp: (code: string) => run((id) => a.totp(id, code.replace(/\s/g, ''))),
     recovery: (code: string) => run((id) => a.recovery(id, code)),
+    sendTelegram,
+    telegram: (code: string) =>
+      run((id) => a.submitTelegram(id, code.replace(/\s/g, '')), TELEGRAM_FAILED),
     passkey,
     startConditional,
     stopConditional,

@@ -68,6 +68,16 @@ describe('login API client', () => {
     ])
   })
 
+  it('sends a Telegram code with {} and posts it like a TOTP code', async () => {
+    const calls = mockFetch({ body: { sent: true, expires_in: 300 } }, {})
+    expect(await authn.sendTelegramCode('tx-1')).toEqual({ sent: true, expires_in: 300 })
+    await authn.submitTelegram('tx-1', '123456')
+    expect(calls.map((c) => [c.method, c.url, c.body])).toEqual([
+      ['POST', '/api/authn/tx/tx-1/telegram/send', {}],
+      ['POST', '/api/authn/tx/tx-1/telegram', { code: '123456' }],
+    ])
+  })
+
   it('tells a step view from a redirect', () => {
     expect(isRedirect({ redirect: 'x' })).toBe(true)
     expect(

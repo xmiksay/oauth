@@ -59,7 +59,9 @@ true when the server can send email (show "Forgot password?").
 `factors` lists what the current step accepts: at `password` always
 `["password", "passkey"]` (offered whether or not the account has one, so
 it reveals nothing); at `mfa` the subset of `["totp", "recovery",
-"passkey"]` the user has; `[]` at other steps.
+"passkey", "telegram"]` the user has (`telegram`: a linked chat; on a server
+without a bot only when the user has no other factor, and it then answers
+`503 telegram_unavailable` — [../telegram.md](../telegram.md)); `[]` at other steps.
 
 ## Email links (no transaction)
 
@@ -105,10 +107,12 @@ reused session ended while consent was pending).
 | `recovery` | `{ "code": "abcd-efgh-…" }` | step `mfa`; one-time recovery code (case, spaces and `-` ignored) |
 | `passkey/options` | `{}` | step `password` or `mfa`: `200 { "publicKey": PublicKeyCredentialRequestOptionsJSON }` (not a step view) |
 | `passkey` | AssertionJSON | step `password` (passwordless) or `mfa` (second factor) |
+| `telegram/send` | `{}` | step `mfa` (user has `telegram`): sends a 6-digit code to the linked chat, replacing an earlier one; `200 { "sent": true, "expires_in": 300 }` (not a step view). `502 delivery_failed` when Telegram didn't take it (retry), `400 invalid_request` when no chat is linked, `503 telegram_unavailable` without a bot |
+| `telegram` | `{ "code": "123456" }` | step `mfa`: the code last sent (5 min, single use, 5 guesses — then send a new one; spaces ignored) |
 | `change-password` | `{ "new_password" }` | step `change_password` (`must_change_password`) |
 | `consent` | `{ "approve": true, "scopes": ["Orders.Read"] }` or `{ "approve": false }` | step `consent`; approving must list every scope shown (all-or-nothing) |
 
-Order: `password` → `mfa` (if TOTP confirmed or a passkey registered) →
+Order: `password` → `mfa` (if TOTP confirmed, a passkey registered or a Telegram chat linked) →
 `change_password` (if required) → `consent` (if needed) → redirect. A
 passkey at the `password` step signs the user in on its own (it skips
 `mfa` and `change_password`). A transaction created for a
@@ -126,13 +130,15 @@ earlier session of this browser (e.g. after `prompt=login`).
 | 409 | `conflict` | Email change: the new address was taken meanwhile |
 | 401 | `invalid_credentials` | Wrong email or password, or unknown email — never distinguished (unknown accounts are verified against a dummy argon2 hash to equalise timing) |
 | 401 | `invalid_credentials` | Any rejected passkey assertion (unknown, other account's, wrong origin / RP, no user verification, bad signature, used / expired challenge, counter regression) — never distinguished; the audit log has the reason |
-| 401 | `invalid_code` | Wrong / reused TOTP code or recovery code |
+| 401 | `invalid_code` | Wrong / reused TOTP code or recovery code; wrong, expired, used or dead (5 guesses) Telegram code |
 | 403 | `account_disabled` | Correct password, but the user is disabled |
 | 403 | `csrf_rejected` | `Origin` missing or not the tenant's `{origin}` |
 | 404 | `not_found` | Unknown, expired, finished or foreign transaction (`no-store`). An unknown or disabled tenant (host) also answers `404 {"error":"not_found","error_description":"resource not found"}`, from the tenant resolver (without `no-store`) |
 | 409 | `wrong_step` | The transaction is at another step (or a concurrent call advanced it) |
 | 429 | `rate_limited` | Too many attempts; `Retry-After` header in seconds |
 | 500 | `server_error` | Internal fault (logged; no detail in the body) |
+| 502 | `delivery_failed` | `telegram/send`: the Bot API refused or didn't answer (10 s); try again |
+| 503 | `telegram_unavailable` | `telegram[/send]` on a server without a Telegram bot (the transaction stays live: use another factor, or an admin resets MFA) |
 
 ## Rate limits
 
@@ -141,8 +147,9 @@ successes too. IPv6 clients are bucketed per /64.
 
 | Bucket | Limit | Applies to |
 |---|---|---|
-| client IP, per tenant | 30 / 5 min | `password`, `totp`, `recovery`, `passkey`, `change-password` |
+| client IP, per tenant | 30 / 5 min | `password`, `totp`, `recovery`, `passkey`, `telegram`, `change-password` |
 | account, per tenant | 10 / 15 min | same; keyed by user id once the email (or the passkey's credential, or the transaction) resolves it, else by the trimmed, lower-cased email (or the credential id) |
+| user, per tenant | 3 / 15 min | `telegram/send` (across transactions) |
 | client IP, per tenant | 60 / 5 min | `/oauth2/authorize` requests that create a login transaction → `429` JSON (`rate_limited`), not a redirect |
 | client IP, per tenant | 10 / 15 min | `password-reset` |
 | email address, per tenant | 3 / 15 min | `password-reset`; keyed by the trimmed, lower-cased address whether or not it exists |

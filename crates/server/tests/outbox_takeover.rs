@@ -61,7 +61,11 @@ impl Mailer for Takeover {
     async fn send(&self, email: &Email) -> Result<(), MailError> {
         let first = self.taken.lock().unwrap().is_none();
         if first {
-            let claimed = claim(&self.db, self.at).await.unwrap().unwrap().len();
+            let claimed = claim(&self.db, self.at, entity::enums::Channel::Email)
+                .await
+                .unwrap()
+                .unwrap()
+                .len();
             *self.taken.lock().unwrap() = Some(claimed);
             if let Some(stop) = &self.stop {
                 stop.cancel();

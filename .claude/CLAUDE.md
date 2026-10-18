@@ -35,6 +35,7 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
 | `make test-integration` | `cargo test --workspace --test '*'` (testcontainers — Docker required) |
 | `make docker` | build image (`IMAGE=` to override tag) |
 | `make bootstrap ADMIN_EMAIL=… [RESET=1]` | migrate, then create `system` tenant + Global Admin (idempotent; `RESET=1` issues a new one-time password) |
+| `make telegram-webhook` | `oauth telegram set-webhook`: register `{PUBLIC_URL}/telegram/webhook` + secret with the bot (loads `.env`) |
 
 Toolchains are pinned: `rust-toolchain.toml` (1.99.0) and `.nvmrc` (22). CI reads
 both; bump them deliberately and together with any lint fallout.
@@ -49,10 +50,13 @@ See `.env.example` (authoritative, commented). Required: `DATABASE_URL`,
 `false` only with an `http://` `PUBLIC_URL`), `TRUSTED_PROXY_HEADER` (unset),
 `SMTP_URL` + `SMTP_FROM` (both or neither; unset hides every email feature —
 [docs/email.md](../docs/email.md)). `SMTP_URL` lives in the Secret, `SMTP_FROM`
-in the ConfigMap.
+in the ConfigMap. `TELEGRAM_BOT_TOKEN` + `TELEGRAM_WEBHOOK_SECRET` (Secret) +
+`TELEGRAM_BOT_USERNAME` (ConfigMap): all three or none, unset hides every
+Telegram feature; `TELEGRAM_API_URL` (https://api.telegram.org; http only to
+loopback) — [docs/telegram.md](../docs/telegram.md).
 Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md); management API:
 [docs/api/management.md](../docs/api/management.md) (+ [me.md](../docs/api/me.md)). Env vars are parsed and validated in
-`crates/server/src/config/` (`env.rs`, `smtp.rs`, `public_url.rs`); adding a var means updating `.env.example`,
+`crates/server/src/config/` (`env.rs`, `smtp.rs`, `telegram.rs`, `public_url.rs`); adding a var means updating `.env.example`,
 `deploy/k8s/deploy.yml` and this list.
 
 ## Conventions
@@ -101,7 +105,9 @@ Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md); manag
   backend (`aws_lc_rs` + `use_pem`). (`ring` is still linked transitively by
   sqlx's rustls for DB TLS — not used by our code.) Don't add `rsa` /
   `p256` / `aes-gcm` / `rand` (the `rsa` crate has RUSTSEC-2023-0071); `cargo tree -i rsa` and `cargo tree -i openssl-sys` must find nothing
-  (WebAuthn is our own verifier, `webauthn`: AWS-LC + `ciborium`, no webauthn-rs). Only
+  (WebAuthn is our own verifier, `webauthn`: AWS-LC + `ciborium`, no webauthn-rs; the
+  Telegram client is reqwest `rustls-no-provider` handed an explicit AWS-LC
+  `ClientConfig` with webpki roots — no native-tls). Only
   `argon2` (password hashing) sits outside it and is built with opt-level 3
   in dev so tests stay fast. Building `aws-lc-sys` needs a C compiler (no
   cmake).
@@ -111,8 +117,10 @@ Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md); manag
   never log (`?`/`{:?}`) an `ActiveModel` of `users`, `user_totp`,
   `user_recovery_codes`, `client_secrets`, `signing_keys`, `sessions`,
   `authorization_codes`, `refresh_tokens`, `opaque_access_tokens`, `outbox`,
-  `email_tokens`, `known_devices` or `webauthn_challenges` (nor a `mail::Email`'s
-  body). `webauthn_credentials` holds only public keys and credential ids, so
+  `email_tokens`, `known_devices`, `webauthn_challenges`, `telegram_links`,
+  `telegram_link_codes` or `telegram_otps` (nor a `mail::Email`'s body).
+  Never log a Bot API URL or a reqwest error's text (the URL carries the bot
+  token: `telegram::api` logs error kinds only), a chat id or a message text. `webauthn_credentials` holds only public keys and credential ids, so
   its `Debug` is derived.
 - Bearer values (cookies, codes, tokens) come from `secret::random_token`
   and are stored only as `secret::hash`; unguessable handles from
@@ -168,6 +176,16 @@ Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md); manag
   (atomic, tenant-scoped); anything wrong with one is the same `invalid_token`.
   Public flows must not reveal whether an address exists (same status, body,
   rate-limit buckets keyed by address, not account).
+- Telegram (`telegram`, [docs/telegram.md](../docs/telegram.md)): notices go
+  through the outbox like email (`channel = telegram`, recipient = user id,
+  chat looked up at send time; delivery = a `jobs::outbox::Courier`); only
+  sign-in codes are sent inline (a login waits). The webhook lives on the apex
+  only (`tenancy::resolve_host`), checks the secret token in constant time,
+  acts only on private chats, answers 200 for anything authenticated and
+  replies in its response body (never waits on the Bot API). "Has Telegram
+  as a factor" comes from the link row alone (fail closed without a bot);
+  whether the bot exists is `state.telegram` / `config.telegram`, which
+  `AppState::new` keeps in agreement.
 - Cookies are host-only and `__Host-` prefixed (`__Host-oauth_sid`,
   `__Host-oauth_tx`, `__Host-oauth_dev`, `Path=/`) — never add a `Domain` (it would share them
   across tenant hosts) or a narrower `Path`. The login API / logout POST

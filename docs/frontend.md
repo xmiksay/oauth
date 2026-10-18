@@ -30,6 +30,14 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   the button aborts the pending autofill `get()` (AbortController) and fetches fresh
   options; the autofill restarts (fresh options) whenever the password step is idle
   again, and fails silently. A dismissed dialog is a soft note, never an error.
+  With `telegram` in the MFA step's `factors` (`TelegramFactor`; the initial mode when the
+  user has no authenticator app), "Send code via Telegram" `POST`s `…/telegram/send`
+  (`{ sent, expires_in }`, not a step view — the step stays) and only then shows the
+  6-digit input and "Send a new code" (each send replaces the previous code); the code goes
+  to `…/telegram` exactly like `…/totp`. `502 delivery_failed` → "Couldn't send the code
+  via Telegram", `401 invalid_code` → "Wrong or expired code…", `503 telegram_unavailable`
+  (no bot on the server) → "Telegram sign-in is unavailable…" and the MFA step stays;
+  404 / 409 / 429 as above.
 - **Email links** (`areas/email`): `/login/reset`, `/login/invite` (choose a
   password → `POST /api/authn/email/reset|invite`) and `/myaccount/verify-email`
   (`POST /api/authn/email/verify`). They are **public** routes — no `meta.area`,
@@ -50,8 +58,9 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   email" (new address + re-authentication via `ReauthPrompt`'s slot →
   `POST me/email`; the change applies when the link sent to the new address is
   opened) — both only when `GET me` reports `features.email`. `/myaccount/notifications`
-  edits `GET/PUT me/notifications` (Telegram column only when that channel exists;
-  notifications go only to a verified address). In the admin center, "New user"
+  edits `GET/PUT me/notifications` (Telegram column only while `channels.telegram`, i.e. a
+  bot is configured and the user linked a chat — otherwise, with `features.telegram`, a
+  pointer to Security info; email notifications go only to a verified address). In the admin center, "New user"
   can send an invitation (`invite: true`, no password) when `features.email`, and a
   user without a password gets "Resend invitation" (`POST users/{id}/invite`).
 - **Passkeys** (`src/webauthn`): hand-rolled base64url and JSON ⇄ WebAuthn
@@ -72,6 +81,15 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   current-password field). The admin user detail has a Passkeys card (remove per
   passkey); Reset MFA also removes passkeys, and both explain the server's 409 for a
   user without a password.
+- **Telegram** (Security info `TelegramSection`, only when `GET me` reports
+  `features.telegram`): "Link Telegram" → `ReauthPrompt` → `POST me/telegram/link` →
+  `window.open` of the bot deep link (`noopener,noreferrer`; also shown as a fallback
+  anchor) while it polls `GET me/telegram` every 3 s until `linked` (then re-reads `me`)
+  or `expires_at` passes ("The link expired"); Cancel / unmount stop polling. The link
+  carries a single-use bearer code, so it lives only in the section's local state (like a
+  one-time secret) and is dropped when done. "Unlink" → re-auth → `DELETE me/telegram`
+  (404 = already unlinked). The admin user detail shows "Telegram linked"; Reset MFA
+  unlinks it too.
 - **Admin / My Account**: the tenant's built-in public clients `admin-portal`
   / `my-account` (code + PKCE via `oidc-client-ts`, scope
   `openid offline_access api://management-api/Directory.AccessAsUser`, authority

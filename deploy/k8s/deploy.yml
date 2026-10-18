@@ -4,9 +4,14 @@
 #   kubectl create secret generic oauth-secrets \
 #     --from-literal=DATABASE_URL='postgres://user:pass@host:5432/oauth' \
 #     --from-literal=OAUTH_MASTER_KEY="$(openssl rand -base64 32)" \
-#     --from-literal=SMTP_URL='smtps://user:pass@smtp.example.com'
-# The SMTP_URL line is optional (email, together with SMTP_FROM below): drop
-# it and the trailing `\` above it to run without email.
+#     --from-literal=SMTP_URL='smtps://user:pass@smtp.example.com' \
+#     --from-literal=TELEGRAM_BOT_TOKEN='123456789:AA...' \
+#     --from-literal=TELEGRAM_WEBHOOK_SECRET="$(openssl rand -hex 32)"
+# The SMTP_URL line is optional (email, together with SMTP_FROM below), and so
+# are the two TELEGRAM_* lines (Telegram, together with TELEGRAM_BOT_USERNAME
+# below): drop them and the trailing `\` before them to run without.
+# With Telegram, register the webhook once (and after changing the secret):
+#   kubectl exec deploy/oauth -- oauth telegram set-webhook
 # Back up OAUTH_MASTER_KEY: losing it makes stored signing keys unreadable.
 #
 # First admin (after the rollout is ready; idempotent, prints a one-time password
@@ -54,6 +59,10 @@ data:
   # SMTP_URL in `oauth-secrets` AND this From address; set both or neither
   # (one without the other fails startup). The display name is the tenant's.
   # SMTP_FROM: "noreply@id.example.com"
+  # Telegram (sign-in codes, notices) needs TELEGRAM_BOT_TOKEN and
+  # TELEGRAM_WEBHOOK_SECRET in `oauth-secrets` AND the bot's username; all
+  # three or none. The webhook is served on the apex host (this Ingress).
+  # TELEGRAM_BOT_USERNAME: "my_idp_bot"
 ---
 apiVersion: apps/v1
 kind: Deployment

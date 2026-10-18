@@ -21,6 +21,7 @@ mod me;
 mod me_email;
 mod me_mfa;
 mod me_passkeys;
+mod me_telegram;
 pub mod page;
 mod reauth;
 mod role_assignments;
@@ -207,6 +208,11 @@ pub fn router() -> Router<AppState> {
             &format!("{me}/passkeys/{{id}}"),
             patch(me_passkeys::rename).delete(me_passkeys::remove),
         )
+        .route(
+            &format!("{me}/telegram"),
+            get(me_telegram::status).delete(me_telegram::unlink),
+        )
+        .route(&format!("{me}/telegram/link"), post(me_telegram::link))
         .route(&format!("{me}/reauth/options"), post(reauth::options))
         .route(&format!("{me}/sessions"), get(me::sessions))
         .route(

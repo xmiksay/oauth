@@ -1,6 +1,7 @@
 //! Tenant resolution from the request host: tenant `t` lives only at
 //! `t.{PUBLIC_URL host}[:port]`; the apex itself only redirects to the
-//! system tenant's admin portal. `X-Forwarded-Host` / `Forwarded` are
+//! system tenant's admin portal and receives the Telegram webhook (which
+//! belongs to no tenant). `X-Forwarded-Host` / `Forwarded` are
 //! ignored on purpose: the issuer is derived from the host, and a client
 //! that could pick it would mint itself another tenant's origin.
 
@@ -23,6 +24,7 @@ use crate::{
     },
     error::AppError,
     oidc::redirect,
+    telegram::webhook,
 };
 
 /// The active tenant whose host the request was sent to. Unknown and
@@ -72,14 +74,17 @@ async fn active(state: &AppState, slug: &str) -> Result<Option<Tenant>, AppError
 
 /// Gate in front of every host-scoped route: tenant hosts get their
 /// [`Tenant`] resolved, the apex answers `GET /` with a redirect to the
-/// system admin portal, everything else is 404.
+/// system admin portal and passes the Telegram webhook on (without a
+/// tenant), everything else is 404.
 pub async fn resolve_host(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
     // Proxies and servers may disagree on which of several `Host`s counts
     // (RFC 9112 §3.2: such a request is invalid), so none is believed.
     if req.headers().get_all(header::HOST).iter().nth(1).is_some() {
         return AppError::BadRequest("more than one Host header".into()).into_response();
     }
+    let webhook = req.uri().path() == webhook::PATH;
     match host_kind(&state, req.uri(), req.headers()) {
+        HostKind::Tenant(_) if webhook => AppError::NotFound.into_response(),
         HostKind::Tenant(slug) => match active(&state, &slug).await {
             Ok(Some(tenant)) => {
                 req.extensions_mut().insert(tenant);
@@ -88,6 +93,7 @@ pub async fn resolve_host(State(state): State<AppState>, mut req: Request, next:
             Ok(None) => AppError::NotFound.into_response(),
             Err(err) => err.into_response(),
         },
+        HostKind::Apex if webhook => next.run(req).await,
         HostKind::Apex
             if req.uri().path() == "/" && matches!(*req.method(), Method::GET | Method::HEAD) =>
         {

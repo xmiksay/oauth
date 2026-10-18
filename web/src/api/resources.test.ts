@@ -190,6 +190,20 @@ describe('me', () => {
     expect(calls[1]).toMatchObject({ method: 'PUT', url: `${T}/me/notifications`, body: { items } })
   })
 
+  it('reads, links and unlinks Telegram with the re-auth in the body', async () => {
+    const status = { linked: false, username: null, linked_at: null }
+    const link = { url: 'https://t.me/bot?start=c', expires_at: '2026-10-14T10:10:00Z' }
+    const calls = mockFetch({ body: status }, { body: link }, { status: 204 })
+    expect(await me.getTelegram()).toEqual(status)
+    expect(await me.linkTelegram({ password: 'pw' })).toEqual(link)
+    await me.unlinkTelegram({ passkey: ASSERTION_JSON })
+    expect(calls.map((c) => [c.method, c.url, c.body])).toEqual([
+      ['GET', `${T}/me/telegram`, undefined],
+      ['POST', `${T}/me/telegram/link`, { password: 'pw' }],
+      ['DELETE', `${T}/me/telegram`, { passkey: ASSERTION_JSON }],
+    ])
+  })
+
   it('invites a user and re-sends the invitation with {}', async () => {
     const calls = mockFetch({ status: 201, body: { user: { id: 'u' }, invite_sent: true } }, {})
     await users.create({ email: 'a@b.c', display_name: 'A', invite: true })

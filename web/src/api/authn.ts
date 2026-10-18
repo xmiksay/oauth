@@ -10,7 +10,7 @@ import type {
 
 export type LoginStep = 'password' | 'mfa' | 'change_password' | 'consent'
 
-export type LoginFactor = 'password' | 'passkey' | 'totp' | 'recovery'
+export type LoginFactor = 'password' | 'passkey' | 'totp' | 'recovery' | 'telegram'
 
 export interface ConsentScope {
   value: string
@@ -58,6 +58,11 @@ export const authn = {
   password: (tx: string, email: string, password: string) =>
     api.post<StepResult>(txPath(tx, 'password'), { email, password }),
   totp: (tx: string, code: string) => api.post<StepResult>(txPath(tx, 'totp'), { code }),
+  /** Sends a fresh code (replacing the previous one) to the user's linked Telegram chat. */
+  sendTelegramCode: (tx: string) =>
+    api.post<{ sent: boolean; expires_in: number }>(txPath(tx, 'telegram/send'), {}),
+  submitTelegram: (tx: string, code: string) =>
+    api.post<StepResult>(txPath(tx, 'telegram'), { code }),
   recovery: (tx: string, code: string) => api.post<StepResult>(txPath(tx, 'recovery'), { code }),
   /** The server keeps only the newest challenge per transaction. */
   passkeyOptions: (tx: string) =>

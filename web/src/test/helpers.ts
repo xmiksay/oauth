@@ -86,8 +86,8 @@ export function fakeMe(over: Partial<Me> = {}): Me {
     created_at: '',
     updated_at: '',
     directory_roles: [],
-    mfa: { totp: false, totp_pending: false, recovery_codes_remaining: 0, passkeys: 0 },
-    features: { email: true },
+    mfa: { totp: false, totp_pending: false, recovery_codes_remaining: 0, passkeys: 0, telegram: false },
+    features: { email: true, telegram: false },
     ...over,
   }
 }

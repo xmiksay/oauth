@@ -58,6 +58,45 @@ describe('MfaStep', () => {
     expect(w.emitted('passkey')).toHaveLength(1)
   })
 
+  it('offers no Telegram without the factor', () => {
+    const w = mount(MfaStep, { props: { locked: false, factors: ['totp'], passkeys: true } })
+    expect(w.text()).not.toContain('Telegram')
+  })
+
+  it('starts with Telegram without an app: send, then type and submit the code', async () => {
+    const w = mount(MfaStep, {
+      props: { locked: false, factors: ['telegram', 'recovery'], passkeys: true },
+    })
+    expect(buttons(w)).toEqual(['Send code via Telegram', 'Use a recovery code instead'])
+    expect(w.find('#telegram-code').exists()).toBe(false)
+    await w.findAll('button').find((b) => b.text() === 'Send code via Telegram')?.trigger('click')
+    expect(w.emitted('telegramSend')).toHaveLength(1)
+
+    await w.setProps({ telegramSent: true })
+    const input = w.find('#telegram-code')
+    expect(input.attributes('autocomplete')).toBe('one-time-code')
+    expect(input.attributes('inputmode')).toBe('numeric')
+    await input.setValue('123 456')
+    await w.find('form').trigger('submit')
+    expect(w.emitted('telegram')).toEqual([['123 456']])
+    expect(w.emitted('totp')).toBeUndefined()
+
+    await w.findAll('button').find((b) => b.text() === 'Send a new code')?.trigger('click')
+    expect(w.emitted('telegramSend')).toHaveLength(2)
+    expect((input.element as HTMLInputElement).value).toBe('')
+  })
+
+  it('switches from the app to Telegram and disables sending while locked', async () => {
+    const w = mount(MfaStep, {
+      props: { locked: true, factors: ['totp', 'telegram'], passkeys: true },
+    })
+    expect(buttons(w)).toEqual(['Verify', 'Get a code via Telegram instead'])
+    await w.findAll('button').find((b) => b.text() === 'Get a code via Telegram instead')?.trigger('click')
+    const send = w.findAll('button').find((b) => b.text() === 'Send code via Telegram')
+    expect(send?.attributes('disabled')).toBeDefined()
+    expect(buttons(w)).toContain('Use my authenticator app instead')
+  })
+
   it('explains a passkey-only user on a browser without passkeys', () => {
     const w = mount(MfaStep, { props: { locked: false, factors: ['passkey'], passkeys: false } })
     expect(w.findAll('button')).toHaveLength(0)

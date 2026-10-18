@@ -55,12 +55,14 @@ address, so it names the account only by its masked current address
 ## Notices (`notify`)
 
 Password changed (any path), MFA changed (enrol / remove / recovery codes /
-passkey added or removed / admin reset), email changed, new sign-in, refresh-token reuse — each per
+passkey added or removed / Telegram linked or unlinked / admin reset), email changed, new sign-in, refresh-token reuse — each per
 user × channel opt-out (`notification_prefs`, no row = on). Prefs are fully
 optional by product decision: no event is locked on, so a user who switches
 off `email_changed` won't be warned when their address changes. Notices go
 to a verified address only; the email-changed notice goes to the OLD
-address, only if it was verified, with the new address masked.
+address, only if it was verified, with the new address masked. With a
+Telegram chat linked, each notice also goes there (its own `telegram` toggle;
+[telegram.md](telegram.md#notices)).
 
 New sign-in: every new session records the browser's device cookie
 (`known_devices`, SHA-256 over user id ‖ cookie, so two accounts in one

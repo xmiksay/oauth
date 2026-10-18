@@ -1,48 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { ApiError } from '@/api/client'
-import type { LoginStep, TxView } from '@/api/authn'
 import { PasskeyCancelled } from '@/webauthn'
 import { ASSERTION_JSON, REQUEST_OPTIONS, domError } from '@/test/helpers'
-import {
-  PASSKEY_CANCELLED,
-  PASSKEY_FAILED,
-  useLoginFlow,
-  type LoginDeps,
-} from './useLoginFlow'
-
-function view(step: LoginStep, extra: Partial<TxView> = {}): TxView {
-  return {
-    tx: 'tx-1',
-    step,
-    factors: step === 'password' ? ['password'] : step === 'mfa' ? ['totp', 'recovery'] : [],
-    tenant: { slug: 'contoso', display_name: 'Contoso' },
-    client: { client_id: 'shop', display_name: 'Shop' },
-    user: step === 'password' ? null : { email: 'ann@example.com', display_name: 'Ann' },
-    consent: null,
-    features: { password_reset: false },
-    ...extra,
-  }
-}
-
-const err = (status: number, error: string, retryAfter: number | null = null) =>
-  new ApiError(status, { error, error_description: `${error} detail` }, retryAfter)
-
-function deps() {
-  const api = {
-    get: vi.fn(),
-    password: vi.fn(),
-    totp: vi.fn(),
-    recovery: vi.fn(),
-    changePassword: vi.fn(),
-    consent: vi.fn(),
-    signOut: vi.fn(),
-    passkeyOptions: vi.fn(),
-    passkey: vi.fn(),
-  }
-  const navigate = vi.fn()
-  const passkeys = { conditional: vi.fn(async () => false), get: vi.fn() }
-  return { api, navigate, passkeys, deps: { api, navigate, passkeys } as unknown as LoginDeps }
-}
+import { PASSKEY_CANCELLED, PASSKEY_FAILED, useLoginFlow } from './useLoginFlow'
+import { deps, err, view } from './flowFixtures'
 
 const passkeyView = () => view('password', { factors: ['password', 'passkey'] })
 

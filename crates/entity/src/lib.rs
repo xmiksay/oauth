@@ -27,6 +27,9 @@ pub mod rate_limit_buckets;
 pub mod refresh_tokens;
 pub mod sessions;
 pub mod signing_keys;
+pub mod telegram_link_codes;
+pub mod telegram_links;
+pub mod telegram_otps;
 pub mod tenants;
 pub mod user_recovery_codes;
 pub mod user_totp;
@@ -179,7 +182,46 @@ mod tests {
                     expires_at: now(),
                 }
             ),
+            format!(
+                "{:?}",
+                telegram_link_codes::Model {
+                    id,
+                    tenant_id: id,
+                    user_id: id,
+                    code_hash: bytes.clone(),
+                    created_at: now(),
+                    expires_at: now(),
+                }
+            ),
+            format!(
+                "{:?}",
+                telegram_otps::Model {
+                    id,
+                    tenant_id: id,
+                    tx_id: id,
+                    user_id: id,
+                    code_hash: bytes.clone(),
+                    attempts: 0,
+                    sent_at: now(),
+                    expires_at: now(),
+                }
+            ),
         ];
+        let link = format!(
+            "{:?}",
+            telegram_links::Model {
+                id,
+                tenant_id: id,
+                user_id: id,
+                chat_id: 987_654_321,
+                username: Some(secret.into()),
+                linked_at: now(),
+            }
+        );
+        assert!(
+            !link.contains("987654321") && !link.contains(secret),
+            "{link}"
+        );
         let byte_list = format!("{bytes:?}");
         for text in rendered {
             assert!(text.contains("<redacted>"), "{text}");

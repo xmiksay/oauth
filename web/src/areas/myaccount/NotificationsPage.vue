@@ -71,6 +71,18 @@ async function save() {
           Verify it on your profile
         </RouterLink>
       </p>
+      <p
+        v-if="!settings.channels.telegram && me?.features.telegram"
+        class="muted text-sm"
+      >
+        Want them in Telegram too?
+        <RouterLink
+          :to="{ name: 'myaccount-security' }"
+          class="btn-link"
+        >
+          Link Telegram in Security info
+        </RouterLink>
+      </p>
       <div class="overflow-x-auto">
         <table class="table">
           <thead>

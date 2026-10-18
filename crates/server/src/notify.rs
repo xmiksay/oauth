@@ -2,7 +2,8 @@
 //! sign-ins, refresh-token reuse). Opt-out per event and channel
 //! (`notification_prefs`, no row = on); queued on the caller's
 //! transaction like every outbox message. Email goes only to a verified
-//! address (for an email change: the OLD one, if it was verified).
+//! address (for an email change: the OLD one, if it was verified);
+//! Telegram to the user's linked chat (looked up again at delivery).
 
 use anyhow::Context;
 use chrono::Duration;
@@ -21,6 +22,7 @@ use crate::{
         outbox::{self, NewMessage},
         templates::{self, Ctx},
     },
+    telegram,
 };
 
 pub const EVENTS: [NotifyEvent; 5] = [
@@ -100,31 +102,42 @@ pub async fn set_prefs(
     Ok(())
 }
 
-async fn email_wanted(
+/// `(email, telegram)` wanted for `event`.
+async fn wanted(
     conn: &impl ConnectionTrait,
     tenant_id: Uuid,
     user_id: Uuid,
     event: NotifyEvent,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<(bool, bool)> {
     let row = notification_prefs::Entity::find_by_id((tenant_id, user_id, event))
         .one(conn)
         .await
         .context("loading notification preference")?;
-    Ok(row.is_none_or(|r| r.email))
+    Ok(row.map_or((true, true), |r| (r.email, r.telegram)))
 }
 
+/// Queues the notice by email to `email_to` (if any) and to the user's
+/// linked Telegram chat, as configured and wanted.
 async fn deliver(
     conn: &impl ConnectionTrait,
     config: &Config,
     tenant: &tenants::Model,
     user: &users::Model,
-    to: &str,
+    email_to: Option<&str>,
     event: NotifyEvent,
     facts: &[(&str, String)],
 ) -> anyhow::Result<()> {
-    if !config.email_enabled() || !email_wanted(conn, tenant.id, user.id, event).await? {
+    let email_to = email_to.filter(|_| config.email_enabled());
+    if email_to.is_none() && !config.telegram_enabled() {
         return Ok(());
     }
+    let (email, telegram) = wanted(conn, tenant.id, user.id, event).await?;
+    let email_to = email_to.filter(|_| email);
+    let telegram = telegram
+        && config.telegram_enabled()
+        && telegram::links::find(conn, tenant.id, user.id)
+            .await?
+            .is_some();
     let ctx = Ctx {
         tenant_name: &tenant.display_name,
         user_name: &user.display_name,
@@ -132,21 +145,30 @@ async fn deliver(
     };
     let account_url = format!("{}/myaccount", config.tenant_origin(&tenant.slug));
     let rendered = templates::notice(&ctx, event, facts, &account_url);
-    outbox::enqueue(
-        conn,
-        &config.master_key,
-        NewMessage {
-            tenant_id: tenant.id,
-            channel: Channel::Email,
-            recipient: to,
-            rendered: &rendered,
-            ttl: Duration::hours(NOTICE_TTL_HOURS),
-        },
-    )
-    .await
+    let user_id = user.id.to_string();
+    let targets = [
+        email_to.map(|to| (Channel::Email, to)),
+        telegram.then_some((Channel::Telegram, user_id.as_str())),
+    ];
+    for (channel, recipient) in targets.into_iter().flatten() {
+        outbox::enqueue(
+            conn,
+            &config.master_key,
+            NewMessage {
+                tenant_id: tenant.id,
+                channel,
+                recipient,
+                rendered: &rendered,
+                ttl: Duration::hours(NOTICE_TTL_HOURS),
+            },
+        )
+        .await?;
+    }
+    Ok(())
 }
 
-/// Notifies `user` (at their address, if verified) of `event`.
+/// Notifies `user` (at their address, if verified, and their linked chat)
+/// of `event`.
 pub async fn event(
     conn: &impl ConnectionTrait,
     config: &Config,
@@ -155,10 +177,8 @@ pub async fn event(
     event: NotifyEvent,
     facts: &[(&str, String)],
 ) -> anyhow::Result<()> {
-    if !user.email_verified {
-        return Ok(());
-    }
-    deliver(conn, config, tenant, user, &user.email, event, facts).await
+    let email_to = user.email_verified.then_some(user.email.as_str());
+    deliver(conn, config, tenant, user, email_to, event, facts).await
 }
 
 /// The address a user had before an email change.
@@ -169,8 +189,9 @@ pub struct OldAddress<'a> {
 }
 
 /// Tells the PREVIOUS address that `user`'s email changed — only if it was
-/// verified (an unproven address may be a stranger's); the new address is
-/// masked, as the old mailbox may no longer be the user's.
+/// verified (an unproven address may be a stranger's) — and the linked
+/// chat; the new address is masked, as the old mailbox may no longer be
+/// the user's.
 pub async fn email_changed(
     conn: &impl ConnectionTrait,
     config: &Config,
@@ -178,16 +199,13 @@ pub async fn email_changed(
     user: &users::Model,
     old: OldAddress<'_>,
 ) -> anyhow::Result<()> {
-    if !old.verified {
-        return Ok(());
-    }
     let facts = [("New address", templates::mask_email(&user.email))];
     deliver(
         conn,
         config,
         tenant,
         user,
-        old.email,
+        old.verified.then_some(old.email),
         NotifyEvent::EmailChanged,
         &facts,
     )

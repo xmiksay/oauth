@@ -1,5 +1,5 @@
-//! Outbox delivery, claim-then-send: a short transaction leases a batch of
-//! due email messages (`attempts + 1`, `next_attempt_at = now + LEASE`),
+//! Outbox delivery, claim-then-send, per channel ([`Courier`]): a short
+//! transaction leases a batch of due messages of one channel (`attempts + 1`, `next_attempt_at = now + LEASE`),
 //! then each is sent outside any transaction and its outcome recorded with
 //! its own statement — sent (body dropped), retry after backoff
 //! (`mail::outbox::next_attempt`) or dead (body dropped). A crash or
@@ -15,14 +15,14 @@
 //! Logs name the message id, kind and error kind only — never the
 //! recipient, body or a token.
 
-use std::time::Duration as StdDuration;
+use std::{future::Future, time::Duration as StdDuration};
 
 use anyhow::Context;
 use chrono::{DateTime, Duration, FixedOffset};
-use entity::{outbox, tenants};
+use entity::{enums::Channel, outbox, tenants};
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
-    Statement, TransactionTrait,
+    ActiveEnum, ColumnTrait, ConnectionTrait, DatabaseConnection, EntityTrait, PaginatorTrait,
+    QueryFilter, Statement, TransactionTrait,
     sea_query::{Condition, Expr, ExprTrait},
 };
 use tokio_util::sync::CancellationToken;
@@ -48,7 +48,7 @@ const MARGIN_SECS: i64 = 30;
 const _: () = assert!(BATCH as i64 * SEND_SECS + MARGIN_SECS < LEASE_SECS);
 /// How long a claimed message is reserved for the run that claimed it.
 pub const LEASE: Duration = Duration::seconds(LEASE_SECS);
-/// Bounds one whole SMTP delivery (lettre's timeout is per command).
+/// Bounds one whole delivery (lettre's SMTP timeout is per command).
 const SEND_TIMEOUT: StdDuration = StdDuration::from_secs(SEND_SECS.unsigned_abs());
 
 /// The job's "now", read at every step (tests move it).
@@ -61,11 +61,41 @@ pub struct Report {
     pub dead: u32,
 }
 
-/// Leases up to [`BATCH`] due messages; `None` if another replica holds
-/// the job lock. Each claim counts as an attempt.
+/// Delivers the outbox rows of one channel.
+pub trait Courier: Send + Sync {
+    const CHANNEL: Channel;
+
+    /// One delivery attempt of `row` (the tenants of the batch are loaded).
+    fn deliver(
+        &self,
+        db: &DatabaseConnection,
+        config: &Config,
+        row: &outbox::Model,
+        tenants: &[tenants::Model],
+    ) -> impl Future<Output = Result<(), MailError>> + Send;
+}
+
+impl<M: Mailer> Courier for M {
+    const CHANNEL: Channel = Channel::Email;
+
+    async fn deliver(
+        &self,
+        _db: &DatabaseConnection,
+        config: &Config,
+        row: &outbox::Model,
+        tenants: &[tenants::Model],
+    ) -> Result<(), MailError> {
+        let email = email_of(config, row, tenants)?;
+        send_bounded(self, &email).await
+    }
+}
+
+/// Leases up to [`BATCH`] due messages of `channel`; `None` if another
+/// replica holds the job lock. Each claim counts as an attempt.
 pub async fn claim(
     db: &DatabaseConnection,
     now: DateTime<FixedOffset>,
+    channel: Channel,
 ) -> anyhow::Result<Option<Vec<outbox::Model>>> {
     let txn = db.begin().await.context("starting outbox claim")?;
     if !try_lock(&txn, OUTBOX_LOCK_KEY).await? {
@@ -77,19 +107,38 @@ pub async fn claim(
             r"UPDATE outbox SET attempts = attempts + 1, next_attempt_at = $2
               WHERE id IN (
                   SELECT id FROM outbox
-                  WHERE channel = 'email' AND sent_at IS NULL AND dead_at IS NULL
+                  WHERE channel = $4 AND sent_at IS NULL AND dead_at IS NULL
                     AND next_attempt_at <= $1 AND expires_at > $1
                   ORDER BY next_attempt_at
                   LIMIT $3
                   FOR UPDATE SKIP LOCKED)
               RETURNING *",
-            [now.into(), (now + LEASE).into(), BATCH.into()],
+            [
+                now.into(),
+                (now + LEASE).into(),
+                BATCH.into(),
+                channel.to_value().into(),
+            ],
         ))
         .all(&txn)
         .await
         .context("claiming outbox messages")?;
     txn.commit().await.context("committing outbox claim")?;
     Ok(Some(rows))
+}
+
+/// The row's sealed body; a body that can't be opened never will be.
+pub fn open_body(config: &Config, row: &outbox::Model) -> Result<Zeroizing<String>, MailError> {
+    let sealed = row.body_enc.as_deref().ok_or(MailError::Permanent)?;
+    let body = wrap::open(
+        &config.master_key,
+        &wrap::outbox_aad(row.tenant_id, row.id),
+        sealed,
+    )
+    .map_err(|_| MailError::Permanent)?;
+    String::from_utf8(body.to_vec())
+        .map(Zeroizing::new)
+        .map_err(|_| MailError::Permanent)
 }
 
 fn email_of(
@@ -106,25 +155,22 @@ fn email_of(
     if (tenant.display_name.chars().chain(row.subject.chars())).any(char::is_control) {
         return Err(MailError::Permanent);
     }
-    let sealed = row.body_enc.as_deref().ok_or(MailError::Permanent)?;
-    let body = wrap::open(
-        &config.master_key,
-        &wrap::outbox_aad(row.tenant_id, row.id),
-        sealed,
-    )
-    .map_err(|_| MailError::Permanent)?;
-    let body = String::from_utf8(body.to_vec()).map_err(|_| MailError::Permanent)?;
     Ok(Email {
         from_name: tenant.display_name.clone(),
         to: row.recipient.clone(),
         subject: row.subject.clone(),
-        body: Zeroizing::new(body),
+        body: open_body(config, row)?,
     })
 }
 
 /// Sends one message, giving up (transient) after [`SEND_TIMEOUT`].
 pub async fn send_bounded<M: Mailer>(mailer: &M, email: &Email) -> Result<(), MailError> {
-    tokio::time::timeout(SEND_TIMEOUT, mailer.send(email))
+    bounded(mailer.send(email)).await
+}
+
+/// Any delivery future, given up (transient) after [`SEND_TIMEOUT`].
+async fn bounded(send: impl Future<Output = Result<(), MailError>>) -> Result<(), MailError> {
+    tokio::time::timeout(SEND_TIMEOUT, send)
         .await
         .unwrap_or(Err(MailError::Transient))
 }
@@ -186,17 +232,17 @@ async fn release(
     Ok(())
 }
 
-/// Claims one batch and delivers it; `None` if another replica holds the
-/// lock. Stops once `shutdown` fires or a send could outlast the lease,
-/// releasing the rows it didn't get to.
-pub async fn run_once<M: Mailer>(
+/// Claims one batch of `courier`'s channel and delivers it; `None` if
+/// another replica holds the lock. Stops once `shutdown` fires or a send
+/// could outlast the lease, releasing the rows it didn't get to.
+pub async fn run_once<C: Courier>(
     db: &DatabaseConnection,
     config: &Config,
-    mailer: &M,
+    courier: &C,
     clock: Clock<'_>,
     shutdown: &CancellationToken,
 ) -> anyhow::Result<Option<Report>> {
-    let Some(claimed) = claim(db, clock()).await? else {
+    let Some(claimed) = claim(db, clock(), C::CHANNEL).await? else {
         return Ok(None);
     };
     let tenant_ids: Vec<_> = claimed.iter().map(|m| m.tenant_id).collect();
@@ -218,10 +264,7 @@ pub async fn run_once<M: Mailer>(
             tracing::warn!(message_id = %row.id, "outbox lease taken over; skipping");
             continue;
         }
-        let result = match email_of(config, &row, &tenants) {
-            Ok(email) => send_bounded(mailer, &email).await,
-            Err(err) => Err(err),
-        };
+        let result = bounded(courier.deliver(db, config, &row, &tenants)).await;
         let now = clock();
         let mut update = outbox::ActiveModel::default();
         let outcome = match result {

@@ -20,16 +20,17 @@
    center (users, groups, app registrations, role assignments, directory roles,
    audit log, settings, tenants) on the built-in OIDC clients.
 
-## M1b — local auth extras + subdomains
+## M1b — local auth extras + subdomains (done)
 
-1. **`feat/m1b-subdomains`** — every tenant on its own host
+1. **`feat/m1b-subdomains`** (done) — every tenant on its own host
    `{slug}.{PUBLIC_URL host}` (issuer = that origin, path routing removed,
    apex redirects to the system admin center), host-only cookies, per-tenant
    CSRF origin, startup reconcile of built-in SPA URIs, wildcard Ingress.
-2. **`feat/m1b-email`** — SMTP outbox, email verification, password reset,
+2. **`feat/m1b-email`** (done) — SMTP outbox, email verification, password reset,
    admin invites, email change, security notifications.
-3. **`feat/m1b-passkeys`** — WebAuthn (MFA and passwordless).
-4. **`feat/m1b-telegram`** — Telegram bot OTP + notifications.
+3. **`feat/m1b-passkeys`** (done) — WebAuthn (MFA and passwordless).
+4. **`feat/m1b-telegram`** (done) — Telegram bot: linking, sign-in codes (MFA),
+   notifications ([telegram.md](telegram.md)).
 
 ## M2 — federation + custom domains
 
