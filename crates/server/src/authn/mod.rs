@@ -12,6 +12,10 @@ pub mod cookie;
 mod ctx;
 mod device;
 mod email;
+mod federation;
+mod federation_link;
+mod federation_login;
+mod federation_pending;
 mod invite_passkey;
 pub mod ip;
 mod mfa;
@@ -56,6 +60,11 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(&format!("{TX}/telegram"), post(mfa::telegram))
         .route(&format!("{TX}/change-password"), post(password::change))
         .route(&format!("{TX}/consent"), post(complete::consent))
+        .route(&format!("{TX}/federation/{{idp}}"), post(federation::start))
+        .route(&format!("{TX}/discover"), post(federation::discover))
+        // A top-level GET from the provider: the CSRF layer lets GETs pass,
+        // the state and the binding cookie protect it.
+        .route("/federation/callback", get(federation::callback))
         .route("/api/authn/password-reset", post(reset::request))
         .route("/api/authn/email/reset", post(reset::complete))
         .route("/api/authn/email/invite", post(email::accept_invite))
@@ -144,6 +153,16 @@ pub enum AuthnError {
     /// Telegram didn't take the message; the user may try again.
     #[error("the code could not be sent; try again")]
     DeliveryFailed,
+    /// Stage `link`: the user already has an identity at this provider.
+    #[error("this account already has a linked identity at this identity provider")]
+    AlreadyLinked,
+    /// Stage `link`: the provider can no longer link (disabled, deleted or
+    /// its policy changed); the transaction is back at the password stage.
+    #[error("the identity provider is no longer available; sign in normally")]
+    LinkUnavailable,
+    /// An identity provider failed us; why is in the audit log only.
+    #[error("sign-in with the identity provider failed")]
+    Upstream,
     #[error("{0}")]
     Invalid(String),
     #[error(transparent)]
@@ -187,6 +206,9 @@ impl IntoResponse for AuthnError {
             Self::NotFound | Self::EmailDisabled => (StatusCode::NOT_FOUND, "not_found"),
             Self::TelegramUnavailable => (StatusCode::SERVICE_UNAVAILABLE, "telegram_unavailable"),
             Self::DeliveryFailed => (StatusCode::BAD_GATEWAY, "delivery_failed"),
+            Self::Upstream => (StatusCode::BAD_GATEWAY, "upstream_failed"),
+            Self::AlreadyLinked => (StatusCode::CONFLICT, "already_linked"),
+            Self::LinkUnavailable => (StatusCode::CONFLICT, "link_unavailable"),
             Self::InvalidLink => (StatusCode::BAD_REQUEST, "invalid_token"),
             Self::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
             Self::Invalid(_) => (StatusCode::BAD_REQUEST, "invalid_request"),

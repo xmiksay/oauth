@@ -73,6 +73,14 @@ pub struct AuthRequest {
     pub resource_scopes: Vec<String>,
     pub prompt: Option<Prompt>,
     pub max_age: Option<i64>,
+    /// Home-realm discovery: an email domain whose identity provider the
+    /// login page should go to directly (absent in transactions stored
+    /// before federation existed, hence the defaults).
+    #[serde(default)]
+    pub domain_hint: Option<String>,
+    /// The id of the identity provider to go to directly.
+    #[serde(default)]
+    pub idp: Option<String>,
 }
 
 #[cfg(test)]
@@ -112,9 +120,21 @@ mod tests {
             resource_scopes: vec!["read".into()],
             prompt: Some(Prompt::Consent),
             max_age: Some(0),
+            domain_hint: Some("contoso.com".into()),
+            idp: None,
         };
         let json = serde_json::to_value(&req).unwrap();
         assert_eq!(json["prompt"], "consent");
-        assert_eq!(serde_json::from_value::<AuthRequest>(json).unwrap(), req);
+        assert_eq!(
+            serde_json::from_value::<AuthRequest>(json.clone()).unwrap(),
+            req
+        );
+        // Transactions stored before the federation fields existed.
+        let mut old = json;
+        let fields = old.as_object_mut().unwrap();
+        fields.remove("domain_hint");
+        fields.remove("idp");
+        let parsed = serde_json::from_value::<AuthRequest>(old).unwrap();
+        assert_eq!((parsed.domain_hint, parsed.idp), (None, None));
     }
 }

@@ -63,6 +63,8 @@ event_types! {
     EmailChangeRequest => "user.email_change_request",
     EmailChangeComplete => "user.email_change_complete",
     NotificationPrefsUpdate => "user.notification_prefs_update",
+    UserIdentityLink => "user.identity_link",
+    UserIdentityUnlink => "user.identity_unlink",
     GroupCreate => "group.create",
     GroupUpdate => "group.update",
     GroupDelete => "group.delete",
@@ -87,6 +89,9 @@ event_types! {
     RoleAssignmentDelete => "app_role_assignment.delete",
     ConsentGrant => "consent.grant",
     ConsentRevoke => "consent.revoke",
+    IdentityProviderCreate => "identity_provider.create",
+    IdentityProviderUpdate => "identity_provider.update",
+    IdentityProviderDelete => "identity_provider.delete",
 }
 
 /// The object an event is about.
@@ -99,6 +104,7 @@ pub enum Target {
     DirectoryRoleAssignment(Uuid),
     AppRoleAssignment(Uuid),
     ConsentGrant(Uuid),
+    IdentityProvider(Uuid),
 }
 
 impl Target {
@@ -111,6 +117,7 @@ impl Target {
             Self::DirectoryRoleAssignment(id) => ("directory_role_assignment", id),
             Self::AppRoleAssignment(id) => ("app_role_assignment", id),
             Self::ConsentGrant(id) => ("consent_grant", id),
+            Self::IdentityProvider(id) => ("identity_provider", id),
         }
     }
 }
@@ -237,6 +244,7 @@ mod tests {
             Target::DirectoryRoleAssignment(id),
             Target::AppRoleAssignment(id),
             Target::ConsentGrant(id),
+            Target::IdentityProvider(id),
         ] {
             let (kind, _) = target.parts();
             assert!(

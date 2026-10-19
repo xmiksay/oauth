@@ -249,7 +249,7 @@ async fn notification_preferences_are_respected() {
         prefs["channels"],
         json!({ "email": true, "telegram": false })
     );
-    assert_eq!(prefs["items"].as_array().unwrap().len(), 5);
+    assert_eq!(prefs["items"].as_array().unwrap().len(), 6);
     assert!(
         prefs["items"]
             .as_array()

@@ -38,6 +38,18 @@ pub const AUTHORIZE_PER_IP: Limit = Limit {
     window_secs: 300,
 };
 
+/// Home-realm discovery lookups from one IP within one tenant.
+pub const DISCOVER_PER_IP: Limit = Limit {
+    max: 30,
+    window_secs: 300,
+};
+
+/// Upstream sign-ins started from one IP within one tenant.
+pub const FEDERATION_PER_IP: Limit = Limit {
+    max: 30,
+    window_secs: 300,
+};
+
 /// Password-reset requests from one IP within one tenant.
 pub const RESET_PER_IP: Limit = Limit {
     max: 10,

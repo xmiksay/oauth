@@ -38,6 +38,28 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   via Telegram", `401 invalid_code` → "Wrong or expired code…", `503 telegram_unavailable`
   (no bot on the server) → "Telegram sign-in is unavailable…" and the MFA step stays;
   404 / 409 / 429 as above.
+- **Federation (login)**: the password step shows a "Sign in with {name}" button per
+  `idps` entry (below an "or" divider). A click `POST`s `…/federation/{idpId}` and follows the
+  returned upstream authorize URL with a full page load (`lib/navigate.navigateTo`, never a
+  router push; every button is disabled meanwhile and the card says "Redirecting to {name}…").
+  With `features.federation`, leaving the email field `POST`s `…/discover` once per distinct
+  address that has an `@`; an `idp` answer adds "Your organization signs in with {name}" +
+  "Continue with {name}" above the password field. Discovery never blocks the form and any
+  failure (a 429 included) just means no suggestion. With `idp_hint` at the password step the
+  page redirects to that provider at once — at most once per page load, and **never when the URL
+  has `?error=`**: the federation callback appends it after a failed upstream sign-in, so
+  auto-redirecting again would loop; the hint is then a plain button (also when it isn't among
+  `idps`) and the error (`federation.ts`: `upstream_failed`, `upstream_no_email`,
+  `account_exists`, `account_disabled`, `not_linked`, `email_domain_not_allowed`, else
+  "failed") sits above the form. A view with `notice: "link_unavailable"` (a parked link
+  dropped because its provider was disabled / deleted) says so above the password form.
+  `/login?error=…` without a `tx` shows "…failed or the sign-in expired". Step `link`
+  (`LinkStep`) reuses the password form (email prefilled with the upstream address, passkey
+  button, no providers, no discovery) to sign in to the existing account the identity gets
+  linked to; MFA / consent follow as usual. There, `409 already_linked` stays on the step with
+  "…already has a linked identity at this provider…", and `409 link_unavailable` reloads the
+  view (back at the password step) with "The identity provider is no longer available…".
+  `link.idp` is typed nullable and renders as "the identity provider".
 - **Email links** (`areas/email`): `/login/reset`, `/login/invite` (choose a
   password → `POST /api/authn/email/reset|invite`) and `/myaccount/verify-email`
   (`POST /api/authn/email/verify`). They are **public** routes — no `meta.area`,
@@ -90,6 +112,27 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   one-time secret) and is dropped when done. "Unlink" → re-auth → `DELETE me/telegram`
   (404 = already unlinked). The admin user detail shows "Telegram linked"; Reset MFA
   unlinks it too.
+- **Identity providers** (admin `areas/admin/federation`, nav "Identity providers"): list
+  (`usePagedList`, no search) and detail pages over `identity-providers`; anyone with a directory
+  role reads, only a Global Admin (`auth.isGlobalAdmin`) sees create / save / enable–disable /
+  delete. `IdpForm` serves the create dialog and the detail page (`idpForm.ts` holds the field
+  ⇄ body mapping and `changedIdpFields`, so a PATCH carries only changed fields). The client
+  secret is write-only: the server only reports `has_secret` ("Secret set" / "No secret"); a typed
+  secret lives in the form's local ref and is gone once saved (the form re-mounts) — an empty
+  field keeps the secret, "Remove the secret" sends `client_secret: null`. The detail page shows
+  `redirect_uri` with a copy button and, when `users_only_via > 0`, a lockout warning that the
+  disable and delete confirmations repeat. It also shows `linked_users`; a save that repoints the
+  provider (`issuer`, `client_id` or `discovery_url`) first asks for confirmation
+  (`relinkWarning`) when `linked_users > 0` (the server unlinks them all) or when the issuer /
+  discovery URL moves without a new secret while one is stored (the server drops it). The admin user detail lists `identities` ("Linked
+  identities", unlink for `canWriteUsers`; the server's 409 for the last sign-in method shows in
+  the dialog). My Account → Security has `LinkedAccountsSection` (hidden when nothing is linked or
+  available): "Link {name}" → `ReauthPrompt` → `POST me/identities/{idpId}/link` → full-page
+  redirect to the provider, which returns to `/myaccount/security?federation=linked` or
+  `?federation_error=…` (`upstream_failed`, `already_linked`, `account_disabled`,
+  `session_ended`); the section shows the outcome — "Linked {idp_name} ({email})" from the
+  newest identity after reloading the list — and `router.replace`s the parameter away.
+  "Unlink" → re-auth → `DELETE me/identities/{id}`.
 - **Admin / My Account**: the tenant's built-in public clients `admin-portal`
   / `my-account` (code + PKCE via `oidc-client-ts`, scope
   `openid offline_access api://management-api/Directory.AccessAsUser`, authority
@@ -107,7 +150,9 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
 - **API layer** (`src/api`): `client.ts` (fetch wrapper, `ApiError` with
   `code` / `description` / `retryAfter`, `errorMessage`), `management.ts`
   (bearer injection, `/api/v1` paths via `apiPath`), one typed module per resource group
-  (`directory`, `applications`, `access`, `me`, `authn`), shapes in `types.ts`.
+  (`directory`, `applications`, `access`, `identityProviders`, `me`, `authn`), shapes in
+  `types.ts` (WebAuthn wire shapes in `webauthnTypes.ts`, re-exported by it). Leaving the SPA (an app's redirect URI, an identity provider) goes through
+  `lib/navigate` (`navigateTo`, `isWebUrl`: never follow a non-http(s) URL a server sends).
   Lists page with `usePagedList` (cursor stack over `next_cursor`, debounced
   search).
 - UI hides actions the caller's directory roles (`GET me`) can't perform and

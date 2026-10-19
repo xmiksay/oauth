@@ -3,6 +3,7 @@ import { p, t } from './management'
 import type {
   Items,
   MyConsent,
+  MyIdentities,
   NotificationPreference,
   NotificationSettings,
   Passkey,
@@ -56,6 +57,12 @@ export const me = {
   /** A fresh deep link replaces any unused one; linking again replaces the chat. */
   linkTelegram: (reauth: Reauth) => t.post<TelegramLink>('me/telegram/link', reauth),
   unlinkTelegram: (reauth: Reauth) => t.del('me/telegram', reauth),
+  identities: () => t.get<MyIdentities>('me/identities'),
+  /** The provider's authorize URL; the server links the identity when the browser returns. */
+  linkIdentity: (idpId: string, reauth: Reauth) =>
+    t.post<{ redirect: string }>(p`me/identities/${idpId}/link`, reauth),
+  /** 409 when it is the user's last way to sign in. */
+  unlinkIdentity: (id: string, reauth: Reauth) => t.del(p`me/identities/${id}`, reauth),
   notifications: () => t.get<NotificationSettings>('me/notifications'),
   updateNotifications: (items: NotificationPreference[]) =>
     t.put<NotificationSettings>('me/notifications', { items }),

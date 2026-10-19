@@ -98,7 +98,7 @@ pub fn redirect_uris(uris: &[String], what: &str) -> AppResult<()> {
 }
 
 /// RFC 6749 §3.3 scope-token characters (mirrors the DB CHECK).
-fn scope_token_chars(value: &str) -> bool {
+pub(super) fn scope_token_chars(value: &str) -> bool {
     value
         .bytes()
         .all(|b| b == 0x21 || (0x23..=0x5b).contains(&b) || (0x5d..=0x7e).contains(&b))

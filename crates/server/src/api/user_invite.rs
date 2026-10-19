@@ -17,8 +17,9 @@ use crate::{
     audit::{EventType, Target},
     authz::{Access, Area},
     error::{AppError, AppResult},
+    federation,
     mail::{links, tokens},
-    notify, passkey,
+    notify,
 };
 
 /// 400 unless the server can send email.
@@ -32,11 +33,10 @@ pub fn require_email(state: &AppState) -> AppResult<()> {
     }
 }
 
-/// Whether the user can sign in already (a password or a passkey): such a
-/// user is past the invitation stage.
+/// Whether the user can sign in already (a password, a passkey or a linked
+/// identity): such a user is past the invitation stage.
 async fn has_sign_in_method(conn: &impl ConnectionTrait, user: &users::Model) -> AppResult<bool> {
-    Ok(user.password_hash.is_some()
-        || passkey::store::count(conn, user.tenant_id, user.id).await? > 0)
+    Ok(federation::identities::methods(conn, user).await?.any())
 }
 
 /// Mails a 7-day invitation link (voiding any earlier one) and audits it.
@@ -104,7 +104,9 @@ pub async fn resend(
     ensure_can_modify_user(&txn, &caller, id).await?;
     if has_sign_in_method(&txn, &user).await? {
         return Err(AppError::Conflict(
-            "the user already has a password or passkey; use a password reset instead".into(),
+            "the user can already sign in (password, passkey or linked identity); use a password \
+             reset instead"
+                .into(),
         ));
     }
     send_invite(&state, &caller, &txn, &user, true).await?;

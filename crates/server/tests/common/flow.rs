@@ -93,7 +93,9 @@ impl Fixture {
         let bot_env = bot.as_ref().map(super::telegram::env).unwrap_or_default();
         let mut env = env.to_vec();
         env.extend(bot_env.iter().map(|(k, v)| (*k, v.as_str())));
-        let (pg, db, config) = super::migrated_db_with(&env).await;
+        let (pg, db, mut config) = super::migrated_db_with(&env).await;
+        // The fake upstream identity provider listens on plain-http loopback.
+        config.idp_allow_http_loopback = true;
         let tenant = directory::create_tenant(
             &db,
             &config,

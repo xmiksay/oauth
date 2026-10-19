@@ -108,7 +108,7 @@ pub async fn get(
 }
 
 /// `Some(None)` = explicit `null` (clear), `None` = absent (keep).
-fn nullable<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+pub(super) fn nullable<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
     d: D,
 ) -> Result<Option<Option<T>>, D::Error> {
     Option::<T>::deserialize(d).map(Some)

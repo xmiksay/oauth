@@ -15,10 +15,6 @@ use super::{
 };
 use crate::{app::AppState, metrics, telegram::otp, tenancy::Tenant};
 
-/// RFC 8176: password + one-time code = multi-factor. Recovery codes and
-/// Telegram codes are one-time passwords too.
-const MFA_AMR: [&str; 3] = ["pwd", "otp", "mfa"];
-
 #[derive(Deserialize)]
 pub struct CodeBody {
     code: String,
@@ -68,7 +64,9 @@ async fn second_factor(
             .await?;
         return Err(AuthnError::InvalidCode);
     }
-    tx.row.amr = MFA_AMR.iter().map(|s| (*s).to_owned()).collect();
+    // RFC 8176: first factor + one-time code = multi-factor. Recovery codes
+    // and Telegram codes are one-time passwords too.
+    tx.row.amr = tx::with_second_factor(&tx.row.amr, "otp");
     let next = user
         .must_change_password
         .then_some(LoginStage::ChangePassword);

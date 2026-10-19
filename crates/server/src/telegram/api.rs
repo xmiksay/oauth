@@ -10,7 +10,7 @@ use anyhow::Context;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::{config::TelegramConfig, mail::MailError};
+use crate::{config::TelegramConfig, http, mail::MailError};
 
 /// Bounds one Bot API call; a login waits on `sendMessage`.
 const TIMEOUT: Duration = Duration::from_secs(10);
@@ -43,27 +43,13 @@ struct Reply {
 
 impl BotApi {
     pub fn new(config: &TelegramConfig) -> anyhow::Result<Self> {
-        // An explicit AWS-LC provider: rustls is also built with ring (sqlx),
-        // so there is no unambiguous process default to fall back on.
-        let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
-        let roots = rustls::RootCertStore {
-            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+        let timeouts = http::Timeouts {
+            total: TIMEOUT,
+            connect: CONNECT_TIMEOUT,
         };
-        let tls = rustls::ClientConfig::builder_with_provider(provider)
-            .with_safe_default_protocol_versions()
-            .context("TLS protocol versions for the Telegram client")?
-            .with_root_certificates(roots)
-            .with_no_client_auth();
-        let http = reqwest::Client::builder()
-            .tls_backend_preconfigured(tls)
-            .timeout(TIMEOUT)
-            .connect_timeout(CONNECT_TIMEOUT)
-            .redirect(reqwest::redirect::Policy::none())
-            // An env proxy would see the token in every URL.
-            .no_proxy()
-            .https_only(config.api_url.starts_with("https://"))
-            .build()
-            .map_err(|e| anyhow::anyhow!("building the Telegram client: {}", e.without_url()))?;
+        // Without a proxy: an env proxy would see the token in every URL.
+        let http = http::client(timeouts, config.api_url.starts_with("https://"), None)
+            .context("the Telegram client")?;
         Ok(Self {
             http,
             base: format!("{}/bot{}", config.api_url, config.bot_token).into(),

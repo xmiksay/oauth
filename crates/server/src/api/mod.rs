@@ -17,8 +17,12 @@ mod directory_roles;
 mod extract;
 mod groups;
 mod guard;
+mod identity_providers;
+mod idp_body;
+mod idp_validate;
 mod me;
 mod me_email;
+mod me_identities;
 mod me_mfa;
 mod me_passkeys;
 mod me_telegram;
@@ -27,6 +31,7 @@ mod reauth;
 mod role_assignments;
 mod tenants;
 mod user_actions;
+mod user_identities;
 mod user_invite;
 mod user_passkeys;
 mod users;
@@ -88,6 +93,20 @@ pub fn router() -> Router<AppState> {
         .route(
             &format!("{T}/users/{{id}}/passkeys/{{passkey_id}}"),
             delete(user_passkeys::remove),
+        )
+        .route(
+            &format!("{T}/users/{{id}}/identities/{{identity_id}}"),
+            delete(user_identities::remove),
+        )
+        .route(
+            &format!("{T}/identity-providers"),
+            get(identity_providers::list).post(identity_providers::create),
+        )
+        .route(
+            &format!("{T}/identity-providers/{{id}}"),
+            get(identity_providers::get)
+                .patch(identity_providers::update)
+                .delete(identity_providers::remove),
         )
         .route(
             &format!("{T}/users/{{id}}/sessions"),
@@ -213,6 +232,15 @@ pub fn router() -> Router<AppState> {
             get(me_telegram::status).delete(me_telegram::unlink),
         )
         .route(&format!("{me}/telegram/link"), post(me_telegram::link))
+        .route(&format!("{me}/identities"), get(me_identities::list))
+        .route(
+            &format!("{me}/identities/{{id}}"),
+            delete(me_identities::unlink),
+        )
+        .route(
+            &format!("{me}/identities/{{id}}/link"),
+            post(me_identities::link),
+        )
         .route(&format!("{me}/reauth/options"), post(reauth::options))
         .route(&format!("{me}/sessions"), get(me::sessions))
         .route(

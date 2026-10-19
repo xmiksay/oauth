@@ -25,12 +25,13 @@ use crate::{
     telegram,
 };
 
-pub const EVENTS: [NotifyEvent; 5] = [
+pub const EVENTS: [NotifyEvent; 6] = [
     NotifyEvent::PasswordChanged,
     NotifyEvent::MfaChanged,
     NotifyEvent::EmailChanged,
     NotifyEvent::NewSignIn,
     NotifyEvent::TokenReuse,
+    NotifyEvent::IdentityLinked,
 ];
 
 /// A notice nobody received within a day is stale.

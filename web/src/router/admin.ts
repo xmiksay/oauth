@@ -81,6 +81,18 @@ export const adminRoutes: RouteRecordRaw[] = [
     ],
   },
   {
+    path: 'identity-providers',
+    name: 'admin-identity-providers',
+    component: () => import('@/areas/admin/federation/IdentityProvidersList.vue'),
+    meta: { title: 'Identity providers' },
+  },
+  {
+    path: 'identity-providers/:id',
+    name: 'admin-identity-provider',
+    component: () => import('@/areas/admin/federation/IdentityProviderDetail.vue'),
+    meta: { title: 'Identity provider' },
+  },
+  {
     path: 'role-assignments',
     name: 'admin-role-assignments',
     component: () => import('@/areas/admin/access/RoleAssignments.vue'),

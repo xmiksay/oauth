@@ -26,6 +26,8 @@ export const AUDIT_EVENT_TYPES = [
   'user.email_change_request',
   'user.email_change_complete',
   'user.notification_prefs_update',
+  'user.identity_link',
+  'user.identity_unlink',
   'group.create',
   'group.update',
   'group.delete',
@@ -48,6 +50,9 @@ export const AUDIT_EVENT_TYPES = [
   'application.permission_remove',
   'app_role_assignment.create',
   'app_role_assignment.delete',
+  'identity_provider.create',
+  'identity_provider.update',
+  'identity_provider.delete',
   'consent.grant',
   'consent.revoke',
 ]

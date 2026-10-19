@@ -82,7 +82,11 @@ pub async fn submit(
 ) -> AuthnResult<Outcome> {
     let ctx = Ctx::new(&state, &tenant, ip, &headers);
     let conn = &state.db;
-    let mut tx = tx::load_at(&ctx, &tx_id, LoginStage::Password).await?;
+    let mut tx = tx::load(&ctx, &tx_id).await?;
+    let stage = tx.row.stage;
+    if !matches!(stage, LoginStage::Password | LoginStage::Link) {
+        return Err(AuthnError::WrongStep);
+    }
     if body.password.len() > password::MAX_PASSWORD_LEN * 4 {
         return Err(AuthnError::InvalidCredentials);
     }
@@ -127,20 +131,32 @@ pub async fn submit(
             .await?;
         return Err(AuthnError::AccountDisabled);
     }
-    let has_second_factor = totp::confirmed(conn, tenant.id, user.id).await?.is_some()
-        || passkey::store::count(conn, tenant.id, user.id).await? > 0
-        || super::telegram::is_factor(&state, tenant.id, user.id).await?;
-    let next = if has_second_factor {
+    let next = if has_second_factor(&state, tenant.id, user.id).await? {
         Some(LoginStage::Mfa)
     } else if user.must_change_password {
         Some(LoginStage::ChangePassword)
     } else {
         None
     };
+    super::federation_pending::check(&ctx, &tx, &user).await?;
     tx.row.user_id = Some(user.id);
     tx.row.amr = vec!["pwd".to_owned()];
     tx.row.auth_time = Some(Utc::now().fixed_offset());
-    proceed(&ctx, tx, LoginStage::Password, next, &user, false).await
+    proceed(&ctx, tx, stage, next, &user, false).await
+}
+
+/// Whether the user has a second factor, so a first factor alone doesn't
+/// complete the sign-in.
+pub(super) async fn has_second_factor(
+    state: &AppState,
+    tenant_id: uuid::Uuid,
+    user_id: uuid::Uuid,
+) -> anyhow::Result<bool> {
+    Ok(totp::confirmed(&state.db, tenant_id, user_id)
+        .await?
+        .is_some()
+        || passkey::store::count(&state.db, tenant_id, user_id).await? > 0
+        || super::telegram::is_factor(state, tenant_id, user_id).await?)
 }
 
 #[derive(Deserialize)]

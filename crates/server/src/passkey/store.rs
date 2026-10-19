@@ -208,15 +208,18 @@ pub async fn rename(
         .context("renaming passkey")
 }
 
-/// Deletes one passkey, refusing to remove the last sign-in method of a
-/// user without a password. `user` must be row-locked by the caller, so
-/// two concurrent removals can't both pass the check.
+/// Deletes one passkey, refusing to remove the user's last sign-in method
+/// (password, passkeys, linked identities). `user` must be row-locked by the
+/// caller, so two concurrent removals can't both pass the check.
 pub async fn remove(
     conn: &impl ConnectionTrait,
     user: &users::Model,
     credential: &webauthn_credentials::Model,
 ) -> Result<(), PasskeyError> {
-    if user.password_hash.is_none() && count(conn, user.tenant_id, user.id).await? <= 1 {
+    if !crate::federation::identities::methods(conn, user)
+        .await?
+        .can_drop_passkey()
+    {
         return Err(PasskeyError::Conflict(
             "the last sign-in method can't be removed: set a password first",
         ));

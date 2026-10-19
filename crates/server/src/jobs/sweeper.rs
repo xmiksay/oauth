@@ -11,7 +11,7 @@ use super::{SWEEPER_LOCK_KEY, try_lock};
 use crate::audit;
 
 /// Tables with an `expires_at` column, swept in this order.
-const TABLES: [&str; 12] = [
+const TABLES: [&str; 13] = [
     "login_transactions",
     "authorization_codes",
     "sessions",
@@ -24,6 +24,7 @@ const TABLES: [&str; 12] = [
     "webauthn_challenges",
     "telegram_link_codes",
     "telegram_otps",
+    "federation_states",
 ];
 
 /// Rows deleted per table; `None` if another replica holds the lock.

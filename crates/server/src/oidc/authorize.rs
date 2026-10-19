@@ -33,6 +33,7 @@ use crate::{
 
 const MAX_STATE_LEN: usize = 2048;
 const MAX_NONCE_LEN: usize = 512;
+const MAX_HINT_LEN: usize = 256;
 
 type Rejection = (ErrorCode, String);
 
@@ -235,6 +236,12 @@ async fn validate(
     {
         return reject(ErrorCode::InvalidRequest, "state or nonce too long");
     }
+    // Only hints: an unknown IdP or domain falls back to the normal page.
+    let hint = |key: &str| {
+        get(key)
+            .filter(|h| h.len() <= MAX_HINT_LEN && !h.chars().any(char::is_control))
+            .map(str::to_owned)
+    };
     let prompt = match get("prompt").map(Prompt::parse).transpose() {
         Ok(prompt) => prompt.flatten(),
         Err(msg) => return reject(ErrorCode::InvalidRequest, &msg),
@@ -286,5 +293,7 @@ async fn validate(
         resource_scopes,
         prompt,
         max_age,
+        domain_hint: hint("domain_hint"),
+        idp: hint("idp"),
     }))
 }

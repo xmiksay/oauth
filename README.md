@@ -47,9 +47,9 @@ One Vue SPA served by the backend on every tenant host `{t}.{PUBLIC_URL host}`:
 
 | URL | What |
 |---|---|
-| `/admin` | Admin center (Entra-portal-like): users, groups, app registrations (authentication, secrets, token configuration, expose an API, app roles, API permissions + admin consent), role assignments, directory roles, audit log, settings; in the `system` tenant also tenants |
-| `/myaccount` | My Account: profile, email, password, authenticator app + recovery codes, passkeys, Telegram, notifications, sessions, app permissions |
-| `/login?tx=…` | Sign-in steps (password or passkey → authenticator / recovery / Telegram code / passkey → forced password change → consent) |
+| `/admin` | Admin center (Entra-portal-like): users, groups, app registrations (authentication, secrets, token configuration, expose an API, app roles, API permissions + admin consent), role assignments, directory roles, identity providers, audit log, settings; in the `system` tenant also tenants |
+| `/myaccount` | My Account: profile, email, password, authenticator app + recovery codes, passkeys, Telegram, linked accounts, notifications, sessions, app permissions |
+| `/login?tx=…` | Sign-in steps (password, passkey or an upstream identity provider → link an unknown identity → authenticator / recovery / Telegram code / passkey → forced password change → consent) |
 | `/logout` | Sign-out confirmation / "signed out" page |
 
 Admin center and My Account are the tenant's built-in OIDC clients
@@ -73,9 +73,11 @@ the tenant host without the port).
 - [Architecture](docs/architecture.md) — endpoints, flows, token formats, jobs
 - [Frontend](docs/frontend.md) — the SPA: areas, auth state, API layer
 - [Login JSON API](docs/api/authn.md) — contract for the login SPA
-- [Management API](docs/api/management.md) — `/api/v1` REST contract for the admin / My Account SPAs and service apps ([`me`](docs/api/me.md))
+- [Management API](docs/api/management.md) — `/api/v1` REST contract for the admin / My Account SPAs and service apps ([`me`](docs/api/me.md), [identity providers](docs/api/identity_providers.md))
 - [Email](docs/email.md) — verification, password reset, invitations, security notices
+- [Sign-in](docs/authn.md) — login transactions, stages, `amr`, sessions & CSRF, rate limits
 - [Passkeys](docs/passkeys.md) — WebAuthn verifier, passwordless / MFA sign-in, re-authentication
+- [Federation](docs/federation.md) — upstream OIDC identity providers: setup, policies, MFA trust, security model
 - [Telegram](docs/telegram.md) — bot setup, webhook, sign-in codes, notices
 - [Roadmap](docs/roadmap.md)
 - Deployment: [`deploy/k8s/deploy.yml`](deploy/k8s/deploy.yml), `Dockerfile`

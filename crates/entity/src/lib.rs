@@ -16,8 +16,10 @@ pub mod client_secrets;
 pub mod consent_grants;
 pub mod directory_role_assignments;
 pub mod email_tokens;
+pub mod federation_states;
 pub mod group_members;
 pub mod groups;
+pub mod identity_providers;
 pub mod known_devices;
 pub mod login_transactions;
 pub mod notification_prefs;
@@ -31,6 +33,7 @@ pub mod telegram_link_codes;
 pub mod telegram_links;
 pub mod telegram_otps;
 pub mod tenants;
+pub mod user_identities;
 pub mod user_recovery_codes;
 pub mod user_totp;
 pub mod users;
@@ -204,6 +207,62 @@ mod tests {
                     attempts: 0,
                     sent_at: now(),
                     expires_at: now(),
+                }
+            ),
+            format!(
+                "{:?}",
+                identity_providers::Model {
+                    id,
+                    tenant_id: id,
+                    name: "Upstream".into(),
+                    kind: enums::IdpKind::Oidc,
+                    enabled: true,
+                    visible: true,
+                    issuer: "https://up.example".into(),
+                    discovery_url: None,
+                    client_id: "c".into(),
+                    client_secret_sealed: Some(bytes.clone()),
+                    client_auth: enums::IdpClientAuth::Post,
+                    scopes: vec![],
+                    policy: enums::IdpPolicy::LinkOnly,
+                    trust_upstream_mfa: false,
+                    mfa_acr: None,
+                    email_domains: vec![],
+                    generation: 1,
+                    created_at: now(),
+                    updated_at: now(),
+                }
+            ),
+            format!(
+                "{:?}",
+                federation_states::Model {
+                    id,
+                    tenant_id: id,
+                    tx_id: Some(id),
+                    idp_id: id,
+                    state_hash: bytes.clone(),
+                    binding_hash: bytes.clone(),
+                    nonce: secret.into(),
+                    pkce_verifier_sealed: bytes.clone(),
+                    idp_generation: 1,
+                    purpose: enums::FederationPurpose::Login,
+                    user_id: None,
+                    session_id: None,
+                    created_at: now(),
+                    expires_at: now(),
+                }
+            ),
+            format!(
+                "{:?}",
+                user_identities::Model {
+                    id,
+                    tenant_id: id,
+                    user_id: id,
+                    idp_id: id,
+                    subject: secret.into(),
+                    email: Some(secret.into()),
+                    linked_at: now(),
+                    last_used_at: None,
                 }
             ),
         ];

@@ -17,8 +17,8 @@ use tower_http::trace::{DefaultOnFailure, TraceLayer};
 use tracing::{Level, Span};
 
 use crate::{
-    api, authn, config::Config, headers, health, metrics, oidc, spa, telegram, telegram::BotApi,
-    tenancy,
+    api, authn, config::Config, federation, headers, health, metrics, oidc, spa, telegram,
+    telegram::BotApi, tenancy,
 };
 
 /// Detached handler jobs allowed in flight (beyond: dropped).
@@ -37,6 +37,9 @@ pub struct AppState {
     pub detached: Arc<Semaphore>,
     /// Bot API client, when Telegram is configured.
     pub telegram: Option<BotApi>,
+    /// Client and caches for upstream identity providers (`None` only if
+    /// the HTTP client couldn't be built: federation then fails closed).
+    pub upstream: Option<Arc<federation::Upstream>>,
 }
 
 impl AppState {
@@ -53,6 +56,12 @@ impl AppState {
         if telegram.is_none() {
             config.telegram = None;
         }
+        let upstream = federation::Upstream::new(config.idp_allow_http_loopback)
+            .map_err(|err| {
+                tracing::error!(error = ?err, "upstream client setup failed; federation is off");
+            })
+            .ok()
+            .map(Arc::new);
         Self {
             db,
             config: Arc::new(config),
@@ -60,6 +69,7 @@ impl AppState {
             tasks: TaskTracker::new(),
             detached: Arc::new(Semaphore::new(MAX_DETACHED)),
             telegram,
+            upstream,
         }
     }
 }

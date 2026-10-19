@@ -32,15 +32,17 @@
 4. **`feat/m1b-telegram`** (done) — Telegram bot: linking, sign-in codes (MFA),
    notifications ([telegram.md](telegram.md)).
 
-## M2 — federation + custom domains
+## M2 — federation + device code
 
-Upstream IdP brokering (generic OIDC, Google, GitHub, Entra; JIT provisioning
-and account linking), device code grant (RFC 8628).
-
-Custom domain aliases for a tenant (e.g. `login.contoso.com` next to
-`contoso.{PUBLIC_URL host}`): a tenant admin adds them; each must be globally
-unique; no DNS ownership proof; a system GlobalAdmin resolves collisions; an
-operator adds the ingress host and certificate.
+1. **`feat/m2-federation`** (done) — generic upstream OIDC
+   ([federation.md](federation.md)): per-tenant identity providers
+   (GlobalAdmin-managed, sealed write-only secret), code flow with PKCE /
+   `state` / `nonce`, ID token verification, first-sign-in policy
+   `jit` / `link_only` / `deny`, explicit linking only (in-flow or My
+   Account), optional trust of upstream MFA, home-realm discovery.
+2. **`feat/m2-idp-presets`** — Google, Entra (single / multi-tenant with
+   a `tid`-templated issuer) and GitHub (OAuth2 adapter).
+3. **`feat/m2-device-code`** — device authorization grant (RFC 8628).
 
 ## M3 — delegation
 
@@ -51,3 +53,12 @@ principals), `private_key_jwt` client auth.
 ## M4 — SAML
 
 SAML 2.0 IdP (enterprise apps) and SAML SP (upstream brokering).
+
+## Later
+
+**Custom domain aliases** for a tenant (e.g. `login.contoso.com` next to
+`contoso.{PUBLIC_URL host}`). Decided design: a tenant admin adds them; each
+must be globally unique; no DNS ownership proof; a system GlobalAdmin
+resolves collisions; an operator adds the ingress host and certificate.
+**Blocker:** per-domain certificates (ACME issuance and renewal for hosts
+outside the wildcard) must be designed first.

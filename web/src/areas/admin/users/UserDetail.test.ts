@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory, createRouter } from 'vue-router'
 import { ApiError } from '@/api/client'
-import type { UserDetail } from '@/api/types'
+import type { AdminUserDetail, DirectoryRole } from '@/api/types'
 import { fakeMe, fakePasskey } from '@/test/helpers'
 
 const users = {
@@ -11,6 +11,7 @@ const users = {
   resetMfa: vi.fn(),
   passkeys: vi.fn(),
   sessions: vi.fn(),
+  unlinkIdentity: vi.fn(),
 }
 const directoryRoles = { list: vi.fn() }
 vi.mock('@/api/directory', () => ({ users, directoryRoles }))
@@ -18,15 +19,16 @@ vi.mock('@/api/directory', () => ({ users, directoryRoles }))
 const { default: UserDetailPage } = await import('./UserDetail.vue')
 const { useAuthStore } = await import('@/stores/auth')
 
-const passkeyOnly: UserDetail = {
+const passkeyOnly: AdminUserDetail = {
   ...fakeMe({ id: 'u1', email: 'bob@example.com', has_password: false }),
   mfa: { totp: false, totp_pending: false, recovery_codes_remaining: 0, passkeys: 1, telegram: false },
+  identities: [],
 }
 
-async function mountPage() {
+async function mountPage(roles: DirectoryRole[] = ['UserAdmin']) {
   const pinia = createPinia()
   setActivePinia(pinia)
-  useAuthStore().setMe(fakeMe({ directory_roles: ['UserAdmin'] }))
+  useAuthStore().setMe(fakeMe({ directory_roles: roles }))
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -86,7 +88,7 @@ describe('UserDetail passkeys', () => {
 })
 
 describe('UserDetail Telegram', () => {
-  const telegramOnly: UserDetail = {
+  const telegramOnly: AdminUserDetail = {
     ...passkeyOnly,
     has_password: true,
     mfa: { ...passkeyOnly.mfa, passkeys: 0, telegram: true },
@@ -105,5 +107,55 @@ describe('UserDetail Telegram', () => {
   it('says nothing about Telegram while none is linked', async () => {
     const w = await mountPage()
     expect(w.text()).not.toContain('Telegram linked')
+  })
+})
+
+describe('UserDetail linked identities', () => {
+  const linked: AdminUserDetail = {
+    ...passkeyOnly,
+    identities: [
+      {
+        id: 'li1',
+        idp_id: 'idp1',
+        idp_name: 'Entra',
+        subject: 'sub-123',
+        email: 'bob@contoso.com',
+        linked_at: '2026-10-01T10:00:00Z',
+        last_used_at: null,
+      },
+    ],
+  }
+
+  it('lists them read-only without user write access', async () => {
+    users.get.mockResolvedValue(linked)
+    const w = await mountPage([])
+    expect(w.findAll('h2').map((h) => h.text())).toContain('Linked identities')
+    expect(w.text()).toContain('bob@contoso.com')
+    expect(w.text()).toContain('sub-123')
+    expect(button(w, 'Unlink')).toHaveLength(0)
+  })
+
+  it('unlinks after confirmation and reloads the user', async () => {
+    users.get.mockResolvedValueOnce(linked).mockResolvedValue(passkeyOnly)
+    users.unlinkIdentity.mockResolvedValue(undefined)
+    const w = await mountPage()
+    await button(w, 'Unlink')[0]?.trigger('click')
+    await button(w, 'Unlink')[1]?.trigger('click')
+    await flushPromises()
+    expect(users.unlinkIdentity).toHaveBeenCalledWith('u1', 'li1')
+    expect(users.get).toHaveBeenCalledTimes(2)
+    expect(w.text()).toContain('No linked identities.')
+  })
+
+  it("shows the server's 409 when it is the last sign-in method", async () => {
+    users.get.mockResolvedValue(linked)
+    users.unlinkIdentity.mockRejectedValue(
+      new ApiError(409, { error: 'conflict', error_description: 'last sign-in method' }),
+    )
+    const w = await mountPage()
+    await button(w, 'Unlink')[0]?.trigger('click')
+    await button(w, 'Unlink')[1]?.trigger('click')
+    await flushPromises()
+    expect(w.find('[role=alert]').text()).toBe('last sign-in method')
   })
 })

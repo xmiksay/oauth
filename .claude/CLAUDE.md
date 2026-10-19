@@ -6,7 +6,8 @@ directory roles. Rust (Axum, SeaORM, Postgres) backend + Vue 3 SPA served
 same-origin. Repo: `github.com:xmiksay/oauth`.
 
 - Architecture: [docs/architecture.md](../docs/architecture.md), SPA: [docs/frontend.md](../docs/frontend.md),
-  passkeys: [docs/passkeys.md](../docs/passkeys.md)
+  sign-in: [docs/authn.md](../docs/authn.md), passkeys: [docs/passkeys.md](../docs/passkeys.md),
+  federation: [docs/federation.md](../docs/federation.md)
 - Roadmap / milestones: [docs/roadmap.md](../docs/roadmap.md)
 
 ## Layout
@@ -55,7 +56,7 @@ in the ConfigMap. `TELEGRAM_BOT_TOKEN` + `TELEGRAM_WEBHOOK_SECRET` (Secret) +
 Telegram feature; `TELEGRAM_API_URL` (https://api.telegram.org; http only to
 loopback) — [docs/telegram.md](../docs/telegram.md).
 Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md); management API:
-[docs/api/management.md](../docs/api/management.md) (+ [me.md](../docs/api/me.md)). Env vars are parsed and validated in
+[docs/api/management.md](../docs/api/management.md) (+ [me.md](../docs/api/me.md), [identity_providers.md](../docs/api/identity_providers.md)). Env vars are parsed and validated in
 `crates/server/src/config/` (`env.rs`, `smtp.rs`, `telegram.rs`, `public_url.rs`); adding a var means updating `.env.example`,
 `deploy/k8s/deploy.yml` and this list.
 
@@ -118,10 +119,30 @@ Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md); manag
   `user_recovery_codes`, `client_secrets`, `signing_keys`, `sessions`,
   `authorization_codes`, `refresh_tokens`, `opaque_access_tokens`, `outbox`,
   `email_tokens`, `known_devices`, `webauthn_challenges`, `telegram_links`,
-  `telegram_link_codes` or `telegram_otps` (nor a `mail::Email`'s body).
+  `telegram_link_codes`, `telegram_otps`, `identity_providers`,
+  `user_identities` or `federation_states` (nor a `mail::Email`'s body, nor
+  a `login_transactions` row's `pending_identity`).
   Never log a Bot API URL or a reqwest error's text (the URL carries the bot
   token: `telegram::api` logs error kinds only), a chat id or a message text. `webauthn_credentials` holds only public keys and credential ids, so
   its `Debug` is derived.
+- Federation (`federation/`, [docs/federation.md](../docs/federation.md)):
+  outbound HTTP only through `http::client` (no redirects, no proxy,
+  timeouts) and `http::read_capped`; provider URLs pass `federation::urls`
+  (https, loopback http only with `idp_allow_http_loopback`) and the
+  federation client resolves through `federation::resolve::PublicOnly`
+  (no private / loopback / link-local destinations outside dev). Changing an
+  IdP's `issuer`, `client_id` or `discovery_url` (a repoint) unlinks all its
+  identities (`identities::unlink_all`), bumps its `generation` and (issuer /
+  discovery URL) drops the stored secret, in one transaction holding the row
+  `FOR UPDATE`; anything writing on behalf of an upstream identity takes the
+  row `FOR SHARE` via `idps::lock_current` at the verified generation. Never log
+  upstream codes, tokens, ID tokens, states, nonces, PKCE verifiers, client
+  secrets or the upstream authorization URL; failures are a fixed
+  `federation::Failure` reason (audit `details.reason`), the user sees
+  `upstream_failed`. Never link an account by email; JIT refuses an email
+  that belongs to a user. The client secret is write-only (`has_secret`).
+  The last-sign-in-method rule is `federation::identities::Methods` —
+  anything removing a password, passkey or identity goes through it.
 - Bearer values (cookies, codes, tokens) come from `secret::random_token`
   and are stored only as `secret::hash`; unguessable handles from
   `secret::random_uuid` (not UUIDv7).
@@ -197,7 +218,7 @@ Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md); manag
   `app::request_span` logs the route template.
 - Each file ≤ 400 lines. Backend changes ship with unit tests (`#[cfg(test)]`)
   and integration tests (`crates/server/tests/`, in-process router + testcontainers).
-- Branches `feat/m1a-*` / `feat/m1b-*` per roadmap step, ff-only onto `main`; `make lint` and
+- Branches `feat/m1a-*` / `feat/m1b-*` / `feat/m2-*` per roadmap step, ff-only onto `main`; `make lint` and
   `make test` green before push.
 
 ## Frontend conventions (`web/`)
@@ -206,8 +227,9 @@ Layout: `src/api/` (HTTP), `src/auth/oidc.ts` (UserManager settings, `SPA_SCOPE`
 `src/stores/` (Pinia: `auth`, `tenant`, `application`), `src/composables/`
 (`usePagedList`, `useAction`, `usePrincipalNames`), `src/components/` (shared UI),
 `src/areas/{login,logout,myaccount,admin}/` (pages; admin split into
-`users/ groups/ apps/ access/`), `src/router/` (`admin.ts` = admin child routes),
-`src/lib/format.ts` (pure helpers), `src/test/helpers.ts` (fetch / UserManager fakes).
+`users/ groups/ apps/ access/ federation/`), `src/router/` (`admin.ts` = admin child routes),
+`src/lib/format.ts` (pure helpers), `src/lib/navigate.ts` (full-page navigation, mocked in
+tests), `src/test/helpers.ts` (fetch / UserManager fakes).
 
 - All HTTP goes through `api/client.ts` (`request`, `ApiError`, `errorMessage`);
   management calls through `api/management.ts` (`authed` adds the bearer token

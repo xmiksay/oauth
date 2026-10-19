@@ -39,7 +39,7 @@ the API answers with a `redirect`, which the SPA follows
 ```json
 {
   "tx": "6a0c…",
-  "step": "password | mfa | change_password | consent",
+  "step": "password | link | mfa | change_password | consent",
   "tenant": { "slug": "contoso", "display_name": "Contoso" },
   "client": { "client_id": "web-app", "display_name": "Web App" },
   "user": { "email": "ann@example.com", "display_name": "Ann" },
@@ -48,7 +48,11 @@ the API answers with a `redirect`, which the SPA follows
     "scopes": [{ "value": "Orders.Read", "description": "Read your orders" }]
   },
   "factors": ["password", "passkey"],
-  "features": { "password_reset": true }
+  "idps": [{ "id": "0192…", "name": "Contoso SSO" }],
+  "idp_hint": null,
+  "link": null,
+  "notice": null,
+  "features": { "password_reset": true, "federation": true }
 }
 ```
 
@@ -61,7 +65,55 @@ true when the server can send email (show "Forgot password?").
 it reveals nothing); at `mfa` the subset of `["totp", "recovery",
 "passkey", "telegram"]` the user has (`telegram`: a linked chat; on a server
 without a bot only when the user has no other factor, and it then answers
-`503 telegram_unavailable` — [../telegram.md](../telegram.md)); `[]` at other steps.
+`503 telegram_unavailable` — [../telegram.md](../telegram.md)); at `link`
+`["password", "passkey"]`; `[]` at other steps.
+`idps` (password step only): enabled, visible identity providers for "Sign in
+with …" buttons. `idp_hint` (password step only): the enabled provider the
+authorize request named with `idp={id}` or `domain_hint={domain}`, else `null`.
+`link` (step `link` only): `{ "idp": { "id", "name" }, "email", "name" }` of
+the upstream identity waiting to be linked. `notice` (password step):
+`"link_unavailable"` when a parked identity was dropped because its provider
+was disabled, deleted or no longer `link_only`, else `null`. `features.federation`: the
+tenant has an enabled provider (offer email-domain discovery).
+
+## Federation
+
+Flows and security model in [../federation.md](../federation.md).
+
+| Call | Body | Response |
+|---|---|---|
+| `POST …/tx/{id}/federation/{idp}` | `{}` | step `password`: `200 { "redirect": "<provider authorization URL>" }` — navigate there (full page); `prompt=login` / `max_age` of the authorization request are passed on. `404 not_found` unknown / disabled provider, `502 upstream_failed` when its discovery document can't be used (remembered 30 s), `429` over 30 / 5 min per IP |
+| `POST …/tx/{id}/discover` | `{ "email" }` | step `password`: `200 { "idp": { "id", "name" } }` when the address's domain belongs to an enabled provider, else `200 {}` (domain mapping only, nothing about accounts); 30 / 5 min per IP |
+| `GET /federation/callback?code&state` | — | The provider's redirect (no `Origin` / JSON rules; protected by the single-use, browser-bound `state`). Always a `302` |
+
+Callback outcomes: `{origin}/login?tx={id}` (load the view: now at `mfa`,
+`link`, `change_password` or `consent`), the client's redirect URI (signed in),
+`{origin}/login?tx={id}&error={code}` (transaction still at `password`), or
+`{origin}/login?error=upstream_failed` (no live, browser-bound state — the
+transaction is gone, expired or the link was opened elsewhere). For My
+Account links: `{origin}/myaccount/security?federation=linked` or
+`?federation_error={upstream_failed|already_linked|account_disabled}`.
+
+| `error` | Meaning |
+|---|---|
+| `upstream_failed` | The provider or its response failed a check (reason in the audit log only) |
+| `upstream_no_email` | Policy `jit` without a verified upstream email |
+| `account_exists` | Policy `jit` and a user has that email — sign in and link instead (never linked automatically) |
+| `account_disabled` | The linked user is disabled |
+| `not_linked` | Policy `deny` and the identity isn't linked |
+| `email_domain_not_allowed` | Policy `jit`, the IdP lists `email_domains` and the verified email is of another domain |
+
+At step `link` the `password` and `passkey` calls take the local account's
+credentials; completing the sign-in links the identity. They answer
+`409 already_linked` when that account already has an identity at the
+provider, and `409 link_unavailable` when the provider can no longer link
+(the transaction is then back at `password`). Should the provider become
+unusable (or the identity get linked elsewhere) only later, at `mfa`,
+`change_password` or `consent`, the sign-in still completes without the
+link (audited as a failed `user.identity_link`); nothing in the response
+says so — the user can link again from My Account.
+My Account callbacks also return `federation_error=session_ended` when the
+session that started the link has ended.
 
 ## Email links (no transaction)
 
@@ -102,11 +154,11 @@ reused session ended while consent was pending).
 
 | `POST …/tx/{id}/` | Body | When |
 |---|---|---|
-| `password` | `{ "email", "password" }` | step `password` |
+| `password` | `{ "email", "password" }` | step `password` or `link` |
 | `totp` | `{ "code": "123456" }` | step `mfa` (user has a confirmed TOTP); a code is accepted once |
 | `recovery` | `{ "code": "abcd-efgh-…" }` | step `mfa`; one-time recovery code (case, spaces and `-` ignored) |
-| `passkey/options` | `{}` | step `password` or `mfa`: `200 { "publicKey": PublicKeyCredentialRequestOptionsJSON }` (not a step view) |
-| `passkey` | AssertionJSON | step `password` (passwordless) or `mfa` (second factor) |
+| `passkey/options` | `{}` | step `password`, `link` or `mfa`: `200 { "publicKey": PublicKeyCredentialRequestOptionsJSON }` (not a step view) |
+| `passkey` | AssertionJSON | step `password` / `link` (passwordless) or `mfa` (second factor) |
 | `telegram/send` | `{}` | step `mfa` (user has `telegram`): sends a 6-digit code to the linked chat, replacing an earlier one; `200 { "sent": true, "expires_in": 300 }` (not a step view). `502 delivery_failed` when Telegram didn't take it (retry), `400 invalid_request` when no chat is linked, `503 telegram_unavailable` without a bot |
 | `telegram` | `{ "code": "123456" }` | step `mfa`: the code last sent (5 min, single use, 5 guesses — then send a new one; spaces ignored) |
 | `change-password` | `{ "new_password" }` | step `change_password` (`must_change_password`) |
@@ -137,6 +189,8 @@ earlier session of this browser (e.g. after `prompt=login`).
 | 409 | `wrong_step` | The transaction is at another step (or a concurrent call advanced it) |
 | 429 | `rate_limited` | Too many attempts; `Retry-After` header in seconds |
 | 500 | `server_error` | Internal fault (logged; no detail in the body) |
+| 502 | `upstream_failed` | `federation/{idp}`: the provider's discovery document failed; any step completing an upstream sign-in whose provider was disabled or repointed since (the transaction is gone) |
+| 409 | `already_linked` / `link_unavailable` | Stage `link`, see [Federation](#federation) |
 | 502 | `delivery_failed` | `telegram/send`: the Bot API refused or didn't answer (10 s); try again |
 | 503 | `telegram_unavailable` | `telegram[/send]` on a server without a Telegram bot (the transaction stays live: use another factor, or an admin resets MFA) |
 
@@ -154,6 +208,8 @@ successes too. IPv6 clients are bucketed per /64.
 | client IP, per tenant | 10 / 15 min | `password-reset` |
 | email address, per tenant | 3 / 15 min | `password-reset`; keyed by the trimmed, lower-cased address whether or not it exists |
 | client IP, per tenant | 30 / 5 min | `email/{verify,reset,invite}`, `email/invite/passkey[/options]` |
+| client IP, per tenant | 30 / 5 min | `discover` |
+| client IP, per tenant | 30 / 5 min | `federation/{idp}` |
 
 ## Passkeys
 

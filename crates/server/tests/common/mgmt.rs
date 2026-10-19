@@ -41,6 +41,19 @@ pub async fn audited(db: &DatabaseConnection, event_type: &str, target: Uuid) ->
         .collect()
 }
 
+/// `details` of every `event_type` audit event, oldest first.
+pub async fn audited_any(db: &DatabaseConnection, event_type: &str) -> Vec<Value> {
+    audit_events::Entity::find()
+        .filter(audit_events::Column::EventType.eq(event_type))
+        .order_by_asc(audit_events::Column::Id)
+        .all(db)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|e| e.details)
+        .collect()
+}
+
 pub async fn app_by_client_id(
     db: &DatabaseConnection,
     tenant_id: Uuid,

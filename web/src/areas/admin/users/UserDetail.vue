@@ -5,7 +5,7 @@ import { storeToRefs } from 'pinia'
 import { useAuthStore } from '@/stores/auth'
 import { ApiError } from '@/api/client'
 import { users } from '@/api/directory'
-import type { UserDetail } from '@/api/types'
+import type { AdminUserDetail } from '@/api/types'
 import { useAction } from '@/composables/useAction'
 import { formatDate } from '@/lib/format'
 import PageHeader from '@/components/PageHeader.vue'
@@ -16,13 +16,14 @@ import SecretOnceDialog from '@/components/SecretOnceDialog.vue'
 import UserRoles from './UserRoles.vue'
 import UserSessions from './UserSessions.vue'
 import UserPasskeys from './UserPasskeys.vue'
+import UserIdentities from './UserIdentities.vue'
 
 const route = useRoute()
 const router = useRouter()
 const id = String(route.params.id)
 const { canWriteUsers, me } = storeToRefs(useAuthStore())
 
-const user = ref<UserDetail | null>(null)
+const user = ref<AdminUserDetail | null>(null)
 const name = ref('')
 const email = ref('')
 const oneTime = ref<string[] | null>(null)
@@ -270,6 +271,13 @@ async function revokeSessions() {
       <UserPasskeys
         :key="passkeysVersion"
         :user-id="id"
+        :can-write="canWriteUsers"
+        class="mt-4"
+        @changed="load"
+      />
+      <UserIdentities
+        :user-id="id"
+        :identities="user.identities"
         :can-write="canWriteUsers"
         class="mt-4"
         @changed="load"

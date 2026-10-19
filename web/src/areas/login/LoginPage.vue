@@ -9,15 +9,32 @@ import MfaStep from './MfaStep.vue'
 import ChangePasswordStep from './ChangePasswordStep.vue'
 import ConsentStep from './ConsentStep.vue'
 import ForgotPasswordForm from './ForgotPasswordForm.vue'
+import LinkStep from './LinkStep.vue'
+import { UPSTREAM_EXPIRED } from './federation'
 import { passkeysSupported } from '@/webauthn'
 import { useLoginFlow } from './useLoginFlow'
 
 const route = useRoute()
 const { slug } = storeToRefs(useTenantStore())
-const tx = typeof route.query.tx === 'string' && route.query.tx ? route.query.tx : null
+const param = (key: string) => {
+  const v = route.query[key]
+  return typeof v === 'string' && v ? v : null
+}
+const tx = param('tx')
+// Set by the federation callback when the upstream sign-in failed.
+const upstreamError = param('error')
 
-const flow = useLoginFlow(tx)
+const flow = useLoginFlow(tx, undefined, upstreamError)
 const { phase, view, error, notice, locked, rateLimited, retryIn, telegramSent } = flow
+const { federating, suggestion } = flow
+
+// A hinted provider may be hidden from the buttons; once its redirect didn't happen, offer it.
+const idpButtons = computed(() => {
+  const v = view.value
+  if (!v) return []
+  const hint = v.idp_hint
+  return hint && !v.idps.some((i) => i.id === hint.id) ? [...v.idps, hint] : v.idps
+})
 
 onMounted(flow.load)
 onUnmounted(flow.dispose)
@@ -40,7 +57,7 @@ watch(
   () =>
     offerPasskey.value &&
     phase.value === 'step' &&
-    view.value?.step === 'password' &&
+    (view.value?.step === 'password' || view.value?.step === 'link') &&
     !forgot.value &&
     !locked.value,
   (on) => (on ? void flow.startConditional() : flow.stopConditional()),
@@ -50,6 +67,8 @@ watch(
 const title = computed(() => {
   if (forgot.value && view.value?.step === 'password') return 'Reset your password'
   switch (view.value?.step) {
+    case 'link':
+      return `Link your ${view.value.link?.idp?.name ?? 'identity provider'} account`
     case 'mfa':
       return 'Verify your identity'
     case 'change_password':
@@ -83,6 +102,13 @@ const subtitle = computed(() => {
       Loading…
     </p>
     <p
+      v-else-if="federating"
+      class="muted"
+      aria-live="polite"
+    >
+      Redirecting to {{ federating.name }}…
+    </p>
+    <p
       v-else-if="phase === 'redirecting'"
       class="muted"
       aria-live="polite"
@@ -102,6 +128,13 @@ const subtitle = computed(() => {
         them. Go back to the application you were signing in to and start again.
       </p>
     </div>
+    <p
+      v-else-if="phase === 'missing' && upstreamError"
+      role="alert"
+      class="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-800 dark:bg-red-950 dark:text-red-200"
+    >
+      {{ UPSTREAM_EXPIRED }}
+    </p>
     <p
       v-else-if="phase === 'missing'"
       class="muted"
@@ -167,9 +200,21 @@ const subtitle = computed(() => {
         :can-reset="view.features.password_reset"
         :initial-email="email"
         :passkey="offerPasskey"
+        :idps="idpButtons"
+        :suggestion="suggestion"
         @submit="flow.password"
         @passkey="flow.passkey"
+        @federate="flow.federate"
+        @discover="flow.discover"
         @forgot="(typed) => toggleForgot(true, typed)"
+      />
+      <LinkStep
+        v-else-if="view.step === 'link' && view.link"
+        :link="view.link"
+        :locked="locked"
+        :passkey="offerPasskey"
+        @submit="flow.password"
+        @passkey="flow.passkey"
       />
       <MfaStep
         v-else-if="view.step === 'mfa'"

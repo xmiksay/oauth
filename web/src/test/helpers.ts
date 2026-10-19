@@ -1,5 +1,5 @@
 import { vi } from 'vitest'
-import type { Me, Passkey } from '@/api/types'
+import type { IdentityProviderDetail, Me, Passkey } from '@/api/types'
 
 export interface Call {
   url: string
@@ -103,6 +103,33 @@ export function fakePasskey(over: Partial<Passkey> = {}): Passkey {
     backup_state: true,
     transports: ['internal'],
     aaguid: '00000000-0000-0000-0000-000000000000',
+    ...over,
+  }
+}
+
+/** An identity provider with a secret that no user depends on. */
+export function fakeIdp(over: Partial<IdentityProviderDetail> = {}): IdentityProviderDetail {
+  return {
+    id: 'idp1',
+    name: 'Entra',
+    kind: 'oidc',
+    enabled: true,
+    visible: true,
+    issuer: 'https://login.example.com/t/v2.0',
+    discovery_url: null,
+    client_id: 'client-1',
+    has_secret: true,
+    client_auth: 'post',
+    scopes: ['openid', 'email', 'profile'],
+    policy: 'link_only',
+    trust_upstream_mfa: false,
+    mfa_acr: null,
+    email_domains: ['contoso.com'],
+    redirect_uri: 'https://contoso.auth.example/federation/callback',
+    created_at: '2026-10-01T10:00:00Z',
+    updated_at: '2026-10-01T10:00:00Z',
+    users_only_via: 0,
+    linked_users: 0,
     ...over,
   }
 }

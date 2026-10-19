@@ -9,6 +9,7 @@ import ErrorAlert from '@/components/ErrorAlert.vue'
 import ReauthPrompt from './ReauthPrompt.vue'
 import PasskeysSection from './PasskeysSection.vue'
 import TelegramSection from './TelegramSection.vue'
+import LinkedAccountsSection from './LinkedAccountsSection.vue'
 import TotpEnrollDialog from './TotpEnrollDialog.vue'
 
 type Prompt = 'enroll' | 'regenerate' | 'remove'
@@ -134,6 +135,7 @@ async function runPrompt(reauth: Reauth) {
       v-if="me.features.telegram"
       @changed="refresh"
     />
+    <LinkedAccountsSection />
     <ReauthPrompt
       :open="prompt !== null"
       :title="prompt ? prompts[prompt].title : ''"
