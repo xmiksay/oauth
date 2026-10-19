@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { FakeManager, fakeUser, mockFetch } from '@/test/helpers'
+import { FakeManager, fakeMe, fakeUser, mockFetch } from '@/test/helpers'
 import { ApiError } from '@/api/client'
 
 vi.mock('@/auth/oidc', () => ({
@@ -60,6 +60,26 @@ describe('auth store', () => {
       fakeUser({ state: { returnTo: '//evil.example/x' } }),
     )
     expect(await auth.completeSignIn('admin')).toBe('/admin')
+  })
+
+  it('returns the portal (/) to / after the My Account callback', async () => {
+    const auth = useAuthStore()
+    await auth.ensureSignedIn('myaccount', '/')
+    manager('myaccount').signinRedirectCallback.mockResolvedValueOnce(
+      fakeUser({ state: { returnTo: '/' } }),
+    )
+    expect(await auth.completeSignIn('myaccount')).toBe('/')
+  })
+
+  it("drops the previous area's me (and roles) when switching areas", async () => {
+    const auth = useAuthStore()
+    await auth.ensureSignedIn('myaccount', '/')
+    auth.setMe(fakeMe({ directory_roles: ['GlobalAdmin'] }))
+    expect(auth.isAdmin).toBe(true)
+    await auth.ensureSignedIn('admin', '/admin')
+    // The admin layout reloads `me` with the admin token; nothing stale shows meanwhile.
+    expect(auth.me).toBeNull()
+    expect(auth.isAdmin).toBe(false)
   })
 
   it('refreshes an expired token silently', async () => {

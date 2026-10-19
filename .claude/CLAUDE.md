@@ -17,7 +17,7 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
 | `crates/server/` | bin `oauth` (`serve`, `bootstrap`) + lib `oauth_server` (all modules; integration tests use it) |
 | `crates/entity/` | SeaORM entities (one file per table) + `enums.rs` |
 | `crates/migration/` | `sea-orm-migration` Migrator (append-only, raw SQL) |
-| `web/` | Vite + Vue 3 + TS + Tailwind + Pinia SPA (`/login`, `/logout`, `/myaccount`, `/admin` on each tenant host); conventions below |
+| `web/` | Vite + Vue 3 + TS + Tailwind + Pinia SPA (`/` portal, `/login`, `/logout`, `/myaccount`, `/admin` on each tenant host); conventions below |
 | `deploy/k8s/deploy.yml` | ConfigMap, Deployment, Service, PodDisruptionBudget, Ingress for apex + `*.` wildcard (TLS Secret `oauth-wildcard-tls` via cert-manager DNS-01; Secret `oauth-secrets` created by hand) |
 | `.github/workflows/ci.yml` | `make lint` + `make test` + `make web-build`, plus `docker build`, on PR and push to `main`; actions pinned by SHA |
 
@@ -226,7 +226,7 @@ Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md); manag
 Layout: `src/api/` (HTTP), `src/auth/oidc.ts` (UserManager settings, `SPA_SCOPE`),
 `src/stores/` (Pinia: `auth`, `tenant`, `application`), `src/composables/`
 (`usePagedList`, `useAction`, `usePrincipalNames`), `src/components/` (shared UI),
-`src/areas/{login,logout,myaccount,admin}/` (pages; admin split into
+`src/areas/{portal,login,email,logout,myaccount,admin}/` (pages; `portal` = `/`; admin split into
 `users/ groups/ apps/ access/ federation/`), `src/router/` (`admin.ts` = admin child routes),
 `src/lib/format.ts` (pure helpers), `src/lib/navigate.ts` (full-page navigation, mocked in
 tests), `src/test/helpers.ts` (fetch / UserManager fakes).

@@ -1,4 +1,5 @@
 import { vi } from 'vitest'
+import { createMemoryHistory, createRouter } from 'vue-router'
 import type { IdentityProviderDetail, Me, Passkey } from '@/api/types'
 
 export interface Call {
@@ -222,4 +223,21 @@ export function domError(name: string): Error {
   const err = new Error(name)
   err.name = name
   return err
+}
+
+/** A memory router with the named routes the header and the portal link to (blank pages). */
+export function appsRouter() {
+  const blank = { render: () => null }
+  const named: [string, string][] = [
+    ['/', 'portal'],
+    ['/myaccount', 'myaccount'],
+    ['/myaccount/security', 'myaccount-security'],
+    ['/myaccount/sessions', 'myaccount-sessions'],
+    ['/myaccount/apps', 'myaccount-apps'],
+    ['/admin', 'admin'],
+  ]
+  return createRouter({
+    history: createMemoryHistory(),
+    routes: named.map(([path, name]) => ({ path, name, component: blank })),
+  })
 }

@@ -3,13 +3,28 @@
 Part of the [architecture](architecture.md); backend contracts in
 [api/authn.md](api/authn.md) and [api/management.md](api/management.md).
 
-One Vue 3 SPA (TypeScript, Tailwind v4, Pinia, vue-router) with four areas —
-`/login`, `/logout`, `/myaccount`, `/admin` — built to `web/dist` and served
+One Vue 3 SPA (TypeScript, Tailwind v4, Pinia, vue-router) with the `/` portal and four
+areas — `/login`, `/logout`, `/myaccount`, `/admin` — built to `web/dist` and served
 by the backend same-origin on every tenant host (`spa`). The tenant is the
 first hostname label (`stores/tenant`; a single-label dev apex like `localhost`
 redirects to `system.<host>/admin`); dev runs Vite on `*.localhost:5173`,
 proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`).
 
+- **Portal** (`areas/portal`, route `portal` at `/`, title "Dashboard · {tenant}"): signed in
+  through the **my-account** client (`meta.area: 'myaccount'`, so no extra OIDC app; the
+  callback is `/myaccount/callback` and `returnTo` brings the user back to `/`). It greets the
+  user (`GET me`), shows tiles for My Account and — only with a directory role
+  (`auth.isAdmin`) — the Admin center, plus quick links to Security info, Devices & sessions
+  and App permissions. `meta.areaInTitle: false` keeps "My Account" out of its page title.
+- **App launcher** (`components/AppLauncher`, in the shared `AppHeader` of the portal, My
+  Account and the admin center, on every screen size): a grid button (`aria-expanded`,
+  `aria-controls`) toggling a small nav of Dashboard, My Account and Admin center (only with
+  `auth.isAdmin`), the current one `aria-current="page"` with a check mark. Opening focuses the
+  first entry; Escape (focus back to the button), a click outside, tabbing out or a navigation
+  closes it. Switching areas switches the OIDC client (`auth.use`), which drops `me`; the
+  target layout's `SignedInGate` reloads it with that area's token. `GET me` reports
+  `directory_roles` for any client's token, so the launcher's Admin entry is right in My
+  Account too.
 - **Login** (`areas/login`): `useLoginFlow` drives the login transaction of
   [api/authn.md](api/authn.md) — `GET` the step view, `POST` each step, follow
   the final `redirect` with `window.location.assign`. Same-origin `fetch` sends

@@ -47,13 +47,15 @@ One Vue SPA served by the backend on every tenant host `{t}.{PUBLIC_URL host}`:
 
 | URL | What |
 |---|---|
+| `/` | Dashboard: greeting, tiles for My Account and (with a directory role) the Admin center, quick links; signs in as My Account |
 | `/admin` | Admin center (Entra-portal-like): users, groups, app registrations (authentication, secrets, token configuration, expose an API, app roles, API permissions + admin consent), role assignments, directory roles, identity providers, audit log, settings; in the `system` tenant also tenants |
 | `/myaccount` | My Account: profile, email, password, authenticator app + recovery codes, passkeys, Telegram, linked accounts, notifications, sessions, app permissions |
 | `/login?tx=…` | Sign-in steps (password, passkey or an upstream identity provider → link an unknown identity → authenticator / recovery / Telegram code / passkey → forced password change → consent) |
 | `/logout` | Sign-out confirmation / "signed out" page |
 
 Admin center and My Account are the tenant's built-in OIDC clients
-(`admin-portal`, `my-account`) and sign in like any other app.
+(`admin-portal`, `my-account`) and sign in like any other app. The header's app
+launcher (grid button) switches between Dashboard, My Account and Admin center.
 
 ### Frontend development
 
