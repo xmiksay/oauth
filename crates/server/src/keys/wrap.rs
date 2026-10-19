@@ -82,11 +82,42 @@ pub fn outbox_aad(tenant_id: Uuid, message_id: Uuid) -> Vec<u8> {
     aad
 }
 
+/// `label` || tenant id || row id (raw bytes). Distinct labels keep the
+/// AADs of different kinds of secret from ever colliding.
+fn labelled_aad(label: &[u8], tenant_id: Uuid, id: Uuid) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(label.len() + 32);
+    aad.extend_from_slice(label);
+    aad.extend_from_slice(tenant_id.as_bytes());
+    aad.extend_from_slice(id.as_bytes());
+    aad
+}
+
+/// AAD for an identity provider's client secret: `"idp"` || tenant || IdP id.
+pub fn idp_aad(tenant_id: Uuid, idp_id: Uuid) -> Vec<u8> {
+    labelled_aad(b"idp", tenant_id, idp_id)
+}
+
+/// AAD for the PKCE verifier of a federation state: `"fedpkce"` || tenant
+/// || state id.
+pub fn pkce_aad(tenant_id: Uuid, state_id: Uuid) -> Vec<u8> {
+    labelled_aad(b"fedpkce", tenant_id, state_id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const KEY: [u8; 32] = [7; 32];
+
+    #[test]
+    fn federation_aads_bind_their_row() {
+        let (tenant, id) = (Uuid::now_v7(), Uuid::now_v7());
+        let sealed = seal(&KEY, &idp_aad(tenant, id), b"secret").unwrap();
+        assert!(open(&KEY, &idp_aad(tenant, id), &sealed).is_ok());
+        assert!(open(&KEY, &idp_aad(tenant, Uuid::now_v7()), &sealed).is_err());
+        assert!(open(&KEY, &idp_aad(Uuid::now_v7(), id), &sealed).is_err());
+        assert!(open(&KEY, &pkce_aad(tenant, id), &sealed).is_err());
+    }
 
     #[test]
     fn outbox_aad_binds_tenant_and_row() {

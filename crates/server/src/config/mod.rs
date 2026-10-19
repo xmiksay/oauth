@@ -59,6 +59,10 @@ pub struct Config {
     pub smtp: Option<SmtpConfig>,
     /// Telegram bot; `None` hides every Telegram feature.
     pub telegram: Option<TelegramConfig>,
+    /// Upstream identity providers may use plain `http://` on loopback
+    /// hosts. Derived from an `http://` `PUBLIC_URL` (local development);
+    /// integration tests set it for their in-process fake provider.
+    pub idp_allow_http_loopback: bool,
 }
 
 // Hand-written so secrets never reach logs through `{:?}`.
@@ -79,6 +83,7 @@ impl fmt::Debug for Config {
             .field("trusted_proxy_header", &self.trusted_proxy_header)
             .field("smtp", &self.smtp)
             .field("telegram", &self.telegram)
+            .field("idp_allow_http_loopback", &self.idp_allow_http_loopback)
             .finish()
     }
 }

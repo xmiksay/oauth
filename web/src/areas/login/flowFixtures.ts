@@ -8,14 +8,32 @@ export function view(step: LoginStep, extra: Partial<TxView> = {}): TxView {
   return {
     tx: 'tx-1',
     step,
-    factors: step === 'password' ? ['password'] : step === 'mfa' ? ['totp', 'recovery'] : [],
+    factors: FACTORS[step],
     tenant: { slug: 'contoso', display_name: 'Contoso' },
     client: { client_id: 'shop', display_name: 'Shop' },
-    user: step === 'password' ? null : { email: 'ann@example.com', display_name: 'Ann' },
+    user:
+      step === 'password' || step === 'link'
+        ? null
+        : { email: 'ann@example.com', display_name: 'Ann' },
     consent: null,
-    features: { password_reset: false },
+    features: { password_reset: false, federation: false },
+    idps: [],
+    idp_hint: null,
+    notice: null,
+    link:
+      step === 'link'
+        ? { idp: { id: 'idp-1', name: 'Entra' }, email: 'ann@contoso.com', name: 'Ann' }
+        : null,
     ...extra,
   }
+}
+
+const FACTORS: Record<LoginStep, TxView['factors']> = {
+  password: ['password'],
+  link: ['password', 'passkey'],
+  mfa: ['totp', 'recovery'],
+  change_password: [],
+  consent: [],
 }
 
 export const err = (status: number, error: string, retryAfter: number | null = null) =>
@@ -35,6 +53,8 @@ export function deps() {
     signOut: vi.fn(),
     passkeyOptions: vi.fn(),
     passkey: vi.fn(),
+    federation: vi.fn(),
+    discover: vi.fn(),
   }
   const navigate = vi.fn()
   const passkeys = { conditional: vi.fn(async () => false), get: vi.fn() }

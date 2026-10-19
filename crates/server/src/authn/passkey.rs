@@ -35,7 +35,7 @@ use crate::{
 /// Stage of a transaction that accepts a passkey.
 fn passkey_stage(stage: LoginStage) -> AuthnResult<()> {
     match stage {
-        LoginStage::Password | LoginStage::Mfa => Ok(()),
+        LoginStage::Password | LoginStage::Link | LoginStage::Mfa => Ok(()),
         _ => Err(AuthnError::WrongStep),
     }
 }
@@ -154,12 +154,13 @@ pub async fn submit(
             .await?;
         return Err(AuthnError::AccountDisabled);
     }
+    super::federation_pending::check(&ctx, &tx, &user).await?;
     let kind = passkey::amr(&verified.credential).to_owned();
     let (amr, next) = if stage == LoginStage::Mfa {
         let next = user
             .must_change_password
             .then_some(LoginStage::ChangePassword);
-        (vec!["pwd".to_owned(), kind, "mfa".to_owned()], next)
+        (tx::with_second_factor(&tx.row.amr, &kind), next)
     } else {
         tx.row.user_id = Some(user.id);
         tx.row.auth_time = Some(Utc::now().fixed_offset());
@@ -172,7 +173,7 @@ pub async fn submit(
 /// The factors the step view offers (`factors`).
 pub async fn factors(state: &AppState, tx: &tx::LoadedTx) -> AuthnResult<Vec<&'static str>> {
     Ok(match (tx.row.stage, tx.row.user_id) {
-        (LoginStage::Password, _) => vec!["password", "passkey"],
+        (LoginStage::Password | LoginStage::Link, _) => vec!["password", "passkey"],
         (LoginStage::Mfa, Some(user_id)) => {
             let tenant_id = tx.row.tenant_id;
             let mut out = Vec::new();

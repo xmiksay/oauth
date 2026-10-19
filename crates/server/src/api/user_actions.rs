@@ -22,7 +22,7 @@ use crate::{
     authz::{Access, Area},
     directory::{self, password},
     error::{AppError, AppResult},
-    notify, passkey, telegram,
+    federation, notify, passkey, telegram,
 };
 
 pub fn session_view(s: &sessions::Model, current: Option<Uuid>) -> Value {
@@ -172,8 +172,9 @@ pub async fn reset_mfa(
     // Locked, so a concurrent password change can't slip past the check.
     let user = lock_user(&txn, tenant_id, id).await?;
     ensure_can_modify_user(&txn, &caller, id).await?;
-    let passkeys = passkey::store::count(&txn, tenant_id, id).await?;
-    if passkeys > 0 && user.password_hash.is_none() {
+    let methods = federation::identities::methods(&txn, &user).await?;
+    let passkeys = methods.passkeys;
+    if !methods.can_drop_passkeys() {
         return Err(AppError::Conflict(
             "the user has no password, so removing their passkeys would lock them out: \
              reset their password first"

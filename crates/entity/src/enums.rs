@@ -141,6 +141,8 @@ pub enum NotifyEvent {
     NewSignIn,
     #[sea_orm(string_value = "token_reuse")]
     TokenReuse,
+    #[sea_orm(string_value = "identity_linked")]
+    IdentityLinked,
 }
 
 /// Next step of a login transaction.
@@ -156,6 +158,10 @@ pub enum LoginStage {
     ChangePassword,
     #[sea_orm(string_value = "consent")]
     Consent,
+    /// An unknown upstream identity waits (`pending_identity`) for the user
+    /// to sign in locally, which links it.
+    #[sea_orm(string_value = "link")]
+    Link,
 }
 
 impl LoginStage {
@@ -166,6 +172,7 @@ impl LoginStage {
             Self::Mfa => "mfa",
             Self::ChangePassword => "change_password",
             Self::Consent => "consent",
+            Self::Link => "link",
         }
     }
 }
@@ -183,4 +190,48 @@ pub enum WebauthnPurpose {
     /// An assertion re-authenticating a signed-in user (My Account).
     #[sea_orm(string_value = "reauth")]
     Reauth,
+}
+
+/// Protocol of an upstream identity provider.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter, DeriveActiveEnum)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
+pub enum IdpKind {
+    #[sea_orm(string_value = "oidc")]
+    Oidc,
+}
+
+/// How we authenticate to an upstream token endpoint (RFC 6749 §2.3.1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter, DeriveActiveEnum)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
+pub enum IdpClientAuth {
+    #[sea_orm(string_value = "post")]
+    Post,
+    #[sea_orm(string_value = "basic")]
+    Basic,
+}
+
+/// What a first sign-in with an unknown upstream identity does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter, DeriveActiveEnum)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
+pub enum IdpPolicy {
+    /// Create the user just in time (verified email, never an existing one).
+    #[sea_orm(string_value = "jit")]
+    Jit,
+    /// Sign in with an existing account once to link it.
+    #[sea_orm(string_value = "link_only")]
+    LinkOnly,
+    #[sea_orm(string_value = "deny")]
+    Deny,
+}
+
+/// What an upstream round trip is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter, DeriveActiveEnum)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
+pub enum FederationPurpose {
+    /// Signing in within a login transaction.
+    #[sea_orm(string_value = "login")]
+    Login,
+    /// A signed-in user linking an identity from My Account.
+    #[sea_orm(string_value = "link")]
+    Link,
 }

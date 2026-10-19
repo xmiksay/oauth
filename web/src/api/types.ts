@@ -1,4 +1,5 @@
 // Shapes of docs/api/management.md and docs/api/authn.md. Timestamps are RFC 3339 strings.
+import type { PasskeyAssertion } from './webauthnTypes'
 
 export interface Paged<T> {
   items: T[]
@@ -60,6 +61,23 @@ export interface UserDetail extends User {
   }
 }
 
+/** An upstream identity linked to a user (`GET users/{id}` → `identities`). */
+export interface UserIdentity {
+  id: string
+  idp_id: string
+  idp_name: string
+  /** The upstream `sub`. */
+  subject: string
+  email: string | null
+  linked_at: string
+  last_used_at: string | null
+}
+
+/** `GET users/{id}`: the admin view, with linked upstream identities. */
+export interface AdminUserDetail extends UserDetail {
+  identities: UserIdentity[]
+}
+
 /** `GET` / `PATCH me`: the caller's own `UserDetail` plus what the server offers. */
 export type Me = UserDetail & {
   /**
@@ -91,6 +109,7 @@ export type NotificationEvent =
   | 'email_changed'
   | 'new_sign_in'
   | 'token_reuse'
+  | 'identity_linked'
 
 export interface NotificationPreference {
   event: NotificationEvent
@@ -103,6 +122,76 @@ export interface NotificationSettings {
   channels: { email: boolean; telegram: boolean }
   items: NotificationPreference[]
 }
+
+/** An identity provider as the login page and My Account list it. */
+export interface IdpRef {
+  id: string
+  name: string
+}
+
+/** `GET me/identities`: `available` = enabled providers the user hasn't linked yet. */
+export interface MyIdentities {
+  items: Omit<UserIdentity, 'subject'>[]
+  available: IdpRef[]
+}
+
+export type MyIdentity = MyIdentities['items'][number]
+
+export type IdpPolicy = 'jit' | 'link_only' | 'deny'
+export type IdpClientAuth = 'post' | 'basic'
+
+/** An upstream OIDC provider; the client secret is write-only (`has_secret` only). */
+export interface IdentityProvider {
+  id: string
+  name: string
+  kind: 'oidc'
+  enabled: boolean
+  visible: boolean
+  issuer: string
+  discovery_url: string | null
+  client_id: string
+  has_secret: boolean
+  client_auth: IdpClientAuth
+  scopes: string[]
+  policy: IdpPolicy
+  trust_upstream_mfa: boolean
+  mfa_acr: string | null
+  email_domains: string[]
+  /** Register this at the provider. */
+  redirect_uri: string
+  created_at: string
+  updated_at: string
+}
+
+/** `GET` / `PATCH identity-providers/{id}`. */
+export interface IdentityProviderDetail extends IdentityProvider {
+  /** Users with no other way to sign in (no password, passkey or other provider). */
+  users_only_via: number
+  /** Identities linked through this provider; changing `issuer` / `client_id` unlinks them all. */
+  linked_users: number
+}
+
+/**
+ * `POST` body; as a `PATCH` body every field is optional. `client_secret`: a string replaces
+ * the secret, `null` removes it, omitted keeps it.
+ */
+export interface IdentityProviderInput {
+  name: string
+  issuer: string
+  client_id: string
+  client_secret?: string | null
+  client_auth?: IdpClientAuth
+  discovery_url?: string | null
+  scopes?: string[]
+  policy?: IdpPolicy
+  trust_upstream_mfa?: boolean
+  mfa_acr?: string | null
+  email_domains?: string[]
+  enabled?: boolean
+  visible?: boolean
+}
+
+export type IdentityProviderPatch = Partial<IdentityProviderInput>
 
 export interface Session {
   id: string
@@ -281,57 +370,7 @@ export interface Passkey {
   aaguid: string
 }
 
-// WebAuthn wire shapes: every binary value is base64url without padding.
-
-export interface PasskeyDescriptor {
-  type: 'public-key'
-  id: string
-  transports?: string[]
-}
-
-/** Server reply that starts a registration (`navigator.credentials.create`). */
-export interface PasskeyCreationOptions {
-  publicKey: {
-    challenge: string
-    rp: { id?: string; name: string }
-    user: { id: string; name: string; displayName: string }
-    pubKeyCredParams: { type: 'public-key'; alg: number }[]
-    timeout?: number
-    attestation?: AttestationConveyancePreference
-    authenticatorSelection?: AuthenticatorSelectionCriteria
-    excludeCredentials?: PasskeyDescriptor[]
-  }
-}
-
-/** Server reply that starts an assertion (`navigator.credentials.get`). */
-export interface PasskeyRequestOptions {
-  publicKey: {
-    challenge: string
-    rpId?: string
-    timeout?: number
-    userVerification?: UserVerificationRequirement
-    allowCredentials?: PasskeyDescriptor[]
-  }
-}
-
-export interface PasskeyRegistration {
-  id: string
-  rawId: string
-  type: 'public-key'
-  response: { clientDataJSON: string; attestationObject: string; transports: string[] }
-}
-
-export interface PasskeyAssertion {
-  id: string
-  rawId: string
-  type: 'public-key'
-  response: {
-    clientDataJSON: string
-    authenticatorData: string
-    signature: string
-    userHandle: string | null
-  }
-}
+export type * from './webauthnTypes'
 
 /** Re-authentication for sensitive `me/…` calls: exactly one of the two. */
 export type Reauth = { password: string } | { passkey: PasskeyAssertion }

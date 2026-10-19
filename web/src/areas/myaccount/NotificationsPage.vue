@@ -14,6 +14,7 @@ const EVENT_LABELS: Record<NotificationEvent, string> = {
   email_changed: 'Your sign-in email was changed',
   new_sign_in: 'New sign-in to your account',
   token_reuse: 'Possible stolen sign-in detected (an app was signed out for safety)',
+  identity_linked: 'An identity provider account was linked',
 }
 
 const { me } = storeToRefs(useAuthStore())

@@ -4,12 +4,14 @@
 
 pub mod authenticator;
 pub mod browser;
+pub mod federation;
 pub mod flow;
 pub mod mail;
 pub mod mgmt;
 pub mod passkeys;
 pub mod seed;
 pub mod telegram;
+pub mod upstream;
 
 use std::{collections::HashMap, path::Path};
 

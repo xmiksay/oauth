@@ -26,6 +26,10 @@ pub enum Area {
     Applications,
     DirectoryRoles,
     AuditLog,
+    /// Upstream identity providers: any directory role reads, only a
+    /// GlobalAdmin writes, and apps get neither (sign-in trust is not
+    /// delegated to an app).
+    IdentityProviders,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -62,13 +66,14 @@ pub fn allows(principal: &Principal, area: Area, access: Access) -> bool {
                 Access::Write => match area {
                     Area::Directory => roles.contains(&DirectoryRole::UserAdmin),
                     Area::Applications => roles.contains(&DirectoryRole::ApplicationAdmin),
-                    Area::DirectoryRoles | Area::AuditLog => false,
+                    Area::DirectoryRoles | Area::AuditLog | Area::IdentityProviders => false,
                 },
             }
         }
-        Principal::App { read, write, .. } => match access {
-            Access::Read => *read || *write,
-            Access::Write => *write && matches!(area, Area::Directory | Area::Applications),
+        Principal::App { read, write, .. } => match (area, access) {
+            (Area::IdentityProviders, _) => false,
+            (_, Access::Read) => *read || *write,
+            (_, Access::Write) => *write && matches!(area, Area::Directory | Area::Applications),
         },
     }
 }
@@ -108,16 +113,17 @@ mod tests {
         }
     }
 
-    const AREAS: [Area; 4] = [
+    const AREAS: [Area; 5] = [
         Area::Directory,
         Area::Applications,
         Area::DirectoryRoles,
         Area::AuditLog,
+        Area::IdentityProviders,
     ];
 
-    /// Expected write access per area, in [`AREAS`] order.
-    fn check(p: &Principal, read: bool, writes: [bool; 4]) {
-        for (area, write) in AREAS.into_iter().zip(writes) {
+    /// Expected read and write access per area, in [`AREAS`] order.
+    fn check(p: &Principal, reads: [bool; 5], writes: [bool; 5]) {
+        for ((area, read), write) in AREAS.into_iter().zip(reads).zip(writes) {
             assert_eq!(allows(p, area, Read), read, "{p:?} read {area:?}");
             assert_eq!(allows(p, area, Write), write, "{p:?} write {area:?}");
         }
@@ -125,23 +131,35 @@ mod tests {
 
     #[test]
     fn permission_matrix() {
-        check(&user(&[GlobalAdmin]), true, [true; 4]);
-        check(&user(&[UserAdmin]), true, [true, false, false, false]);
+        let all = [true; 5];
+        let none = [false; 5];
+        // Apps never see identity providers.
+        let app_reads = [true, true, true, true, false];
+        check(&user(&[GlobalAdmin]), all, all);
+        check(&user(&[UserAdmin]), all, [true, false, false, false, false]);
         check(
             &user(&[ApplicationAdmin]),
-            true,
-            [false, true, false, false],
+            all,
+            [false, true, false, false, false],
         );
         check(
             &user(&[UserAdmin, ApplicationAdmin]),
-            true,
-            [true, true, false, false],
+            all,
+            [true, true, false, false, false],
         );
-        check(&user(&[]), false, [false; 4]);
-        check(&app(true, false), true, [false; 4]);
-        check(&app(false, true), true, [true, true, false, false]);
-        check(&app(true, true), true, [true, true, false, false]);
-        check(&app(false, false), false, [false; 4]);
+        check(&user(&[]), none, none);
+        check(&app(true, false), app_reads, none);
+        check(
+            &app(false, true),
+            app_reads,
+            [true, true, false, false, false],
+        );
+        check(
+            &app(true, true),
+            app_reads,
+            [true, true, false, false, false],
+        );
+        check(&app(false, false), none, none);
     }
 
     #[test]

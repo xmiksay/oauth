@@ -78,6 +78,23 @@ describe('login API client', () => {
     ])
   })
 
+  it('starts a federated sign-in and discovers a provider by email', async () => {
+    const calls = mockFetch(
+      { body: { redirect: 'https://idp.example/authorize?x=1' } },
+      { body: { idp: { id: 'i1', name: 'Entra' } } },
+    )
+    expect(await authn.federation('tx-1', 'i/1')).toEqual({
+      redirect: 'https://idp.example/authorize?x=1',
+    })
+    expect(await authn.discover('tx-1', 'ann@contoso.com')).toEqual({
+      idp: { id: 'i1', name: 'Entra' },
+    })
+    expect(calls.map((c) => [c.method, c.url, c.body])).toEqual([
+      ['POST', '/api/authn/tx/tx-1/federation/i%2F1', {}],
+      ['POST', '/api/authn/tx/tx-1/discover', { email: 'ann@contoso.com' }],
+    ])
+  })
+
   it('tells a step view from a redirect', () => {
     expect(isRedirect({ redirect: 'x' })).toBe(true)
     expect(
@@ -89,7 +106,11 @@ describe('login API client', () => {
         client: { client_id: 'c', display_name: 'C' },
         user: null,
         consent: null,
-        features: { password_reset: false },
+        features: { password_reset: false, federation: false },
+        idps: [],
+        idp_hint: null,
+        link: null,
+        notice: null,
       }),
     ).toBe(false)
   })

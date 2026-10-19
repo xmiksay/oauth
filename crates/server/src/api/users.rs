@@ -90,7 +90,12 @@ pub async fn get(
     caller.require(Area::Directory, Access::Read)?;
     let conn = &state.db;
     let user = find_user(conn, caller.tenant_id(), id).await?;
-    Ok(axum::Json(detailed_view(conn, &user).await?))
+    let mut out = detailed_view(conn, &user).await?;
+    let identities = super::user_identities::list_view(conn, &user, true).await?;
+    if let Some(obj) = out.as_object_mut() {
+        obj.insert("identities".into(), json!(identities));
+    }
+    Ok(axum::Json(out))
 }
 
 /// [`view`] plus `directory_roles` and `mfa` (also served by `GET me`).

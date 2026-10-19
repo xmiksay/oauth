@@ -6,7 +6,9 @@ use axum::{
     http::HeaderMap,
 };
 use chrono::Duration;
-use entity::{applications, enums::LoginStage, login_transactions, sessions, users};
+use entity::{
+    applications, enums::LoginStage, identity_providers, login_transactions, sessions, users,
+};
 use sea_orm::{
     ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, sea_query::Expr,
 };
@@ -19,7 +21,10 @@ use super::{
     ctx::Ctx,
     ip::ClientIp,
 };
-use crate::{app::AppState, consent::Decision, oidc::params::AuthRequest, secret, tenancy::Tenant};
+use crate::{
+    app::AppState, consent::Decision, federation, oidc::params::AuthRequest, secret,
+    tenancy::Tenant,
+};
 
 pub const TX_TTL_MINUTES: i64 = 15;
 
@@ -82,7 +87,7 @@ pub async fn load(ctx: &Ctx<'_>, raw_id: &str) -> AuthnResult<LoadedTx> {
     Ok(LoadedTx { row, req })
 }
 
-fn bound_to(ctx: &Ctx<'_>, binding_hash: &[u8]) -> bool {
+pub(super) fn bound_to(ctx: &Ctx<'_>, binding_hash: &[u8]) -> bool {
     cookie::read(ctx.headers, &ctx.state.config, Kind::TxBinding).fold(false, |found, value| {
         secret::ct_eq(&secret::hash(value), binding_hash) | found
     })
@@ -134,6 +139,86 @@ pub async fn advance(
     } else {
         Err(AuthnError::WrongStep)
     }
+}
+
+/// Password → Link: parks the upstream identity on the transaction until a
+/// local sign-in links it (CAS on the stage, like [`advance`]).
+pub async fn to_link(
+    conn: &impl ConnectionTrait,
+    id: Uuid,
+    pending: &federation::identities::Pending,
+) -> AuthnResult<()> {
+    let pending = serde_json::to_value(pending).context("serializing pending identity")?;
+    let result = login_transactions::Entity::update_many()
+        .col_expr(
+            login_transactions::Column::Stage,
+            Expr::value(LoginStage::Link),
+        )
+        .col_expr(
+            login_transactions::Column::PendingIdentity,
+            Expr::value(pending),
+        )
+        .filter(login_transactions::Column::Id.eq(id))
+        .filter(login_transactions::Column::Stage.eq(LoginStage::Password))
+        .exec(conn)
+        .await?;
+    if result.rows_affected == 1 {
+        Ok(())
+    } else {
+        Err(AuthnError::WrongStep)
+    }
+}
+
+/// Link → Password, dropping the parked identity (its IdP can no longer
+/// link). `false` = the transaction had moved on already.
+pub async fn unpark(conn: &impl ConnectionTrait, id: Uuid) -> anyhow::Result<bool> {
+    let result = login_transactions::Entity::update_many()
+        .col_expr(
+            login_transactions::Column::Stage,
+            Expr::value(LoginStage::Password),
+        )
+        .col_expr(
+            login_transactions::Column::PendingIdentity,
+            Expr::value(Option::<serde_json::Value>::None),
+        )
+        .filter(login_transactions::Column::Id.eq(id))
+        .filter(login_transactions::Column::Stage.eq(LoginStage::Link))
+        .exec(conn)
+        .await
+        .context("dropping parked identity")?;
+    Ok(result.rows_affected == 1)
+}
+
+/// Records which IdP configuration an upstream sign-in went through, for
+/// `complete::finish` to re-check.
+pub async fn set_federated(
+    conn: &impl ConnectionTrait,
+    id: Uuid,
+    via: &super::federation_pending::IdpRef,
+) -> anyhow::Result<serde_json::Value> {
+    let value = serde_json::to_value(via).context("serializing federated sign-in")?;
+    login_transactions::Entity::update_many()
+        .col_expr(
+            login_transactions::Column::Federated,
+            Expr::value(value.clone()),
+        )
+        .filter(login_transactions::Column::Id.eq(id))
+        .exec(conn)
+        .await
+        .context("recording federated sign-in")?;
+    Ok(value)
+}
+
+/// `amr` after a second factor of kind `factor` (`otp`, `hwk`, `swk`): the
+/// first factor (`fed` after an upstream sign-in, else `pwd`), the factor,
+/// `mfa`.
+pub fn with_second_factor(amr: &[String], factor: &str) -> Vec<String> {
+    let first = if amr.iter().any(|a| a == "fed") {
+        "fed"
+    } else {
+        "pwd"
+    };
+    vec![first.to_owned(), factor.to_owned(), "mfa".to_owned()]
 }
 
 /// Deletes the transaction if still at `stage`; `false` = someone else
@@ -189,15 +274,52 @@ pub async fn view(state: &AppState, tenant: &Tenant, tx: &LoadedTx) -> AuthnResu
         }
         _ => None,
     };
+    let idps = federation::idps::enabled(conn, tenant.id).await?;
+    let mut stage = tx.row.stage;
+    let mut notice = None;
+    let mut link = None;
+    let brief = |idp: &identity_providers::Model| json!({ "id": idp.id, "name": idp.name });
+    if let (Some(raw), LoginStage::Link) = (&tx.row.pending_identity, stage) {
+        let pending = super::federation_pending::decode(raw)?;
+        match super::federation_pending::usable_idp(conn, tenant.id, &pending).await? {
+            Some(idp) => {
+                link = Some(json!({
+                    "idp": brief(&idp),
+                    "email": pending.email,
+                    "name": pending.name,
+                }));
+            }
+            // The provider went away while the identity was parked.
+            None => {
+                unpark(conn, tx.row.id).await?;
+                stage = LoginStage::Password;
+                notice = Some("link_unavailable");
+            }
+        }
+    }
+    let at_password = stage == LoginStage::Password;
+    let buttons: Vec<Value> = idps
+        .iter()
+        .filter(|idp| at_password && idp.visible)
+        .map(brief)
+        .collect();
+    let hint = federation::idps::hinted(&idps, &tx.req).filter(|_| at_password);
     Ok(json!({
         "tx": tx.row.id,
-        "step": tx.row.stage.as_str(),
+        "step": stage.as_str(),
         "tenant": { "slug": tenant.slug, "display_name": tenant.display_name },
         "client": { "client_id": client.client_id, "display_name": client.display_name },
         "user": user.map(|u| json!({ "email": u.email, "display_name": u.display_name })),
         "consent": consent,
         "factors": super::passkey::factors(state, tx).await?,
-        "features": { "password_reset": state.config.email_enabled() },
+        "idps": buttons,
+        "idp_hint": hint.map(brief),
+        "link": link,
+        "notice": notice,
+        "features": {
+            "password_reset": state.config.email_enabled(),
+            "federation": !idps.is_empty(),
+        },
     }))
 }
 

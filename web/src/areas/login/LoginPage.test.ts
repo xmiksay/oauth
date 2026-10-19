@@ -30,7 +30,11 @@ const passwordView: TxView = {
   client: { client_id: 'shop', display_name: 'Shop' },
   user: null,
   consent: null,
-  features: { password_reset: false },
+  features: { password_reset: false, federation: false },
+  idps: [],
+  idp_hint: null,
+  link: null,
+  notice: null,
 }
 
 async function mountPage() {
@@ -121,7 +125,7 @@ describe('LoginPage', () => {
   })
 
   it('requests a reset link with the typed email, then returns to the same tx', async () => {
-    api.get.mockResolvedValue({ ...passwordView, features: { password_reset: true } })
+    api.get.mockResolvedValue({ ...passwordView, features: { password_reset: true, federation: false } })
     api.requestPasswordReset.mockResolvedValue({ accepted: true })
     const w = await mountPage()
     await w.find('#login-email').setValue(' ann@example.com ')
@@ -139,7 +143,7 @@ describe('LoginPage', () => {
   })
 
   it('says the same thing whatever the address', async () => {
-    api.get.mockResolvedValue({ ...passwordView, features: { password_reset: true } })
+    api.get.mockResolvedValue({ ...passwordView, features: { password_reset: true, federation: false } })
     api.requestPasswordReset.mockResolvedValue({ accepted: true })
     const texts: string[] = []
     for (const email of ['known@example.com', 'nobody@example.com']) {
@@ -156,7 +160,7 @@ describe('LoginPage', () => {
   })
 
   it('shows the rate limit on the reset form', async () => {
-    api.get.mockResolvedValue({ ...passwordView, features: { password_reset: true } })
+    api.get.mockResolvedValue({ ...passwordView, features: { password_reset: true, federation: false } })
     api.requestPasswordReset.mockRejectedValue(new ApiError(429, { error: 'rate_limited' }, 60))
     const w = await mountPage()
     await forgot(w)

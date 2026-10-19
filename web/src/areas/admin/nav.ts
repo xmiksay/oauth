@@ -11,6 +11,7 @@ export const adminNav: AdminNavItem[] = [
   { name: 'admin-users', path: 'users', label: 'Users' },
   { name: 'admin-groups', path: 'groups', label: 'Groups' },
   { name: 'admin-apps', path: 'app-registrations', label: 'App registrations' },
+  { name: 'admin-identity-providers', path: 'identity-providers', label: 'Identity providers' },
   { name: 'admin-role-assignments', path: 'role-assignments', label: 'Role assignments' },
   { name: 'admin-directory-roles', path: 'directory-roles', label: 'Directory roles' },
   { name: 'admin-audit', path: 'audit-log', label: 'Audit log' },

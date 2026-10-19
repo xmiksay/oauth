@@ -30,9 +30,11 @@ impl Config {
             }
         }
 
+        let public_url = PublicUrl::parse(&required("PUBLIC_URL")?)?;
         let config = Self {
             database_url: required("DATABASE_URL")?,
-            public_url: PublicUrl::parse(&required("PUBLIC_URL")?)?,
+            idp_allow_http_loopback: !public_url.is_https(),
+            public_url,
             master_key: parse_master_key(&required("OAUTH_MASTER_KEY")?)?,
             listen_addr: parsed(
                 "LISTEN_ADDR",

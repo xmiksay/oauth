@@ -2,13 +2,15 @@
 // Same-origin fetch carries the tx-binding / session cookies and the `Origin` the CSRF check wants.
 import { api } from './client'
 import type {
+  IdpRef,
   PasskeyAssertion,
   PasskeyCreationOptions,
   PasskeyRegistration,
   PasskeyRequestOptions,
 } from './types'
 
-export type LoginStep = 'password' | 'mfa' | 'change_password' | 'consent'
+/** `link`: an upstream identity waits to be linked by signing in to an existing account. */
+export type LoginStep = 'password' | 'link' | 'mfa' | 'change_password' | 'consent'
 
 export type LoginFactor = 'password' | 'passkey' | 'totp' | 'recovery' | 'telegram'
 
@@ -27,9 +29,18 @@ export interface TxView {
     resource: { display_name: string; audience: string }
     scopes: ConsentScope[]
   } | null
-  features: { password_reset: boolean }
+  /** `federation`: the tenant has an enabled identity provider (email-domain discovery). */
+  features: { password_reset: boolean; federation: boolean }
   /** Methods the current step accepts. */
   factors: LoginFactor[]
+  /** Identity providers offered as buttons at the password step. */
+  idps: IdpRef[]
+  /** The authorize request named this provider (`idp=` / a mapped `domain_hint=`). */
+  idp_hint: IdpRef | null
+  /** At step `link`: the upstream identity waiting to be linked. */
+  link: { idp: IdpRef | null; email: string | null; name: string | null } | null
+  /** At step `password`: a parked link was dropped (its provider was disabled or deleted). */
+  notice: 'link_unavailable' | null
 }
 
 export interface EmailVerified {
@@ -69,6 +80,12 @@ export const authn = {
     api.post<PasskeyRequestOptions>(txPath(tx, 'passkey/options'), {}),
   passkey: (tx: string, assertion: PasskeyAssertion) =>
     api.post<StepResult>(txPath(tx, 'passkey'), assertion),
+  /** The upstream authorize URL to navigate to (a full page load, it's another origin). */
+  federation: (tx: string, idpId: string) =>
+    api.post<Redirect>(txPath(tx, `federation/${encodeURIComponent(idpId)}`), {}),
+  /** `idp` when the email's domain belongs to a provider. */
+  discover: (tx: string, email: string) =>
+    api.post<{ idp?: IdpRef }>(txPath(tx, 'discover'), { email }),
   changePassword: (tx: string, newPassword: string) =>
     api.post<StepResult>(txPath(tx, 'change-password'), { new_password: newPassword }),
   consent: (tx: string, approve: boolean, scopes: string[] = []) =>

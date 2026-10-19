@@ -25,6 +25,11 @@ pub struct Model {
     pub session_id: Option<Uuid>,
     /// SHA-256 of the browser-binding cookie.
     pub binding_hash: Vec<u8>,
+    /// Stage `link`: the upstream identity (IdP, subject, email, name) the
+    /// local sign-in will link.
+    pub pending_identity: Option<Json>,
+    /// `{idp_id, generation}` of the IdP an upstream sign-in went through.
+    pub federated: Option<Json>,
     pub created_at: DateTimeWithTimeZone,
     pub expires_at: DateTimeWithTimeZone,
 }
@@ -38,6 +43,10 @@ impl std::fmt::Debug for Model {
             .field("stage", &self.stage)
             .field("user_id", &self.user_id)
             .field("binding_hash", &"<redacted>")
+            .field(
+                "pending_identity",
+                &self.pending_identity.as_ref().map(|_| "<redacted>"),
+            )
             .field("expires_at", &self.expires_at)
             .finish_non_exhaustive()
     }

@@ -2,6 +2,7 @@
 import { query } from './client'
 import { p, t } from './management'
 import type {
+  AdminUserDetail,
   DirectoryRole,
   DirectoryRoleAssignment,
   Group,
@@ -11,7 +12,6 @@ import type {
   Passkey,
   Session,
   User,
-  UserDetail,
 } from './types'
 
 export interface CreatedUser {
@@ -36,7 +36,7 @@ export interface PasswordReset {
 
 export const users = {
   list: (q: PageQuery = {}) => t.get<Paged<User>>(`users${query({ ...q })}`),
-  get: (id: string) => t.get<UserDetail>(p`users/${id}`),
+  get: (id: string) => t.get<AdminUserDetail>(p`users/${id}`),
   create: (body: UserCreate) => t.post<CreatedUser>('users', body),
   update: (id: string, body: { display_name?: string; email?: string; disabled?: boolean }) =>
     t.patch<User>(p`users/${id}`, body),
@@ -49,6 +49,9 @@ export const users = {
   sessions: (id: string) => t.get<Items<Session>>(p`users/${id}/sessions`),
   passkeys: (id: string) => t.get<Items<Passkey>>(p`users/${id}/passkeys`),
   removePasskey: (id: string, passkeyId: string) => t.del(p`users/${id}/passkeys/${passkeyId}`),
+  /** 409 when it is the user's last way to sign in. */
+  unlinkIdentity: (id: string, identityId: string) =>
+    t.del(p`users/${id}/identities/${identityId}`),
   revokeSessions: (id: string) => t.post<void>(p`users/${id}/revoke-sessions`),
 }
 

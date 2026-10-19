@@ -148,6 +148,12 @@ async fn finish(
 ) -> AuthnResult<Outcome> {
     let config = &ctx.state.config;
     let txn = ctx.state.db.begin().await?;
+    // Before the transaction row: IdP rows are always locked first.
+    if let Some(idp_id) = super::federation_pending::lock_first(&txn, ctx, &tx.row).await? {
+        drop(txn);
+        super::federation_pending::refuse_changed(ctx, &tx.row, idp_id).await?;
+        return Err(AuthnError::Upstream);
+    }
     // Claim the transaction first: a concurrent duplicate gets no second code.
     if !tx::take(&txn, tx.row.id, from).await? {
         return Err(AuthnError::WrongStep);
@@ -196,6 +202,12 @@ async fn finish(
             });
             ctx.audit_sign_in(&txn, Some(user_id), AuditOutcome::Success, details)
                 .await?;
+            // A link-stage sign-in links the pending identity atomically
+            // with completing it. The user did authenticate locally, so a
+            // link that can't be made any more doesn't fail the sign-in.
+            if let Some(pending) = &tx.row.pending_identity {
+                super::federation_pending::link_or_skip(&txn, ctx, pending, user).await?;
+            }
             created
         }
     };

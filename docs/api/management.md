@@ -48,14 +48,14 @@ their host.
 
 ### Authorization
 
-| Caller | Read (all `GET`s) | Users, groups, members | Applications & co.¹ | Directory roles | Tenants |
-|---|---|---|---|---|---|
-| GlobalAdmin | ✓ | ✓ | ✓ | ✓ | system tenant only |
-| UserAdmin | ✓ | ✓ | – | – | – |
-| ApplicationAdmin | ✓ | – | ✓ | – | – |
-| member without directory role | – | – | – | – | – |
-| app `Directory.Read.All` | ✓ | – | – | – | – |
-| app `Directory.ReadWrite.All` | ✓ | ✓ | ✓ | – | – |
+| Caller | Read (all `GET`s) | Users, groups, members | Applications & co.¹ | Directory roles | Identity providers | Tenants |
+|---|---|---|---|---|---|---|
+| GlobalAdmin | ✓ | ✓ | ✓ | ✓ | ✓ | system tenant only |
+| UserAdmin | ✓ | ✓ | – | – | read | – |
+| ApplicationAdmin | ✓ | – | ✓ | – | read | – |
+| member without directory role | – | – | – | – | – | – |
+| app `Directory.Read.All` | ✓ (not identity providers) | – | – | – | – | – |
+| app `Directory.ReadWrite.All` | ✓ (not identity providers) | ✓ | ✓ | – | – | – |
 
 ¹ applications, secrets, scopes, app roles, required permissions, app role
 assignments, consent grants. Any directory role reads the whole directory
@@ -128,6 +128,17 @@ Additional rules:
 // UserDetail (GET users/{id}, GET me) = User +
 { "directory_roles": ["GlobalAdmin"],
   "mfa": { "totp": false, "totp_pending": false, "recovery_codes_remaining": 0, "passkeys": 0, "telegram": false } }
+// … and on GET users/{id} only:
+{ "identities": [Identity] }
+// Identity (linked upstream identity; `subject` for admins only)
+{ "id", "idp_id", "idp_name", "subject", "email": null, "linked_at", "last_used_at": null }
+// IdentityProvider (the client secret is write-only: only `has_secret`)
+{ "id", "name", "kind": "oidc", "enabled": true, "visible": true, "issuer",
+  "discovery_url": null, "client_id", "has_secret": true, "client_auth": "post|basic",
+  "scopes": ["openid","email","profile"], "policy": "jit|link_only|deny",
+  "trust_upstream_mfa": false, "mfa_acr": null, "email_domains": [],
+  "redirect_uri": "{origin}/federation/callback", "created_at", "updated_at" }
+// … plus on create / GET / PATCH: { "users_only_via": 0, "linked_users": 0 }
 // Session
 { "id", "amr": ["pwd"], "auth_time", "ip", "user_agent", "created_at", "expires_at",
   "current": false }   // `current`: the session the calling token came from (me only)
@@ -200,12 +211,13 @@ GlobalAdmins (`disabled` here → 400, unknown field).
 | `POST users` | `{ email, display_name, password?, must_change_password? (default true), invite? }` | 201 `{ user, one_time_password, invite_sent }` — password generated (24 chars, must change) when `password` is omitted, else `null`. `invite: true` (only with email configured, else 400; not with `password` / `must_change_password`): no password, a 7-day invitation link is mailed instead. With email configured a non-invited user gets a verification link |
 | `GET users/{id}` | – | `UserDetail` |
 | `PATCH users/{id}` | `{ display_name?, email?, disabled? }` | `User` (409 if the email is taken). A new email resets `email_verified`, voids links sent to the old address, mails a verification link — or, for a user without a password, a new invitation — (email configured) and notifies the old address if it was verified |
-| `POST users/{id}/invite` | – | 204: re-sends the invitation, the older link stops working (409 if the user has a password or a passkey, 400 email not configured) |
+| `POST users/{id}/invite` | – | 204: re-sends the invitation, the older link stops working (409 if the user has a password, a passkey or a linked identity, 400 email not configured) |
 | `DELETE users/{id}` | – | 204 (sessions, tokens, memberships, roles, grants cascade) |
 | `POST users/{id}/reset-password` | `{ password?, must_change_password? (default true) }` (send `{}` to generate) | `{ one_time_password, must_change_password }` |
-| `POST users/{id}/reset-mfa` | – | 204: TOTP, recovery codes and passkeys deleted, Telegram unlinked (audit details `passkeys_removed`, `telegram_unlinked`). 409 for a user without a password who has passkeys (it would lock them out): `reset-password` first |
+| `POST users/{id}/reset-mfa` | – | 204: TOTP, recovery codes and passkeys deleted, Telegram unlinked (audit details `passkeys_removed`, `telegram_unlinked`). 409 for a user with passkeys but neither a password nor a linked identity (it would lock them out): `reset-password` first |
 | `GET users/{id}/passkeys` | – | `{ items: Passkey[] }` (see [me.md](me.md)) |
-| `DELETE users/{id}/passkeys/{passkey_id}` | – | 204; 409 when it is the last sign-in method of a user without a password |
+| `DELETE users/{id}/passkeys/{passkey_id}` | – | 204; 409 when it is the user's last sign-in method (password, passkeys, linked identities) |
+| `DELETE users/{id}/identities/{identity_id}` | – | 204: the upstream identity is unlinked (audit `user.identity_unlink`, `via: admin`); 409 when it is the user's last sign-in method |
 | `GET users/{id}/sessions` | – | `{ items: Session[] }` (unexpired) |
 | `POST users/{id}/revoke-sessions` | – | 204: sessions deleted, refresh + opaque access tokens revoked |
 
@@ -334,6 +346,10 @@ the admin grant (their tokens may rest on it). JWT access tokens can't be
 recalled and expire. App role assignments made by a consent are removed via
 `DELETE role-assignments/{id}`.
 
+## Identity providers — read: any directory role; write: GlobalAdmin (delegated) only; apps: none
+
+`identity-providers[/{id}]`: contract in [identity_providers.md](identity_providers.md).
+
 ## Audit events — read: any role, `Read.All`
 
 `GET audit-events` *paged, newest first*
@@ -342,15 +358,17 @@ exclusive, RFC 3339) → `AuditEvent`s.
 
 | `event_type` | Actor → target | Details |
 |---|---|---|
-| `sign_in` | user (`actor_id` null for an unknown account) → user | success: `session_id`, `application_id`, `amr`; failure: `reason` (`invalid_password`, `unknown_account`, `disabled`, `mfa_failed` + `factor`; passkeys: `factor: "passkey"` + the verifier's reason, e.g. `invalid_challenge`, `foreign_credential`, `sign_count_regression`) |
+| `sign_in` | user (`actor_id` null for an unknown account) → user | success: `session_id`, `application_id`, `amr`; failure: `reason` (`invalid_password`, `unknown_account`, `disabled`, `mfa_failed` + `factor`; passkeys: `factor: "passkey"` + the verifier's reason, e.g. `invalid_challenge`, `foreign_credential`, `sign_count_regression`; federation: `factor: "federation"`, `idp_id` + the reason, e.g. `id_token_nonce`, `token_refused`, `unknown_kid`, `upstream_error`, `account_exists`, `not_linked`) |
 | `token.refresh_reuse`, `token.code_replay` | client app → user, failure | `family_id` / `authorization_code_id` |
 | `tenant.create`, `tenant.update` | system admin → tenant (logged in the system tenant; a system admin's `tenant.update` of another tenant is ALSO logged in that tenant's own log, in the same transaction; a tenant admin's settings change only in their own) | `slug`, `admin_user_id` / `fields`, `disabled` |
-| `user.create`, `user.update`, `user.delete`, `user.password_reset`, `user.mfa_reset`, `user.sessions_revoke` | admin or app → user | create: `email`, `password` (`generated` / `set_by_admin`); update: `fields`, `disabled`; delete: `email`; reset: `must_change_password`, `generated`; mfa reset: `passkeys_removed` |
+| `user.create`, `user.update`, `user.delete`, `user.password_reset`, `user.mfa_reset`, `user.sessions_revoke` | admin or app → user (JIT federation: user → self) | create: `email`, `password` (`generated` / `set_by_admin`), JIT: `via: "federation"`, `idp_id`; update: `fields`, `disabled`; delete: `email`; reset: `must_change_password`, `generated`; mfa reset: `passkeys_removed` |
 | `user.mfa.passkey_register`, `user.mfa.passkey_rename`, `user.mfa.passkey_remove` | user → self (invite: by the link's user), admin → user (remove) | `passkey_id`, `name`, `via` (`me` / `admin` / `invite`) |
 | `user.mfa.passkey_sign_count_regression` | user → self (failure) | `via: "reauth"` |
 | `user.password_change` | user → self | `via`: `sign_in` (forced change) / `me` |
 | `user.profile_update`, `user.session_revoke`, `user.mfa.totp_enroll`, `user.mfa.totp_remove`, `user.mfa.recovery_codes_regenerate` | user → self | `fields` / `session_id` |
 | `user.invite` | admin → user | `email`, `resend` |
+| `user.identity_link`, `user.identity_unlink` | user → self, admin → user (unlink) | `idp_id`, `via` (`sign_in` / `me` / `admin`), `identity_id`; failures (outcome `failure`) carry `reason` — a My Account link that didn't complete, or a link skipped when a sign-in completed (`via: sign_in`, `reason` `link_unavailable` / `already_linked`) |
+| `identity_provider.create`, `identity_provider.update`, `identity_provider.delete` | GlobalAdmin → identity provider | `name`, `issuer`, `policy` / `fields`, `identities_removed` / `users_only_via` |
 | `user.email_verify_request`, `user.email_verify`, `user.email_change_request`, `user.email_change_complete`, `user.password_reset_request`, `user.password_reset_complete`, `user.invite_accept`, `user.notification_prefs_update` | user → self (link redemptions: by the link's user, with the caller's IP) | `email` / `new_email` / `events` |
 | `group.create`, `group.update`, `group.delete`, `group.member_add`, `group.member_remove` | → group | `display_name`, `fields`, `user_id` |
 | `directory_role.assign`, `directory_role.unassign` | → user | `role`, `assignment_id` |

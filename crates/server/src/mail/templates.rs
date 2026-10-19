@@ -154,6 +154,11 @@ pub fn notice(
             "A sign-in token of an application was used twice, which can mean it was stolen. \
              The application was signed out.",
         ),
+        NotifyEvent::IdentityLinked => (
+            format!("An account was linked to your {tenant} account"),
+            "An account at an identity provider was linked to your account; it can now be \
+             used to sign in.",
+        ),
     };
     let mut body = format!("Hello {},\n\n{intro}\n\n", ctx.user_name);
     for (label, value) in facts {
