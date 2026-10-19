@@ -16,6 +16,8 @@ declare module 'vue-router' {
     /** The OIDC redirect target: must not itself trigger a sign-in. */
     callback?: boolean
     title?: string
+    /** false = the page title leaves out the area's name (the portal isn't "My Account"). */
+    areaInTitle?: boolean
   }
 }
 
@@ -23,6 +25,13 @@ const AuthCallback = () => import('@/components/AuthCallback.vue')
 const PasswordLinkPage = () => import('@/areas/email/PasswordLinkPage.vue')
 
 const routes: RouteRecordRaw[] = [
+  {
+    // Rides on the My Account client: every user may use it, no extra OIDC app needed.
+    path: '/',
+    name: 'portal',
+    component: () => import('@/areas/portal/PortalPage.vue'),
+    meta: { area: 'myaccount', title: 'Dashboard', areaInTitle: false },
+  },
   {
     path: '/login',
     name: 'login',
@@ -145,7 +154,7 @@ export function pageTitle(
   to: Pick<RouteLocationNormalized, 'meta'>,
   tenant: string | null,
 ): string {
-  const area = to.meta.area ? AREA_NAMES[to.meta.area] : null
+  const area = to.meta.area && to.meta.areaInTitle !== false ? AREA_NAMES[to.meta.area] : null
   return [to.meta.title, area, tenant].filter(Boolean).join(' · ') || 'oauth'
 }
 

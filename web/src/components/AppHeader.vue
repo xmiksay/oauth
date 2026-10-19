@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { storeToRefs } from 'pinia'
 import { useAuthStore } from '@/stores/auth'
+import AppLauncher from './AppLauncher.vue'
 
-/** Top bar shared by the admin center and My Account. */
+/** Top bar shared by the portal, the admin center and My Account. */
 defineProps<{ title: string; tenant: string | null; menuButton?: boolean; menuOpen?: boolean }>()
 const emit = defineEmits<{ toggleMenu: [] }>()
 
@@ -39,6 +40,7 @@ async function signOut() {
         fill="currentColor"
       ><path d="M3 5h14v2H3zm0 4h14v2H3zm0 4h14v2H3z" /></svg>
     </button>
+    <AppLauncher />
     <span class="font-semibold">{{ title }}</span>
     <span class="hidden truncate text-sm text-neutral-500 sm:inline dark:text-neutral-400">{{
       tenant
@@ -49,7 +51,6 @@ async function signOut() {
         class="hidden max-w-48 truncate text-sm sm:inline"
         :title="me.email"
       >{{ me.display_name || me.email }}</span>
-      <slot />
       <button
         type="button"
         class="btn"

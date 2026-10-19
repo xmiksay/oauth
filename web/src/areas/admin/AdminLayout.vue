@@ -35,14 +35,7 @@ onUnmounted(() => window.removeEventListener('keydown', closeOnEscape))
       menu-button
       :menu-open="menuOpen"
       @toggle-menu="menuOpen = !menuOpen"
-    >
-      <RouterLink
-        :to="{ name: 'myaccount' }"
-        class="btn-link hidden sm:inline"
-      >
-        My Account
-      </RouterLink>
-    </AppHeader>
+    />
     <SignedInGate>
       <div
         v-if="!isAdmin"

@@ -1,5 +1,6 @@
 //! Serves the built Vue SPA (`web/dist`) on tenant hosts (the host gate in
-//! `app.rs` keeps it off the apex). Client-side routes under
+//! `app.rs` keeps it off the apex, whose `/` redirects to the system admin
+//! portal). `/` (the portal / dashboard) and client-side routes under
 //! `/login|logout|myaccount|admin` fall back to `index.html`; anything else is
 //! looked up as a static asset.
 
@@ -18,7 +19,7 @@ pub fn router<S: Clone + Send + Sync + 'static>(dist: &Path) -> Router<S> {
         // backend-only dev); SPA paths just answer 404.
         tracing::warn!(dir = %dist.display(), "SPA build not found; frontend routes will 404");
     }
-    let mut router = Router::new();
+    let mut router = Router::new().route_service("/", ServeFile::new(&index));
     for area in SPA_AREAS {
         router = router
             .route_service(&format!("/{area}"), ServeFile::new(&index))

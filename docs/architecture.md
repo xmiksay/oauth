@@ -76,7 +76,7 @@ proxy sits in front; the server ignores the forwarded host either way).
 | `GET /federation/callback` — return from an upstream identity provider ([federation.md](federation.md)) | app | `authn::federation` |
 | `POST /api/authn/password-reset`, `POST /api/authn/email/{verify,reset,invite,invite/passkey/options,invite/passkey}` — email links (the token is the credential), same contract | app | `authn::{reset,email}` |
 | `/api/v1/{settings,users,groups,directory-roles,applications,identity-providers,role-assignments,consents,audit-events}[/…]`, `/api/v1/me[/…]`, and on the system host only `/api/v1/tenants[/{slug}]` (system Global Admins) — management REST API, bearer tokens for the host tenant's `management-api`; contract in [api/management.md](api/management.md) (+ [identity providers](api/identity_providers.md)) | app | `api` |
-| `/{login,logout,myaccount,admin}[/…]` → `index.html` (incl. the public link pages `/login/reset`, `/login/invite`, `/myaccount/verify-email`) | app | `spa` |
+| `/` (the portal; apex `/` redirects, above) and `/{login,logout,myaccount,admin}[/…]` → `index.html` (incl. the public link pages `/login/reset`, `/login/invite`, `/myaccount/verify-email`) | app | `spa` |
 | any other path → static file from `WEB_DIST_DIR`, else 404 | app | `spa` |
 | `GET /metrics` — Prometheus text format | metrics | `metrics` |
 
@@ -367,7 +367,7 @@ Email (optional) [email.md](email.md), passkeys [passkeys.md](passkeys.md), Tele
 
 ## Frontend (`web/`)
 
-See [frontend.md](frontend.md): one Vue 3 SPA (`/login`, `/logout`, `/myaccount`,
+See [frontend.md](frontend.md): one Vue 3 SPA (`/` portal, `/login`, `/logout`, `/myaccount`,
 `/admin`) served same-origin on every tenant host.
 
 ## Deployment

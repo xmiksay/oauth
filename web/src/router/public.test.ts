@@ -15,4 +15,10 @@ describe('email-link routes', () => {
   it('keeps the rest of My Account signed in', () => {
     expect(router.resolve('/myaccount/notifications').meta.area).toBe('myaccount')
   })
+
+  it('signs in to the portal at / with the My Account client', () => {
+    const to = router.resolve('/')
+    expect(to.name).toBe('portal')
+    expect(to.meta.area).toBe('myaccount')
+  })
 })

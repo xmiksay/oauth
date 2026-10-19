@@ -13,6 +13,8 @@ describe('pageTitle', () => {
       'App registration · Admin center · contoso',
     )
     expect(title('/login')).toBe('Sign in · contoso')
+    // The portal signs in like My Account but isn't titled as part of it.
+    expect(title('/')).toBe('Dashboard · contoso')
     expect(pageTitle(router.resolve('/nowhere'), null)).toBe('Page not found')
   })
 })
