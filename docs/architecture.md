@@ -381,4 +381,5 @@ Ingress for the apex + `*.` wildcard host (TLS Secret `oauth-wildcard-tls`, a
 cert-manager DNS-01 wildcard certificate; the controller must keep `Host`, see the
 trust model under [HTTP surface](#http-surface-current)).
 Secrets come from a hand-made Secret `oauth-secrets`. CI builds the image on
-every PR (no push).
+every PR (no push), publishes it to GHCR from `main` and `v*` tags and rolls
+`main` out to test.oauth.cz — see [deploy.md](deploy.md).
