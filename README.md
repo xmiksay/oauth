@@ -82,4 +82,4 @@ the tenant host without the port).
 - [Federation](docs/federation.md) — upstream OIDC identity providers: setup, policies, MFA trust, security model
 - [Telegram](docs/telegram.md) — bot setup, webhook, sign-in codes, notices
 - [Roadmap](docs/roadmap.md)
-- Deployment: [`deploy/k8s/deploy.yml`](deploy/k8s/deploy.yml), `Dockerfile`
+- [Deployment](docs/deploy.md) — images, environments, CI deploy secrets, release procedure; example manifest [`deploy/k8s/deploy.yml`](deploy/k8s/deploy.yml), `Dockerfile`
