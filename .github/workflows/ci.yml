@@ -238,15 +238,17 @@ jobs:
           (umask 077 && printf '%s' "$KUBE_CONFIG" | base64 -d > "$RUNNER_TEMP/kubeconfig")
           echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
 
-      # Deploy by digest so the test namespace runs exactly what was just
-      # published, not whatever `:main` points at by the time it pulls.
+      # Deploy by digest so test runs exactly what was just published, not
+      # whatever `:main` points at by the time it pulls. CI's Role covers only
+      # deployment/oauth-test in `services` (no pods / replicasets), so keep
+      # every kubectl call on that one object.
       - name: Roll out
         if: steps.decide.outputs.go == 'true'
         env:
           DIGEST: ${{ needs.publish.outputs.digest }}
         run: |
-          kubectl -n oauth-test set image deployment/oauth "oauth=$IMAGE@$DIGEST"
-          kubectl -n oauth-test rollout status deployment/oauth --timeout=10m
+          kubectl -n services set image deployment/oauth-test "oauth=$IMAGE@$DIGEST"
+          kubectl -n services rollout status deployment/oauth-test --timeout=10m
 
       - name: Tear down
         if: always()
