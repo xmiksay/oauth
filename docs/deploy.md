@@ -12,7 +12,7 @@ ansible repo `Sourcelab/ansible`, role `oauth`.
 | `gate` | PR, push to `main`, `v*` tag | `make lint`, `make test`, `make web-build` |
 | `docker` | same | builds the `Dockerfile` (no push), writes the GHA layer cache |
 | `publish` | push to `main`, `v*` tag (this repo only, never PRs) | after `gate` + `docker`: builds and pushes; job output `digest` |
-| `deploy-test` | push to `main` | after `publish`: rolls the pushed digest out to `oauth-test` |
+| `deploy-test` | push to `main` | after `publish`: rolls the pushed digest out to deployment `oauth-test` in namespace `services` |
 
 Runs are serialised per ref (`concurrency: ci-<ref>`), so images are
 published and deployed in push order. A new push to a PR cancels its running
@@ -42,14 +42,15 @@ No `:latest`. Images carry the OCI labels from `docker/metadata-action`
 
 | Environment | URL | Image | Rolled out by |
 |---|---|---|---|
-| test | https://test.oauth.cz (namespace `oauth-test`) | `main`, by digest | CI job `deploy-test` on every push to `main` |
+| test | https://test.oauth.cz (deployment `oauth-test`, namespace `services`) | `main`, by digest | CI job `deploy-test` on every push to `main` |
 | production | https://oauth.cz | `:X.Y.Z` from a `v*` tag | ansible: bump `oauth_version` in the `oauth` role, then `make services SERVICE=oauth` in `Sourcelab/ansible` |
 
 `deploy-test` runs in the GitHub environment `test` with
 `concurrency: deploy-test` (deploys queue, never cancel each other). It runs
-`kubectl -n oauth-test set image deployment/oauth oauth=ghcr.io/xmiksay/oauth@<digest>`
-and waits for `rollout status` (10 min timeout). Deploying by digest means the
-namespace runs exactly the image that job published, even if `:main` has moved
+`kubectl -n services set image deployment/oauth-test oauth=ghcr.io/xmiksay/oauth@<digest>`
+and waits for `kubectl -n services rollout status deployment/oauth-test`
+(10 min timeout). Both touch only that Deployment, which is all CI's Role
+allows. Deploying by digest means test runs exactly the image that job published, even if `:main` has moved
 since. A job whose commit is no longer the tip of `main` (`git ls-remote`),
 e.g. a re-run of an old run, skips the rollout with a notice instead of
 rolling test back. Ansible must not pin the test Deployment's image, or the
@@ -97,7 +98,8 @@ bypass them, so do not move a pushed tag: CI refuses to republish an existing
 ### Make the package public
 
 New GHCR packages are private, and the clusters pull without an image pull
-secret (the `oauth-test` policy forbids CI from adding `imagePullSecrets`).
+secret (the policy on the `oauth-test` Deployment forbids CI from adding
+`imagePullSecrets`).
 So right after the first `main` publish creates the package, and before any
 cluster can pull it, make it public: GitHub → the `oauth` package →
 *Package settings* → *Change visibility* → Public. (Also check *Manage Actions
@@ -120,7 +122,7 @@ skips every step.
 | Secret | Content |
 |---|---|
 | `WG_CONFIG` | a complete `wg-quick` client config for the CI peer |
-| `KUBE_CONFIG` | base64 kubeconfig of service account `ci` in `oauth-test` |
+| `KUBE_CONFIG` | base64 kubeconfig of service account `oauth-ci` in `services` |
 
 ### `WG_CONFIG`
 
@@ -139,11 +141,13 @@ skips every step.
 
 ### `KUBE_CONFIG`
 
-In `Sourcelab/ansible` (the service account's RBAC lets it patch / watch only
-the `oauth` Deployment in `oauth-test`):
+In `Sourcelab/ansible`. The service account's Role is limited by
+`resourceNames` to the `oauth-test` Deployment in `services`; `set image` and
+`rollout status` need `get`, `patch`, `list` and `watch` on it. It cannot read
+pods or replicasets, so the job must not touch anything else:
 
 ```sh
-make kubeconfig-sa NS=oauth-test SA=ci | base64 -w0 | gh secret set KUBE_CONFIG --env test -R xmiksay/oauth
+make kubeconfig-sa NS=services SA=oauth-ci | base64 -w0 | gh secret set KUBE_CONFIG --env test -R xmiksay/oauth
 ```
 
 ### How CI handles them

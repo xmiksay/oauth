@@ -20,7 +20,7 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
 | `crates/migration/` | `sea-orm-migration` Migrator (append-only, raw SQL) |
 | `web/` | Vite + Vue 3 + TS + Tailwind + Pinia SPA (`/` portal, `/login`, `/logout`, `/myaccount`, `/admin` on each tenant host); conventions below |
 | `deploy/k8s/deploy.yml` | ConfigMap, Deployment, Service, PodDisruptionBudget, Ingress for apex + `*.` wildcard (TLS Secret `oauth-wildcard-tls` via cert-manager DNS-01; Secret `oauth-secrets` created by hand) |
-| `.github/workflows/ci.yml` | `gate` (`make lint` + `make test` + `make web-build`) and `docker` (build only) on PR, push to `main` and `v*` tags; `publish` pushes to GHCR (`:main` + `:sha-<short>` from `main`, `:X.Y.Z` from `vX.Y.Z`, which must equal the workspace version, be on `main` and not be in GHCR yet; releases build without cache); `deploy-test` rolls the digest out to test.oauth.cz over WireGuard. Actions pinned by SHA. Environments, secrets, release procedure: [docs/deploy.md](../docs/deploy.md) |
+| `.github/workflows/ci.yml` | `gate` (`make lint` + `make test` + `make web-build`) and `docker` (build only) on PR, push to `main` and `v*` tags; `publish` pushes to GHCR (`:main` + `:sha-<short>` from `main`, `:X.Y.Z` from `vX.Y.Z`, which must equal the workspace version, be on `main` and not be in GHCR yet; releases build without cache); `deploy-test` rolls the digest out to test.oauth.cz (`services/deployment/oauth-test`) over WireGuard. Actions pinned by SHA. Environments, secrets, release procedure: [docs/deploy.md](../docs/deploy.md) |
 
 ## Commands (always via make; `CARGO_BUILD_JOBS=4` is exported)
 
