@@ -225,15 +225,16 @@ describe('AdminLayout', () => {
     expect(document.activeElement).toBe(navToggle(w).element)
   })
 
-  it('crossing md with focus in the side nav moves focus to the main content', async () => {
+  it('crossing md with focus in the side nav leaves it there (the nav stays visible)', async () => {
     const w = await mountAdmin()
     await navToggle(w).trigger('click')
     await nextTick()
-    expect(w.get('#side-nav').element.contains(document.activeElement)).toBe(true)
+    const link = document.activeElement
+    expect(w.get('#side-nav').element.contains(link)).toBe(true)
     fireMediaChange()
     await nextTick()
     expect(navOpen(w)).toBe(false)
-    expect(document.activeElement).toBe(w.get('main').element)
+    expect(document.activeElement).toBe(link)
   })
 
   it('crossing md with focus outside the side nav leaves it put', async () => {

@@ -6,13 +6,18 @@ import { usePagedList } from '@/composables/usePagedList'
 import ListShell from '@/components/ListShell.vue'
 import TenantUserPanel from './TenantUserPanel.vue'
 
-// One tenant's users; the page keys this on the slug, so another tenant gets fresh state.
+// One tenant's users. Another tenant gets fresh state because AdminLayout keys the whole page
+// on its :slug (`adminPageKey`); reusing this elsewhere needs a `:key` on the slug.
 const props = defineProps<{ slug: string }>()
 
 const list = usePagedList<User>((q: PageQuery) => tenants.users(props.slug, q))
 // Independent of the list: only a click on another row or the panel's Close changes it, so no
 // reload (search, page, a stale response) can unmount the panel or a password it shows.
 const selected = ref<string | null>(null)
+
+function refreshList() {
+  void list.load()
+}
 </script>
 
 <template>
@@ -72,7 +77,7 @@ const selected = ref<string | null>(null)
       :key="selected"
       :slug="slug"
       :user-id="selected"
-      @changed="list.load()"
+      @changed="refreshList"
       @close="selected = null"
     />
   </div>
