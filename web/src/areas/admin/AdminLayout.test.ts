@@ -214,4 +214,37 @@ describe('AdminLayout', () => {
     w = null
     expect(mediaListeners.size).toBe(0)
   })
+
+  it('a backdrop click closes the side nav and focuses its toggle', async () => {
+    const w = await mountAdmin()
+    await navToggle(w).trigger('click')
+    await nextTick()
+    await w.get('[aria-hidden=true].z-backdrop').trigger('click')
+    await nextTick()
+    expect(navOpen(w)).toBe(false)
+    expect(document.activeElement).toBe(navToggle(w).element)
+  })
+
+  it('crossing md with focus in the side nav moves focus to the main content', async () => {
+    const w = await mountAdmin()
+    await navToggle(w).trigger('click')
+    await nextTick()
+    expect(w.get('#side-nav').element.contains(document.activeElement)).toBe(true)
+    fireMediaChange()
+    await nextTick()
+    expect(navOpen(w)).toBe(false)
+    expect(document.activeElement).toBe(w.get('main').element)
+  })
+
+  it('crossing md with focus outside the side nav leaves it put', async () => {
+    const w = await mountAdmin()
+    await navToggle(w).trigger('click')
+    await nextTick()
+    const toggle = navToggle(w).element as HTMLElement
+    toggle.focus()
+    fireMediaChange()
+    await nextTick()
+    expect(navOpen(w)).toBe(false)
+    expect(document.activeElement).toBe(toggle)
+  })
 })

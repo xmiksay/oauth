@@ -32,8 +32,9 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   listeners, so one the app launcher took, `defaultPrevented`, isn't its too) and closes on one
   with focus inside `<nav id="side-nav">` or fallen to `body` (e.g. a tap on the nav's
   background), focus back to the toggle through `AppHeader`'s exposed `focusMenuButton()`;
-  Escapes from the main content, dialogs or the header never touch it. Crossing the `md` breakpoint (`matchMedia`
-  `change`) resets it to closed, so no stale open state reappears.
+  Escapes from the main content, dialogs or the header never touch it. A backdrop click closes it
+  and focuses the toggle too. Crossing the `md` breakpoint (`matchMedia` `change`) resets it to
+  closed, so no stale open state reappears, moving focus to `<main>` if it was inside the nav.
 - **Page layers and header height** (`style.css` `@theme`): `--z-index-backdrop` <
   `--z-index-sidenav` < `--z-index-header` give the utilities `z-backdrop` / `z-sidenav` /
   `z-header`; `--spacing-header` (the sticky `AppHeader`'s height) gives `h-header`, and the
@@ -148,11 +149,13 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   `/admin/tenants/{slug}/users` (`TenantUsersPage`, also for disabled tenants), whose
   `TenantUsersList` (keyed on the slug, so another tenant starts with fresh search, page and
   selection) lists `tenants/{slug}/users` (search; disabled / "No password" badges) and, for the
-  selected user (`aria-current` row; dropped by any load whose items no longer list it),
-  `TenantUserPanel` shows directory roles and the MFA summary (`users/UserBadges`, shared with the
+  selected user (`aria-current` row), `TenantUserPanel` (headed by the user's email) shows directory roles and the MFA summary (`users/UserBadges`, shared with the
   user detail) with "Reset password" (temporary password shown once, held only in the panel's ref)
   and "Reset MFA" (disabled without factors; the server's 409 for passkeys without a password is
-  explained, `users/mfa.ts`). The page renders nothing but a note for anyone else.
+  explained, `users/mfa.ts`). The selection is independent of the list: only a click on another
+  row or the panel's "Close" changes it — no reload (search, page, failed load, a stale response)
+  unmounts the panel or a password it shows. After a reset the panel reloads its own user; the
+  list refreshes only once the password dialog is closed (`ResetPasswordButton` `done`). The page renders nothing but a note for anyone else.
 - **Identity providers** (admin `areas/admin/federation`, nav "Identity providers"): list
   (`usePagedList`, no search) and detail pages over `identity-providers`; anyone with a directory
   role reads, only a Global Admin (`auth.isGlobalAdmin`) sees create / save / enable–disable /

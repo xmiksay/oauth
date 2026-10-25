@@ -146,64 +146,110 @@ describe('TenantUsersPage', () => {
     await flushPromises()
   }
 
-  it('drops the selection when another page no longer lists it', async () => {
+  const heading = (w: ReturnType<typeof mount>) => w.find('section[aria-label="Selected user"] h2')
+
+  it('keeps the panel through a page, a search and a failed load that no longer list the user', async () => {
     await signIn()
     const carol: User = { ...bob, id: 'u2', email: 'carol@contoso.example' }
-    const calls = mockFetch({ body: { items: [bob], next_cursor: 'c2' } }, { body: bobDetail }, page([carol]))
+    const calls = mockFetch(
+      { body: { items: [bob], next_cursor: 'c2' } },
+      { body: bobDetail },
+      page([carol]),
+      page([]),
+      { status: 500, body: { error: 'server_error' } },
+    )
     const w = await mountAt('/admin/tenants/contoso/users', TenantUsersPage)
     await buttons(w, 'bob@contoso.example')[0]?.trigger('click')
     await flushPromises()
-    expect(w.text()).toContain('Recovery codes left')
+    expect(heading(w).text()).toBe('bob@contoso.example')
     await buttons(w, 'Next')[0]?.trigger('click')
     await flushPromises()
     expect(w.text()).toContain('carol@contoso.example')
-    expect(w.text()).not.toContain('Recovery codes left')
-    expect(buttons(w, 'Reset password')).toHaveLength(0)
+    expect(heading(w).text()).toBe('bob@contoso.example')
+    expect(w.find('tr[aria-current]').exists()).toBe(false)
+    await w.find('input[type=search]').setValue('zzz')
+    await wait()
+    expect(w.text()).toContain('No users found.')
+    expect(heading(w).text()).toBe('bob@contoso.example')
+    await w.findComponent({ name: 'ListShell' }).props('list').load()
+    await flushPromises()
+    expect(heading(w).text()).toBe('bob@contoso.example')
+    expect(buttons(w, 'Reset password')).toHaveLength(1)
     expect(calls.map((c) => c.url)).toEqual([
       '/api/v1/tenants/contoso/users?limit=25',
       '/api/v1/tenants/contoso/users/u1',
       '/api/v1/tenants/contoso/users?limit=25&cursor=c2',
+      '/api/v1/tenants/contoso/users?limit=25&search=zzz',
+      '/api/v1/tenants/contoso/users?limit=25&search=zzz',
     ])
   })
 
-  it('drops a selection made during the debounce that the search’s results lack', async () => {
+  it('keeps the shown password when a stale search response lands mid-dialog', async () => {
     await signIn()
-    const alice: User = { ...bob, id: 'u3', email: 'alice@contoso.example' }
-    const aliceDetail: AdminUserDetail = { ...bobDetail, ...alice }
-    const calls = mockFetch(page([alice, bob]), { body: aliceDetail }, page([bob]))
-    const w = await mountAt('/admin/tenants/contoso/users', TenantUsersPage)
-    await buttons(w, 'alice@contoso.example')[0]?.trigger('click')
-    await flushPromises()
-    await w.find('input[type=search]').setValue('bob')
-    await buttons(w, 'alice@contoso.example')[0]?.trigger('click')
-    await flushPromises()
-    expect(w.text()).toContain('Recovery codes left')
-    await wait()
-    expect(w.text()).not.toContain('alice@contoso.example')
-    expect(w.text()).not.toContain('Recovery codes left')
-    expect(w.find('tr[aria-current]').exists()).toBe(false)
-    expect(calls.map((c) => c.url)).toEqual([
-      '/api/v1/tenants/contoso/users?limit=25',
-      '/api/v1/tenants/contoso/users/u3',
-      '/api/v1/tenants/contoso/users?limit=25&search=bob',
-    ])
-  })
-
-  it('keeps the selection while a reload still lists it', async () => {
-    await signIn()
-    const calls = mockFetch(page([bob]), { body: bobDetail }, page([bob]))
+    const carol: User = { ...bob, id: 'u2', email: 'carol@contoso.example' }
+    const calls = mockFetch(
+      page([bob]),
+      { body: bobDetail },
+      { body: { one_time_password: 'Temp-123', must_change_password: true } },
+      { body: { ...bobDetail, has_password: true } },
+    )
+    let release: (r: Response) => void = () => {}
+    const real = globalThis.fetch
+    vi.stubGlobal('fetch', (url: string, init?: RequestInit) => {
+      if (!url.includes('search=')) return real(url, init)
+      calls.push({ url, method: 'GET', headers: {}, body: undefined })
+      return new Promise<Response>((r) => (release = r))
+    })
     const w = await mountAt('/admin/tenants/contoso/users', TenantUsersPage)
     await buttons(w, 'bob@contoso.example')[0]?.trigger('click')
     await flushPromises()
-    await w.find('input[type=search]').setValue('bo ')
+    await w.find('input[type=search]').setValue('carol')
     await wait()
-    expect(w.text()).toContain('Recovery codes left')
-    expect(w.find('tr[aria-current=true]').text()).toContain('bob@contoso.example')
+    await buttons(w, 'Reset password')[0]?.trigger('click')
+    await buttons(w, 'Reset password')[1]?.trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid=secret-values]').text()).toBe('Temp-123')
+    release(new Response(JSON.stringify(page([carol]).body), { headers: { 'content-type': 'application/json' } }))
+    await flushPromises()
+    expect(w.text()).toContain('carol@contoso.example')
+    expect(w.find('[data-testid=secret-values]').text()).toBe('Temp-123')
+    expect(heading(w).text()).toBe('bob@contoso.example')
     expect(calls.map((c) => c.url)).toEqual([
       '/api/v1/tenants/contoso/users?limit=25',
       '/api/v1/tenants/contoso/users/u1',
-      '/api/v1/tenants/contoso/users?limit=25&search=bo',
+      '/api/v1/tenants/contoso/users?limit=25&search=carol',
+      '/api/v1/tenants/contoso/users/u1/reset-password',
+      '/api/v1/tenants/contoso/users/u1',
     ])
+  })
+
+  it('Close clears the selection', async () => {
+    await signIn()
+    mockFetch(page([bob]), { body: bobDetail })
+    const w = await mountAt('/admin/tenants/contoso/users', TenantUsersPage)
+    await buttons(w, 'bob@contoso.example')[0]?.trigger('click')
+    await flushPromises()
+    expect(w.find('tr[aria-current=true]').exists()).toBe(true)
+    await buttons(w, 'Close')[0]?.trigger('click')
+    await flushPromises()
+    expect(w.find('section[aria-label="Selected user"]').exists()).toBe(false)
+    expect(w.find('tr[aria-current]').exists()).toBe(false)
+  })
+
+  it('switches the panel when another row is clicked', async () => {
+    await signIn()
+    const carol: User = { ...bob, id: 'u2', email: 'carol@contoso.example', display_name: 'Carol' }
+    const calls = mockFetch(page([bob, carol]), { body: bobDetail }, { body: { ...bobDetail, ...carol } })
+    const w = await mountAt('/admin/tenants/contoso/users', TenantUsersPage)
+    await buttons(w, 'bob@contoso.example')[0]?.trigger('click')
+    await flushPromises()
+    expect(heading(w).text()).toBe('bob@contoso.example')
+    await buttons(w, 'carol@contoso.example')[0]?.trigger('click')
+    await flushPromises()
+    expect(heading(w).text()).toBe('carol@contoso.example')
+    expect(w.find('section[aria-label="Selected user"]').text()).toContain('Carol')
+    expect(w.find('tr[aria-current=true]').text()).toContain('carol@contoso.example')
+    expect(calls.at(-1)?.url).toBe('/api/v1/tenants/contoso/users/u2')
   })
 
   it('resets the password and shows it once, cleared on close', async () => {
