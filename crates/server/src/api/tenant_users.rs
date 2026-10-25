@@ -6,7 +6,7 @@
 //! its own `/api/v1/users`.
 
 use axum::{extract::State, http::StatusCode};
-use entity::{enums::Outcome, tenants};
+use entity::tenants;
 use sea_orm::{ConnectionTrait, TransactionTrait};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -24,7 +24,7 @@ use super::{
 };
 use crate::{
     app::AppState,
-    audit::{self, Actor, EventType, Target},
+    audit::{EventType, Target},
     error::{AppError, AppResult},
 };
 
@@ -60,7 +60,9 @@ pub async fn get(
     Ok(axum::Json(users::full_view(&state.db, &user).await?))
 }
 
-/// No fields: the system admin can only issue a one-time password.
+/// Deliberately empty: the system admin can only issue a one-time password,
+/// and `deny_unknown_fields` rejects `password` / `must_change_password`
+/// with a 400 instead of silently ignoring them.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResetPassword {}
@@ -103,9 +105,9 @@ pub async fn reset_mfa(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Records the event in the system tenant's log (actor: the system admin)
-/// and in the target tenant's (actor: `system`, since an `actor_id` there
-/// must not name another tenant's user), on the mutation's transaction.
+/// Records the event in the system tenant's log and in the target tenant's
+/// (actor: the system admin in both, as `tenants::update` does), on the
+/// mutation's transaction.
 async fn audit_both(
     txn: &impl ConnectionTrait,
     caller: &Caller,
@@ -114,29 +116,17 @@ async fn audit_both(
     user_id: Uuid,
     details: Value,
 ) -> AppResult<()> {
-    let (own, theirs) = cross_tenant_details(details, tenant, caller.user_id()?);
+    let (own, theirs) = cross_tenant_details(details, tenant);
     let target = Some(Target::User(user_id));
     caller.audit(txn, event_type, target, own).await?;
-    let event = audit::Event {
-        tenant_id: tenant.id,
-        actor: Actor::System,
-        event_type,
-        target,
-        outcome: Outcome::Success,
-        ip: caller.ip,
-        details: theirs,
-    };
-    audit::record(txn, event).await?;
-    Ok(())
+    caller
+        .audit_in(txn, tenant.id, event_type, target, theirs)
+        .await
 }
 
 /// `details` for the system tenant's log (plus the target tenant) and for
-/// the target tenant's log (plus who did it, by id).
-fn cross_tenant_details(
-    details: Value,
-    tenant: &tenants::Model,
-    system_admin_id: Uuid,
-) -> (Value, Value) {
+/// the target tenant's log (plus `via: "system_admin"`).
+fn cross_tenant_details(details: Value, tenant: &tenants::Model) -> (Value, Value) {
     let mut own = match details {
         Value::Object(map) => map,
         _ => serde_json::Map::new(),
@@ -145,7 +135,6 @@ fn cross_tenant_details(
     own.insert("tenant_slug".into(), json!(tenant.slug));
     let mut theirs = own.clone();
     theirs.insert("via".into(), json!("system_admin"));
-    theirs.insert("system_admin_id".into(), json!(system_admin_id));
     (Value::Object(own), Value::Object(theirs))
 }
 
@@ -168,11 +157,10 @@ mod tests {
     }
 
     #[test]
-    fn details_name_the_tenant_and_the_admin_only_in_the_target_log() {
+    fn details_name_the_tenant_and_via_only_in_the_target_log() {
         let t = tenant();
-        let admin = Uuid::now_v7();
         let base = json!({ "must_change_password": true, "generated": true });
-        let (own, theirs) = cross_tenant_details(base, &t, admin);
+        let (own, theirs) = cross_tenant_details(base, &t);
         assert_eq!(
             own,
             json!({
@@ -190,7 +178,6 @@ mod tests {
                 "tenant_id": t.id,
                 "tenant_slug": "fabrikam",
                 "via": "system_admin",
-                "system_admin_id": admin,
             })
         );
     }
@@ -198,7 +185,7 @@ mod tests {
     #[test]
     fn non_object_details_start_empty() {
         let t = tenant();
-        let (own, _) = cross_tenant_details(Value::Null, &t, Uuid::nil());
+        let (own, _) = cross_tenant_details(Value::Null, &t);
         assert_eq!(own, json!({ "tenant_id": t.id, "tenant_slug": "fabrikam" }));
     }
 }

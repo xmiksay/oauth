@@ -11,13 +11,13 @@ import PageHeader from '@/components/PageHeader.vue'
 import ErrorAlert from '@/components/ErrorAlert.vue'
 import StatusNote from '@/components/StatusNote.vue'
 import ConfirmButton from '@/components/ConfirmButton.vue'
-import SecretOnceDialog from '@/components/SecretOnceDialog.vue'
 import UserRoles from './UserRoles.vue'
 import UserSessions from './UserSessions.vue'
 import UserPasskeys from './UserPasskeys.vue'
 import UserIdentities from './UserIdentities.vue'
 import UserBadges from './UserBadges.vue'
-import { hasMfaFactors, RESET_MFA_MESSAGE, RESET_PASSWORD_MESSAGE, resetMfaExplained } from './mfa'
+import ResetPasswordButton from './ResetPasswordButton.vue'
+import { hasMfaFactors, RESET_MFA_MESSAGE, resetMfaExplained } from './mfa'
 
 const route = useRoute()
 const router = useRouter()
@@ -27,7 +27,6 @@ const { canWriteUsers, me } = storeToRefs(useAuthStore())
 const user = ref<AdminUserDetail | null>(null)
 const name = ref('')
 const email = ref('')
-const oneTime = ref<string[] | null>(null)
 const loader = useAction()
 const saver = useAction()
 const saved = ref(false)
@@ -64,9 +63,11 @@ async function setDisabled(disabled: boolean) {
   await load()
 }
 
-async function resetPassword() {
-  const res = await users.resetPassword(id)
-  if (res.one_time_password) oneTime.value = [res.one_time_password]
+function resetPassword() {
+  return users.resetPassword(id)
+}
+
+async function afterPasswordReset() {
   sessionsVersion.value++
   await load()
 }
@@ -137,11 +138,9 @@ async function revokeSessions() {
           :message="`A new invitation link is emailed to ${user.email}. The previous link stops working.`"
           :action="resendInvite"
         />
-        <ConfirmButton
-          label="Reset password"
-          title="Reset password?"
-          :message="RESET_PASSWORD_MESSAGE"
+        <ResetPasswordButton
           :action="resetPassword"
+          @reset="afterPasswordReset"
         />
         <ConfirmButton
           label="Reset MFA"
@@ -261,11 +260,5 @@ async function revokeSessions() {
         class="mt-4"
       />
     </template>
-    <SecretOnceDialog
-      title="Temporary password"
-      description="Give this password to the user. They must change it at their next sign-in."
-      :values="oneTime"
-      @close="oneTime = null"
-    />
   </section>
 </template>

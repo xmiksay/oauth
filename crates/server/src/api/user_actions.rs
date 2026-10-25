@@ -159,7 +159,7 @@ pub async fn reset_password(
     let chosen = ChosenPassword::new(body.password, body.must_change_password)?;
     let tenant_id = caller.tenant_id();
     let txn = state.db.begin().await?;
-    let user = find_user(&txn, tenant_id, id).await?;
+    let user = lock_user(&txn, tenant_id, id).await?;
     ensure_can_modify_user(&txn, &caller, id).await?;
     let details = apply_password_reset(&txn, &state.config, &caller.tenant, &user, &chosen).await?;
     caller
