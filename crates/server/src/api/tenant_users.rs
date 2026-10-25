@@ -19,7 +19,9 @@ use super::{
     guard::{find_user, lock_user},
     page::Paged,
     tenants::by_slug,
-    user_actions::{ChosenPassword, apply_mfa_reset, apply_password_reset, password_reset_body},
+    user_actions::{
+        ChosenPassword, Resetter, apply_mfa_reset, apply_password_reset, password_reset_body,
+    },
     users::{self, ListQuery},
 };
 use crate::{
@@ -60,9 +62,9 @@ pub async fn get(
     Ok(axum::Json(users::full_view(&state.db, &user).await?))
 }
 
-/// Deliberately empty: the system admin can only issue a one-time password,
-/// and `deny_unknown_fields` rejects `password` / `must_change_password`
-/// with a 400 instead of silently ignoring them.
+/// Deliberately empty and optional: the system admin can only issue a
+/// one-time password, and `deny_unknown_fields` rejects `password` /
+/// `must_change_password` with a 400 instead of silently ignoring them.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResetPassword {}
@@ -71,13 +73,21 @@ pub async fn reset_password(
     State(state): State<AppState>,
     SystemAdmin(caller): SystemAdmin,
     Path((slug, id)): Path<(String, Uuid)>,
-    Json(ResetPassword {}): Json<ResetPassword>,
+    _body: Option<Json<ResetPassword>>,
 ) -> AppResult<axum::Json<Value>> {
     let chosen = ChosenPassword::new(None, None)?;
     let txn = state.db.begin().await?;
     let tenant = target_tenant(&txn, &slug).await?;
     let user = lock_user(&txn, tenant.id, id).await?;
-    let details = apply_password_reset(&txn, &state.config, &tenant, &user, &chosen).await?;
+    let details = apply_password_reset(
+        &txn,
+        &state.config,
+        &tenant,
+        &user,
+        &chosen,
+        Resetter::SystemAdmin,
+    )
+    .await?;
     audit_both(
         &txn,
         &caller,
@@ -99,7 +109,8 @@ pub async fn reset_mfa(
     let txn = state.db.begin().await?;
     let tenant = target_tenant(&txn, &slug).await?;
     let user = lock_user(&txn, tenant.id, id).await?;
-    let details = apply_mfa_reset(&txn, &state.config, &tenant, &user).await?;
+    let details =
+        apply_mfa_reset(&txn, &state.config, &tenant, &user, Resetter::SystemAdmin).await?;
     audit_both(
         &txn,
         &caller,
@@ -134,17 +145,20 @@ async fn audit_both(
 
 /// `details` for the system tenant's log (plus the target tenant and the
 /// user's `email`: that log can't resolve a foreign tenant's user id) and
-/// for the target tenant's log (the same plus `via: "system_admin"`).
+/// for the target tenant's log (plus `email` and `via: "system_admin"`; the
+/// row already names its tenant).
 fn cross_tenant_details(
-    mut own: Map<String, Value>,
+    base: Map<String, Value>,
     tenant: &tenants::Model,
     email: &str,
 ) -> (Value, Value) {
+    let mut theirs = base.clone();
+    theirs.insert("email".into(), json!(email));
+    theirs.insert("via".into(), json!("system_admin"));
+    let mut own = base;
     own.insert("tenant_id".into(), json!(tenant.id));
     own.insert("tenant_slug".into(), json!(tenant.slug));
     own.insert("email".into(), json!(email));
-    let mut theirs = own.clone();
-    theirs.insert("via".into(), json!("system_admin"));
     (Value::Object(own), Value::Object(theirs))
 }
 
@@ -167,23 +181,31 @@ mod tests {
     }
 
     #[test]
-    fn details_name_the_tenant_and_user_and_via_only_in_the_target_log() {
+    fn system_log_names_the_tenant_target_log_says_via() {
         let t = tenant();
         let base = Map::from_iter([
             ("must_change_password".into(), json!(true)),
             ("generated".into(), json!(true)),
         ]);
         let (own, theirs) = cross_tenant_details(base, &t, "ann@fabrikam.test");
-        let expected = json!({
-            "must_change_password": true,
-            "generated": true,
-            "tenant_id": t.id,
-            "tenant_slug": "fabrikam",
-            "email": "ann@fabrikam.test",
-        });
-        assert_eq!(own, expected);
-        let mut with_via = expected;
-        with_via["via"] = json!("system_admin");
-        assert_eq!(theirs, with_via);
+        assert_eq!(
+            own,
+            json!({
+                "must_change_password": true,
+                "generated": true,
+                "tenant_id": t.id,
+                "tenant_slug": "fabrikam",
+                "email": "ann@fabrikam.test",
+            })
+        );
+        assert_eq!(
+            theirs,
+            json!({
+                "must_change_password": true,
+                "generated": true,
+                "email": "ann@fabrikam.test",
+                "via": "system_admin",
+            })
+        );
     }
 }
