@@ -76,6 +76,40 @@ describe('usePagedList', () => {
     },
   )
 
+  it('reloads page 1 with the new search on load during the debounce', async () => {
+    const fetch = pages(
+      { items: [1], next_cursor: 'c2' },
+      { items: [2], next_cursor: 'c3' },
+      { items: [9], next_cursor: 'n2' },
+    )
+    const list = usePagedList(fetch)
+    await list.load()
+    await list.next()
+    list.setSearch('an')
+    await list.load()
+    expect([list.items, list.page]).toEqual([[9], 1])
+    vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS)
+    await nextTick()
+    expect(fetch.mock.calls.map((c) => c[0])).toEqual([
+      { limit: 25, cursor: null, search: undefined },
+      { limit: 25, cursor: 'c2', search: undefined },
+      { limit: 25, cursor: null, search: 'an' },
+    ])
+  })
+
+  it('schedules no reload for a whitespace-only search edit', async () => {
+    const fetch = pages({ items: [1], next_cursor: 'c2' }, { items: [2], next_cursor: null })
+    const list = usePagedList(fetch)
+    await list.load()
+    await list.next()
+    list.setSearch('  ')
+    await nextTick()
+    vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS)
+    await nextTick()
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(list.page).toBe(2)
+  })
+
   it('keeps the error and clears items on failure', async () => {
     const list = usePagedList(pages())
     await list.load()

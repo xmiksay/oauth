@@ -11,17 +11,13 @@
 //! their password / MFA (`/api/v1/tenants/{slug}/users` on the system host).
 mod common;
 
-use axum::{
-    body::Body,
-    http::{Method, Request, StatusCode, header},
-};
+use axum::http::{Method, StatusCode};
 use common::{
     authenticator::{Alg, Authenticator},
-    browser::send,
     flow::{Fixture, PASSWORD, T},
-    mail::only_to,
     mgmt::{call, mint_app_token, mint_user_token, user_with_roles},
     passkeys::{drop_password, register_ok},
+    tenant_users::{events, setup, sys, users_of},
 };
 use entity::{
     audit_events,
@@ -31,60 +27,10 @@ use entity::{
     },
     tenants, user_totp, users, webauthn_credentials,
 };
-use oauth_server::{
-    bootstrap,
-    directory::{self, builtin_apps, password},
-};
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder};
+use oauth_server::directory::{self, builtin_apps, password};
+use sea_orm::EntityTrait;
 use serde_json::{Value, json};
 use uuid::Uuid;
-
-fn sys(path: &str) -> String {
-    common::at("system", path)
-}
-
-fn users_of(slug: &str, rest: &str) -> String {
-    sys(&format!("/api/v1/tenants/{slug}/users{rest}"))
-}
-
-/// The fixture plus a bootstrapped system tenant, its root Global Admin and
-/// a management token of theirs.
-async fn setup() -> (Fixture, tenants::Model, users::Model, String) {
-    setup_on(Fixture::new().await).await
-}
-
-async fn setup_on(f: Fixture) -> (Fixture, tenants::Model, users::Model, String) {
-    let opts = bootstrap::Options {
-        admin_email: "root@example.com".into(),
-        display_name: None,
-        reset_password: false,
-    };
-    bootstrap::run(&f.db, &f.config, &opts).await.unwrap();
-    let system = directory::find_system_tenant(&f.db).await.unwrap().unwrap();
-    let root = directory::find_user_by_email(&f.db, system.id, "root@example.com")
-        .await
-        .unwrap()
-        .unwrap();
-    let token = mint_user_token(&f.db, &f.config, &system, &root).await;
-    (f, system, root, token)
-}
-
-/// `event_type` audit rows about `user` in `tenant_id`, oldest first.
-async fn events(
-    f: &Fixture,
-    tenant_id: Uuid,
-    event_type: &str,
-    user: Uuid,
-) -> Vec<audit_events::Model> {
-    audit_events::Entity::find()
-        .filter(audit_events::Column::TenantId.eq(tenant_id))
-        .filter(audit_events::Column::EventType.eq(event_type))
-        .filter(audit_events::Column::TargetId.eq(user))
-        .order_by_asc(audit_events::Column::Id)
-        .all(&f.db)
-        .await
-        .unwrap()
-}
 
 /// Exactly one event in each log: the system admin's own (actor: them) and
 /// the target tenant's (actor: them too, `via: system_admin`), both naming
@@ -147,44 +93,8 @@ async fn system_admin_finds_and_resets_a_sub_tenant_admins_password() {
     assert_eq!(detail["mfa"]["totp"], false);
     assert!(detail["identities"].is_array());
 
-    // Only a generated password: any field is refused, nothing changes.
+    // What else a reset body may hold: management_tenant_users_body.rs.
     let reset = users_of(T, &format!("/{}/reset-password", ga.id));
-    for body in [
-        json!({ "password": "an admin chosen passphrase" }),
-        json!({ "must_change_password": false }),
-    ] {
-        let (st, _) = call(&f.app, Method::POST, &reset, tok, Some(&body)).await;
-        assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
-    }
-    // A bad body's error never quotes what was sent (it may be a password).
-    // Nor a key: someone may send their intended password as one.
-    for body in [json!("Hunter2!"), json!({ "Hunter2!": true })] {
-        let (st, out) = call(&f.app, Method::POST, &reset, tok, Some(&body)).await;
-        assert_eq!(st, StatusCode::BAD_REQUEST, "{out}");
-        assert!(out["error"].is_string(), "{out}");
-        assert!(!out.to_string().contains("Hunter2"), "{out}");
-    }
-    // Over axum's 2 MiB body limit: still a 413, in the JSON error shape.
-    let req = Request::post(&reset)
-        .header(header::AUTHORIZATION, format!("Bearer {token}"))
-        .body(Body::from(vec![b' '; 3 << 20]))
-        .unwrap();
-    let (st, _, out) = send(&f.app, req).await;
-    assert_eq!(st, StatusCode::PAYLOAD_TOO_LARGE, "{out}");
-    let out: Value = serde_json::from_str(&out).unwrap();
-    assert_eq!(out["error"], "payload_too_large");
-    // A field is refused even without a JSON Content-Type (not read as "no body").
-    let req = Request::post(&reset)
-        .header(header::AUTHORIZATION, format!("Bearer {token}"))
-        .body(Body::from(r#"{"password":"x"}"#))
-        .unwrap();
-    let (st, _, _) = send(&f.app, req).await;
-    assert_eq!(st, StatusCode::BAD_REQUEST);
-    assert!(
-        events(&f, f.tenant.id, "user.password_reset", ga.id)
-            .await
-            .is_empty()
-    );
 
     let (st, _) = call(&f.app, Method::GET, "/api/v1/users", Some(&ga_token), None).await;
     assert_eq!(
@@ -262,30 +172,6 @@ async fn system_admin_resets_mfa_but_never_locks_a_passkey_only_user_out() {
 }
 
 #[tokio::test]
-async fn the_user_is_told_a_system_administrator_reset_them() {
-    let (f, _, _, token) = setup_on(Fixture::with_email().await).await;
-    let tok = Some(token.as_str());
-    f.verify(&f.user).await;
-    f.enroll_totp(&f.user).await;
-    f.deliver().await; // anything enrollment queued
-    let pw = users_of(T, &format!("/{}/reset-password", f.user.id));
-    let (st, _) = call(&f.app, Method::POST, &pw, tok, None).await;
-    assert_eq!(st, StatusCode::OK);
-    let notice = f.deliver().await;
-    let body = &only_to(&notice, &f.user.email).body;
-    assert!(body.contains("reset by a system administrator"), "{body}");
-    let mfa = users_of(T, &format!("/{}/reset-mfa", f.user.id));
-    let (st, _) = call(&f.app, Method::POST, &mfa, tok, None).await;
-    assert_eq!(st, StatusCode::NO_CONTENT);
-    let notice = f.deliver().await;
-    let body = &only_to(&notice, &f.user.email).body;
-    assert!(
-        body.contains("second factors removed by a system administrator"),
-        "{body}"
-    );
-}
-
-#[tokio::test]
 async fn tenant_user_routes_refuse_wrong_tenants_users_and_callers() {
     let (f, system, root, token) = setup().await;
     let tok = Some(token.as_str());
@@ -342,10 +228,6 @@ async fn tenant_user_routes_refuse_wrong_tenants_users_and_callers() {
     );
     let reset = users_of("fabrikam", &format!("/{}/reset-password", boss.id));
     let (st, out) = call(&f.app, Method::POST, &reset, tok, Some(&empty)).await;
-    assert_eq!(st, StatusCode::OK, "{out}");
-    assert!(out["one_time_password"].is_string());
-    // The body is optional: a bare POST (no Content-Type) works too.
-    let (st, out) = call(&f.app, Method::POST, &reset, tok, None).await;
     assert_eq!(st, StatusCode::OK, "{out}");
     assert!(out["one_time_password"].is_string());
 

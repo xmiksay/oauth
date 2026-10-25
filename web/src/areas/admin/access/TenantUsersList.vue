@@ -11,11 +11,13 @@ const props = defineProps<{ slug: string }>()
 
 const list = usePagedList<User>((q: PageQuery) => tenants.users(props.slug, q))
 const selected = ref<string | null>(null)
-// Never offer resets for a user not listed: after every load, keep the selection only if the
-// new items still hold it (a click during a search's debounce must not outlive its reload).
+// Never offer resets for a user not listed: after every successful load, keep the selection
+// only if the new items still hold it (a click during a search's debounce must not outlive its
+// reload). A failed load lists nothing and proves nothing, so it keeps the panel.
 watch(
   () => list.items,
   (items) => {
+    if (list.error) return
     if (selected.value && !items.some((u) => u.id === selected.value)) selected.value = null
   },
 )

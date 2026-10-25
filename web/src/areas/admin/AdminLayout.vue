@@ -51,12 +51,14 @@ function closeOnFocusLeave(e: FocusEvent) {
 
 // The one Escape path: on window, so focus fallen to body (a tap on the nav's background) still
 // closes it, and after document's listeners, so an Escape the open app launcher took (prevented)
-// isn't ours too. Escapes from the main content, the header or a dialog never touch it.
+// isn't ours too. Escapes from the main content, the rest of the header or a dialog never
+// touch it.
 function closeOnEscape(e: KeyboardEvent) {
   if (e.key !== 'Escape' || e.defaultPrevented || !menuOpen.value) return
   if (e.target instanceof Element && e.target.closest('dialog')) return
   const active = document.activeElement
-  if (active && active !== document.body && !sideNav.value?.contains(active)) return
+  const ours = !active || active === document.body || sideNav.value?.contains(active) || header.value?.isMenuButton(active)
+  if (!ours) return
   e.preventDefault()
   menuOpen.value = false
   header.value?.focusMenuButton()

@@ -21,7 +21,9 @@ export function usePagedList<T>(fetchPage: (q: PageQuery) => Promise<Paged<T>>, 
   const hasPrev = computed(() => cursors.value.length > 1)
   const hasNext = computed(() => nextCursor.value !== null)
 
+  /** Re-fetch the current page — or, with a search change pending, the new search's first. */
   async function load() {
+    if (takePendingSearch()) return reload()
     const mine = ++seq
     loading.value = true
     error.value = null
@@ -44,7 +46,7 @@ export function usePagedList<T>(fetchPage: (q: PageQuery) => Promise<Paged<T>>, 
     }
   }
 
-  // Paging while a search change waits would pair the old search's cursor with the new search.
+  // Loading while a search change waits would pair the old search's cursor with the new search.
   function takePendingSearch() {
     if (debounce === undefined) return false
     clearTimeout(debounce)
@@ -77,9 +79,11 @@ export function usePagedList<T>(fetchPage: (q: PageQuery) => Promise<Paged<T>>, 
   }
 
   // Sync: a next() right after a search change must already see the pending debounce.
+  // Whitespace-only edits search the same thing: no reload.
   watch(
     search,
-    () => {
+    (text, old) => {
+      if (text.trim() === old.trim()) return
       clearTimeout(debounce)
       debounce = setTimeout(() => {
         debounce = undefined
