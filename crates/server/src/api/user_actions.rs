@@ -1,7 +1,7 @@
 //! Admin actions on a user: password reset, MFA reset, sessions.
 
 use axum::{extract::State, http::StatusCode};
-use entity::{enums::NotifyEvent, sessions, user_recovery_codes, user_totp};
+use entity::{enums::NotifyEvent, sessions, tenants, user_recovery_codes, user_totp, users};
 use sea_orm::{
     ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, TransactionTrait,
 };
@@ -20,6 +20,7 @@ use crate::{
     app::AppState,
     audit::{EventType, Target},
     authz::{Access, Area},
+    config::Config,
     directory::{self, password},
     error::{AppError, AppResult},
     federation, notify, passkey, telegram,
@@ -112,8 +113,42 @@ pub struct ResetPassword {
     must_change_password: Option<bool>,
 }
 
-/// Sets a new password and signs the user out everywhere (sessions,
-/// refresh tokens, opaque access tokens — `directory::set_password`).
+/// Sets `chosen` as `user`'s password on `txn`, signing them out everywhere
+/// (sessions, refresh tokens, opaque access tokens —
+/// `directory::set_password`), and tells them. Returns the audit details.
+/// The caller has loaded `user` in `tenant` and authorized the change.
+pub async fn apply_password_reset(
+    txn: &impl ConnectionTrait,
+    config: &Config,
+    tenant: &tenants::Model,
+    user: &users::Model,
+    chosen: &ChosenPassword,
+) -> AppResult<Value> {
+    directory::set_password(txn, tenant.id, user.id, &chosen.value, chosen.must_change).await?;
+    let facts = notify::change("reset by an administrator");
+    notify::event(
+        txn,
+        config,
+        tenant,
+        user,
+        NotifyEvent::PasswordChanged,
+        &facts,
+    )
+    .await?;
+    Ok(json!({
+        "must_change_password": chosen.must_change,
+        "generated": chosen.generated,
+    }))
+}
+
+/// The reset-password response: the one-time password only when generated.
+pub fn password_reset_body(chosen: &ChosenPassword) -> axum::Json<Value> {
+    axum::Json(json!({
+        "one_time_password": chosen.one_time(),
+        "must_change_password": chosen.must_change,
+    }))
+}
+
 pub async fn reset_password(
     State(state): State<AppState>,
     caller: Caller,
@@ -126,21 +161,7 @@ pub async fn reset_password(
     let txn = state.db.begin().await?;
     let user = find_user(&txn, tenant_id, id).await?;
     ensure_can_modify_user(&txn, &caller, id).await?;
-    directory::set_password(&txn, tenant_id, id, &chosen.value, chosen.must_change).await?;
-    let facts = notify::change("reset by an administrator");
-    notify::event(
-        &txn,
-        &state.config,
-        &caller.tenant,
-        &user,
-        NotifyEvent::PasswordChanged,
-        &facts,
-    )
-    .await?;
-    let details = json!({
-        "must_change_password": chosen.must_change,
-        "generated": chosen.generated,
-    });
+    let details = apply_password_reset(&txn, &state.config, &caller.tenant, &user, &chosen).await?;
     caller
         .audit(
             &txn,
@@ -150,29 +171,23 @@ pub async fn reset_password(
         )
         .await?;
     txn.commit().await?;
-    Ok(axum::Json(json!({
-        "one_time_password": chosen.one_time(),
-        "must_change_password": chosen.must_change,
-    })))
+    Ok(password_reset_body(&chosen))
 }
 
-/// Removes TOTP, recovery codes, passkeys and the Telegram link: the user signs in with the
-/// password only and may enroll again. A user WITHOUT a password who has
-/// passkeys is refused (409): their passkeys are their only way in, so
-/// an administrator resets the password first (`reset-password`, a
-/// one-time password the user must change) and then the MFA.
-pub async fn reset_mfa(
-    State(state): State<AppState>,
-    caller: Caller,
-    Path(id): Path<Uuid>,
-) -> AppResult<StatusCode> {
-    caller.require(Area::Directory, Access::Write)?;
-    let tenant_id = caller.tenant_id();
-    let txn = state.db.begin().await?;
-    // Locked, so a concurrent password change can't slip past the check.
-    let user = lock_user(&txn, tenant_id, id).await?;
-    ensure_can_modify_user(&txn, &caller, id).await?;
-    let methods = federation::identities::methods(&txn, &user).await?;
+/// Removes TOTP, recovery codes, passkeys and the Telegram link of `user`
+/// (locked by the caller — `lock_user` — so a concurrent password change
+/// can't slip past the check): they sign in with the password only and may
+/// enroll again. A user WITHOUT a password who has passkeys is refused
+/// (409): their passkeys are their only way in, so an administrator resets
+/// the password first (`reset-password`, a one-time password the user must
+/// change) and then the MFA. Returns the audit details.
+pub async fn apply_mfa_reset(
+    txn: &impl ConnectionTrait,
+    config: &Config,
+    tenant: &tenants::Model,
+    user: &users::Model,
+) -> AppResult<Value> {
+    let methods = federation::identities::methods(txn, user).await?;
     let passkeys = methods.passkeys;
     if !methods.can_drop_passkeys() {
         return Err(AppError::Conflict(
@@ -181,25 +196,30 @@ pub async fn reset_mfa(
                 .into(),
         ));
     }
-    delete_mfa(&txn, tenant_id, id).await?;
-    passkey::store::remove_all(&txn, tenant_id, id).await?;
-    let telegram_unlinked = telegram::links::unlink(&txn, tenant_id, id).await?;
+    delete_mfa(txn, tenant.id, user.id).await?;
+    passkey::store::remove_all(txn, tenant.id, user.id).await?;
+    let telegram_unlinked = telegram::links::unlink(txn, tenant.id, user.id).await?;
     let facts = notify::change("second factors removed by an administrator");
-    notify::event(
-        &txn,
-        &state.config,
-        &caller.tenant,
-        &user,
-        NotifyEvent::MfaChanged,
-        &facts,
-    )
-    .await?;
+    notify::event(txn, config, tenant, user, NotifyEvent::MfaChanged, &facts).await?;
+    Ok(json!({ "passkeys_removed": passkeys, "telegram_unlinked": telegram_unlinked }))
+}
+
+pub async fn reset_mfa(
+    State(state): State<AppState>,
+    caller: Caller,
+    Path(id): Path<Uuid>,
+) -> AppResult<StatusCode> {
+    caller.require(Area::Directory, Access::Write)?;
+    let txn = state.db.begin().await?;
+    let user = lock_user(&txn, caller.tenant_id(), id).await?;
+    ensure_can_modify_user(&txn, &caller, id).await?;
+    let details = apply_mfa_reset(&txn, &state.config, &caller.tenant, &user).await?;
     caller
         .audit(
             &txn,
             EventType::UserMfaReset,
             Some(Target::User(id)),
-            json!({ "passkeys_removed": passkeys, "telegram_unlinked": telegram_unlinked }),
+            details,
         )
         .await?;
     txn.commit().await?;

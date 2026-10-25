@@ -79,7 +79,7 @@ pub async fn list(
     Ok(page.map(|t| view(&t)))
 }
 
-async fn by_slug(conn: &impl ConnectionTrait, slug: &str) -> AppResult<tenants::Model> {
+pub(super) async fn by_slug(conn: &impl ConnectionTrait, slug: &str) -> AppResult<tenants::Model> {
     if slug::validate_format(slug).is_err() {
         return Err(AppError::NotFound);
     }

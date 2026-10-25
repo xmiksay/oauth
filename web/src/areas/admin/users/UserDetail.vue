@@ -3,7 +3,6 @@ import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useAuthStore } from '@/stores/auth'
-import { ApiError } from '@/api/client'
 import { users } from '@/api/directory'
 import type { AdminUserDetail } from '@/api/types'
 import { useAction } from '@/composables/useAction'
@@ -17,6 +16,8 @@ import UserRoles from './UserRoles.vue'
 import UserSessions from './UserSessions.vue'
 import UserPasskeys from './UserPasskeys.vue'
 import UserIdentities from './UserIdentities.vue'
+import UserBadges from './UserBadges.vue'
+import { hasMfaFactors, RESET_MFA_MESSAGE, RESET_PASSWORD_MESSAGE, resetMfaExplained } from './mfa'
 
 const route = useRoute()
 const router = useRouter()
@@ -76,14 +77,7 @@ async function remove() {
 }
 
 async function resetMfa() {
-  try {
-    await users.resetMfa(id)
-  } catch (err) {
-    if (err instanceof ApiError && err.status === 409) {
-      throw 'Set a password first (reset password) — removing their passkeys would lock them out.'
-    }
-    throw err
-  }
+  await resetMfaExplained(() => users.resetMfa(id))
   passkeysVersion.value++
   await load()
 }
@@ -117,31 +111,10 @@ async function revokeSessions() {
     </PageHeader>
     <ErrorAlert :error="loader.error.value" />
     <template v-if="user">
-      <p class="mb-4 flex flex-wrap gap-1">
-        <span
-          v-if="user.disabled"
-          class="badge"
-        >Disabled</span>
-        <span
-          v-if="user.must_change_password"
-          class="badge"
-        >Must change password</span>
-        <span
-          v-if="!user.has_password"
-          class="badge"
-        >{{ user.mfa.passkeys ? 'Passkey only' : 'No password yet' }}</span>
-        <span class="badge">{{ user.email_verified ? 'Email verified' : 'Email unverified' }}</span>
-        <span class="badge">MFA: {{ user.mfa.totp ? 'authenticator app' : 'none' }}</span>
-        <span
-          v-if="user.mfa.passkeys"
-          class="badge"
-        >Passkeys: {{ user.mfa.passkeys }}</span>
-        <span
-          v-if="user.mfa.telegram"
-          class="badge"
-        >Telegram linked</span>
-        <span class="badge">{{ user.user_type }}</span>
-      </p>
+      <UserBadges
+        :user="user"
+        class="mb-4"
+      />
       <div
         v-if="canWriteUsers"
         class="mb-6 flex flex-wrap gap-2"
@@ -167,14 +140,14 @@ async function revokeSessions() {
         <ConfirmButton
           label="Reset password"
           title="Reset password?"
-          message="A new temporary password is generated and shown once. All of the user's sessions end."
+          :message="RESET_PASSWORD_MESSAGE"
           :action="resetPassword"
         />
         <ConfirmButton
           label="Reset MFA"
           title="Reset MFA?"
-          message="The user's authenticator app, recovery codes and passkeys are removed and Telegram is unlinked. They can set up new ones in My Account."
-          :disabled="!user.mfa.totp && !user.mfa.totp_pending && !user.mfa.passkeys && !user.mfa.telegram"
+          :message="RESET_MFA_MESSAGE"
+          :disabled="!hasMfaFactors(user.mfa)"
           :action="resetMfa"
         />
         <ConfirmButton

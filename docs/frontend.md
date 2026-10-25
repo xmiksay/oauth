@@ -135,6 +135,15 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   one-time secret) and is dropped when done. "Unlink" → re-auth → `DELETE me/telegram`
   (404 = already unlinked). The admin user detail shows "Telegram linked"; Reset MFA
   unlinks it too.
+- **Tenants** (admin `areas/admin/access/TenantsPage`, nav "Tenants": only on the system host
+  for a Global Admin): list, create (first admin's one-time password via `SecretOnceDialog`),
+  edit, enable / disable. Every tenant but the system one links "Users" to
+  `/admin/tenants/{slug}/users` (`TenantUsersPage`, also for disabled tenants), which lists
+  `tenants/{slug}/users` (search; disabled / "No password" badges) and, for the selected user,
+  `TenantUserPanel` shows directory roles and the MFA summary (`users/UserBadges`, shared with the
+  user detail) with "Reset password" (temporary password shown once, held only in the panel's ref)
+  and "Reset MFA" (disabled without factors; the server's 409 for passkeys without a password is
+  explained, `users/mfa.ts`). The page renders nothing but a note for anyone else.
 - **Identity providers** (admin `areas/admin/federation`, nav "Identity providers"): list
   (`usePagedList`, no search) and detail pages over `identity-providers`; anyone with a directory
   role reads, only a Global Admin (`auth.isGlobalAdmin`) sees create / save / enable–disable /

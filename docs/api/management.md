@@ -38,7 +38,8 @@ The built-in SPAs get such tokens with
 management-API app role `Directory.Read.All` or `Directory.ReadWrite.All`
 (`POST role-assignments`), then the app uses client credentials.
 
-`/api/v1/tenants` and `/api/v1/tenants/{slug}` (GET / PATCH) exist only on
+`/api/v1/tenants`, `/api/v1/tenants/{slug}` (GET / PATCH) and
+`/api/v1/tenants/{slug}/users[/…]` exist only on
 the **system tenant's host** (`system.{PUBLIC_URL host}`; 404 on every other
 host): the token must be a delegated token **of the `system` tenant** whose
 user is a GlobalAdmin there. A tenant's own admins use `/api/v1/settings` on
@@ -182,6 +183,10 @@ Additional rules:
 | `POST /api/v1/tenants` | `{ slug, display_name, admin_email, admin_display_name? }` | 201 `{ tenant, admin: { id, email }, one_time_password }` |
 | `GET /api/v1/tenants/{slug}` | – | `Tenant` (also disabled ones) |
 | `PATCH /api/v1/tenants/{slug}` | `{ display_name?, disabled?, audit_retention_days? (30–3650) }` | `Tenant` |
+| `GET /api/v1/tenants/{slug}/users` *paged* `?search=` (email, name) | – | that tenant's `User`s |
+| `GET /api/v1/tenants/{slug}/users/{id}` | – | `UserDetail` (as `GET users/{id}`) |
+| `POST /api/v1/tenants/{slug}/users/{id}/reset-password` | `{}` (no fields: always generated) | `{ one_time_password, must_change_password: true }` — as `reset-password` without `password`: sessions, refresh tokens and opaque access tokens revoked, the user notified |
+| `POST /api/v1/tenants/{slug}/users/{id}/reset-mfa` | – | 204 — as `users/{id}/reset-mfa`, same 409 for a passkey-only user (reset the password first) |
 
 Create provisions keys, built-in apps and the first GlobalAdmin (password
 must be changed at first sign-in) in one transaction; slug rules as in
@@ -192,6 +197,17 @@ tenant 404 everywhere (sign-in, tokens, API); the system tenant can't be
 disabled (403). A disabled tenant whose slug fails today's rules (created
 before they existed, e.g. `www`) can't be re-enabled (`disabled: false` →
 400): the server refuses to start with such a tenant enabled.
+
+`/api/v1/tenants/{slug}/users` lets a system GlobalAdmin help a locked-out
+user (typically a tenant's own GlobalAdmin) of another tenant: unknown slug →
+404; the system tenant's slug → 400 (use its own `users`); disabled tenants
+are allowed; a user id not in that tenant → 404. The tenant's administrator
+protection doesn't apply (the system GlobalAdmin outranks every tenant role)
+and nothing beyond the bearer token is asked for. Each reset is audited
+twice in its transaction: in the system tenant's log (actor: the system
+admin) with `tenant_id` + `tenant_slug` added to the usual details, and in
+the target tenant's log with `actor_type: system`, `actor_id: null` and
+additionally `via: "system_admin"`, `system_admin_id`.
 
 ## Tenant settings — read: any role, `Read.All`; write: the tenant's GlobalAdmin (delegated)
 
@@ -361,7 +377,7 @@ exclusive, RFC 3339) → `AuditEvent`s.
 | `sign_in` | user (`actor_id` null for an unknown account) → user | success: `session_id`, `application_id`, `amr`; failure: `reason` (`invalid_password`, `unknown_account`, `disabled`, `mfa_failed` + `factor`; passkeys: `factor: "passkey"` + the verifier's reason, e.g. `invalid_challenge`, `foreign_credential`, `sign_count_regression`; federation: `factor: "federation"`, `idp_id` + the reason, e.g. `id_token_nonce`, `token_refused`, `unknown_kid`, `upstream_error`, `account_exists`, `not_linked`) |
 | `token.refresh_reuse`, `token.code_replay` | client app → user, failure | `family_id` / `authorization_code_id` |
 | `tenant.create`, `tenant.update` | system admin → tenant (logged in the system tenant; a system admin's `tenant.update` of another tenant is ALSO logged in that tenant's own log, in the same transaction; a tenant admin's settings change only in their own) | `slug`, `admin_user_id` / `fields`, `disabled` |
-| `user.create`, `user.update`, `user.delete`, `user.password_reset`, `user.mfa_reset`, `user.sessions_revoke` | admin or app → user (JIT federation: user → self) | create: `email`, `password` (`generated` / `set_by_admin`), JIT: `via: "federation"`, `idp_id`; update: `fields`, `disabled`; delete: `email`; reset: `must_change_password`, `generated`; mfa reset: `passkeys_removed` |
+| `user.create`, `user.update`, `user.delete`, `user.password_reset`, `user.mfa_reset`, `user.sessions_revoke` | admin or app → user (JIT federation: user → self; a system admin's reset in another tenant: system admin → user in the system log, `system` → user in the tenant's, see Tenants) | create: `email`, `password` (`generated` / `set_by_admin`), JIT: `via: "federation"`, `idp_id`; update: `fields`, `disabled`; delete: `email`; reset: `must_change_password`, `generated`; mfa reset: `passkeys_removed`, `telegram_unlinked`; by a system admin also `tenant_id`, `tenant_slug` (+ `via: "system_admin"`, `system_admin_id` in the tenant's log) |
 | `user.mfa.passkey_register`, `user.mfa.passkey_rename`, `user.mfa.passkey_remove` | user → self (invite: by the link's user), admin → user (remove) | `passkey_id`, `name`, `via` (`me` / `admin` / `invite`) |
 | `user.mfa.passkey_sign_count_regression` | user → self (failure) | `via: "reauth"` |
 | `user.password_change` | user → self | `via`: `sign_in` (forced change) / `me` |

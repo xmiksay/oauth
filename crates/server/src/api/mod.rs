@@ -1,7 +1,8 @@
 //! Management REST API `/api/v1` (Graph-like) on each tenant host: the
 //! directory of that tenant (`/api/v1/users`, …), the signed-in user's
 //! self-service under `/api/v1/me`, and — on the system tenant's host only —
-//! tenant management (`/api/v1/tenants`, system Global Admins). Bearer tokens
+//! tenant management (`/api/v1/tenants`, system Global Admins, including
+//! another tenant's users under `/api/v1/tenants/{slug}/users`). Bearer tokens
 //! only (no cookies, so no CSRF surface). Contract: `docs/api/management.md`.
 
 mod app_rules;
@@ -29,6 +30,7 @@ mod me_telegram;
 pub mod page;
 mod reauth;
 mod role_assignments;
+mod tenant_users;
 mod tenants;
 mod user_actions;
 mod user_identities;
@@ -64,6 +66,22 @@ pub fn router() -> Router<AppState> {
         .route(
             &format!("{T}/tenants/{{slug}}"),
             get(tenants::get).patch(tenants::update),
+        )
+        .route(
+            &format!("{T}/tenants/{{slug}}/users"),
+            get(tenant_users::list),
+        )
+        .route(
+            &format!("{T}/tenants/{{slug}}/users/{{id}}"),
+            get(tenant_users::get),
+        )
+        .route(
+            &format!("{T}/tenants/{{slug}}/users/{{id}}/reset-password"),
+            post(tenant_users::reset_password),
+        )
+        .route(
+            &format!("{T}/tenants/{{slug}}/users/{{id}}/reset-mfa"),
+            post(tenant_users::reset_mfa),
         )
         .route(
             &format!("{T}/settings"),
