@@ -91,10 +91,13 @@ export const tenants = {
   ) => authed<Tenant>(`${TENANTS}${p`/${slug}`}`, { method: 'PATCH', body }),
   /** Rescue a sub-tenant's users (400 for the system tenant itself). */
   users: (slug: string, q: PageQuery = {}) =>
-    t.get<Paged<User>>(`${p`tenants/${slug}/users`}${query({ ...q })}`),
-  user: (slug: string, id: string) => t.get<AdminUserDetail>(p`tenants/${slug}/users/${id}`),
+    authed<Paged<User>>(`${TENANTS}${p`/${slug}/users`}${query({ ...q })}`),
+  user: (slug: string, id: string) =>
+    authed<AdminUserDetail>(`${TENANTS}${p`/${slug}/users/${id}`}`),
+  // Bodyless: the server refuses any field (only a generated password is issued).
   resetPassword: (slug: string, id: string) =>
-    t.post<PasswordReset>(p`tenants/${slug}/users/${id}/reset-password`, {}),
+    authed<PasswordReset>(`${TENANTS}${p`/${slug}/users/${id}/reset-password`}`, { method: 'POST' }),
   /** 409 when the user has passkeys but no password. */
-  resetMfa: (slug: string, id: string) => t.post<void>(p`tenants/${slug}/users/${id}/reset-mfa`),
+  resetMfa: (slug: string, id: string) =>
+    authed<void>(`${TENANTS}${p`/${slug}/users/${id}/reset-mfa`}`, { method: 'POST' }),
 }

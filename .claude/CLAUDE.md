@@ -173,7 +173,9 @@ Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md); manag
   only values that actually change (clients echo unchanged fields): most
   handlers use `api::set_changed`, `users.rs` / `groups.rs` compare against
   the loaded row directly. Changing a user goes through
-  `guard::ensure_can_modify_user`; removing a GlobalAdmin's effect through
+  `guard::ensure_can_modify_user` (exception: system-admin cross-tenant
+  resets, `api::tenant_users`, skip it — the system GlobalAdmin outranks
+  tenant roles); removing a GlobalAdmin's effect through
   `guard::ensure_not_last_global_admin`. App writes go through
   `app_rules` (`writable_app`, `ensure_may_manage_credentials` for secrets
   and redirect URIs, lifetime caps, per-app caps). Authorization

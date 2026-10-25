@@ -119,6 +119,42 @@ describe('TenantUsersPage', () => {
     expect(w.find('tr[aria-current]').exists()).toBe(false)
   })
 
+  it('drops the selection when the list moves to another page or search', async () => {
+    await signIn()
+    const carol: User = { ...bob, id: 'u2', email: 'carol@contoso.example' }
+    const first = { body: { items: [bob], next_cursor: 'c2' } }
+    const calls = mockFetch(first, { body: bobDetail }, page([carol]), first, { body: bobDetail }, page([bob]))
+    const w = await mountAt('/admin/tenants/contoso/users', TenantUsersPage)
+    const select = async () => {
+      await buttons(w, 'bob@contoso.example')[0]?.trigger('click')
+      await flushPromises()
+      expect(w.text()).toContain('Recovery codes left')
+    }
+    await select()
+    await buttons(w, 'Next')[0]?.trigger('click')
+    await flushPromises()
+    expect(w.text()).toContain('carol@contoso.example')
+    expect(w.text()).not.toContain('Recovery codes left')
+    expect(buttons(w, 'Reset password')).toHaveLength(0)
+
+    await buttons(w, 'Previous')[0]?.trigger('click')
+    await flushPromises()
+    await select()
+    await w.find('input[type=search]').setValue('bob')
+    await new Promise((r) => setTimeout(r, SEARCH_DEBOUNCE_MS + 50))
+    await flushPromises()
+    expect(w.text()).not.toContain('Recovery codes left')
+    expect(w.find('tr[aria-current]').exists()).toBe(false)
+    expect(calls.map((c) => c.url)).toEqual([
+      '/api/v1/tenants/contoso/users?limit=25',
+      '/api/v1/tenants/contoso/users/u1',
+      '/api/v1/tenants/contoso/users?limit=25&cursor=c2',
+      '/api/v1/tenants/contoso/users?limit=25',
+      '/api/v1/tenants/contoso/users/u1',
+      '/api/v1/tenants/contoso/users?limit=25&search=bob',
+    ])
+  })
+
   it('resets the password and shows it once, cleared on close', async () => {
     await signIn()
     const calls = mockFetch(
@@ -139,7 +175,7 @@ describe('TenantUsersPage', () => {
     await flushPromises()
     const post = calls.find((c) => c.method === 'POST')
     expect(post?.url).toBe('/api/v1/tenants/contoso/users/u1/reset-password')
-    expect(post?.body).toEqual({})
+    expect(post?.body).toBeUndefined()
     expect(w.find('[data-testid=secret-values]').text()).toBe('Temp-123')
     await buttons(w, 'Done')[0]?.trigger('click')
     await flushPromises()
