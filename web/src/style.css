@@ -1,5 +1,14 @@
 @import 'tailwindcss';
 
+/* Page layers, lowest first. A z-indexed element is the stacking context of everything inside
+   it: the header's menus can only beat the side nav because the header itself does. */
+:root {
+  --z-backdrop: 10;
+  --z-sidenav: 20;
+  --z-header: 30;
+  --z-menu: 10; /* inside the header */
+}
+
 @layer components {
   .btn {
     @apply inline-flex items-center justify-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-sm font-medium text-neutral-800 shadow-xs hover:bg-neutral-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100 dark:hover:bg-neutral-800;
