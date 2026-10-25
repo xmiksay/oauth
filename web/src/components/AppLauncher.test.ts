@@ -55,6 +55,39 @@ describe('AppLauncher', () => {
     expect(document.activeElement).toBe(toggle(w).element)
   })
 
+  it('leaves an Escape someone already handled, or one from a dialog, alone', async () => {
+    const { w } = await mountAt('/')
+    await toggle(w).trigger('click')
+    const escape = () => new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    const handler = (e: Event) => e.preventDefault()
+    document.body.addEventListener('keydown', handler)
+    try {
+      document.body.dispatchEvent(escape())
+    } finally {
+      document.body.removeEventListener('keydown', handler)
+    }
+    await flushPromises()
+    expect(isOpen(w)).toBe(true)
+
+    const dialog = document.body.appendChild(document.createElement('dialog'))
+    try {
+      const inner = dialog.appendChild(document.createElement('button'))
+      const e = escape()
+      inner.dispatchEvent(e)
+      await flushPromises()
+      expect(isOpen(w)).toBe(true)
+      expect(e.defaultPrevented).toBe(false)
+    } finally {
+      dialog.remove()
+    }
+
+    const e = escape()
+    document.dispatchEvent(e)
+    await flushPromises()
+    expect(isOpen(w)).toBe(false)
+    expect(e.defaultPrevented).toBe(true)
+  })
+
   it('ignores Escape while closed (focus stays put)', async () => {
     const { w } = await mountAt('/')
     const other = document.body.appendChild(document.createElement('button'))

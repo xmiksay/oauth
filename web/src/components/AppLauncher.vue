@@ -45,8 +45,12 @@ function close(refocus: boolean) {
 }
 
 // On document, not the root: focus may have left the menu (e.g. fallen to body) while it's open.
+// An Escape someone already handled, or one closing a dialog, isn't ours.
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') close(true)
+  if (e.key !== 'Escape' || e.defaultPrevented || !open.value) return
+  if (e.target instanceof Element && e.target.closest('dialog')) return
+  e.preventDefault()
+  close(true)
 }
 watch(open, (isOpen) => {
   if (isOpen) document.addEventListener('keydown', onKeydown)

@@ -156,6 +156,11 @@ async fn system_admin_finds_and_resets_a_sub_tenant_admins_password() {
         let (st, _) = call(&f.app, Method::POST, &reset, tok, Some(&body)).await;
         assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
     }
+    // A bad body's error never quotes what was sent (it may be a password).
+    let (st, out) = call(&f.app, Method::POST, &reset, tok, Some(&json!("Hunter2!"))).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{out}");
+    assert!(out["error"].is_string(), "{out}");
+    assert!(!out.to_string().contains("Hunter2"), "{out}");
     // A field is refused even without a JSON Content-Type (not read as "no body").
     let req = Request::post(&reset)
         .header(header::AUTHORIZATION, format!("Bearer {token}"))
