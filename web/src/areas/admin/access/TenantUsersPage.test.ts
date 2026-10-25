@@ -61,7 +61,7 @@ async function mountAt(path: string, component: object) {
   await router.push(path)
   const w = mount(component, { global: { plugins: [pinia, router] }, attachTo: document.body })
   await flushPromises()
-  return w
+  return Object.assign(w, { router })
 }
 
 const buttons = (w: ReturnType<typeof mount>, text: string) =>
@@ -87,6 +87,27 @@ describe('TenantUsersPage', () => {
       'GET /api/v1/tenants/contoso/users?limit=25&search=bo+b',
     ])
     expect(calls[0]?.headers.Authorization).toBe('Bearer tok')
+  })
+
+  it('follows the slug when the route is reused for another tenant', async () => {
+    await signIn()
+    const carol: User = { ...bob, id: 'u2', email: 'carol@fabrikam.example' }
+    const calls = mockFetch(page([bob]), { body: bobDetail }, page([carol]))
+    const w = await mountAt('/admin/tenants/contoso/users', TenantUsersPage)
+    await buttons(w, 'bob@contoso.example')[0]?.trigger('click')
+    await flushPromises()
+    expect(w.text()).toContain('Recovery codes left')
+    await w.router.push('/admin/tenants/fabrikam/users')
+    await flushPromises()
+    expect(calls.map((c) => c.url)).toEqual([
+      '/api/v1/tenants/contoso/users?limit=25',
+      '/api/v1/tenants/contoso/users/u1',
+      '/api/v1/tenants/fabrikam/users?limit=25',
+    ])
+    expect(w.text()).toContain('Users of fabrikam')
+    expect(w.text()).toContain('carol@fabrikam.example')
+    expect(w.text()).not.toContain('bob@contoso.example')
+    expect(w.text()).not.toContain('Recovery codes left')
   })
 
   it('resets the password and shows it once, cleared on close', async () => {

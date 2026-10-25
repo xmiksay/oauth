@@ -204,10 +204,11 @@ user (typically a tenant's own GlobalAdmin) of another tenant: unknown slug →
 are allowed; a user id not in that tenant → 404. The tenant's administrator
 protection doesn't apply (the system GlobalAdmin outranks every tenant role)
 and nothing beyond the bearer token is asked for. Each reset is audited
-twice in its transaction: in the system tenant's log (actor: the system
-admin) with `tenant_id` + `tenant_slug` added to the usual details, and in
-the target tenant's log with `actor_type: system`, `actor_id: null` and
-additionally `via: "system_admin"`, `system_admin_id`.
+twice in its transaction, both times with the system admin as actor
+(`actor_type: user`, `actor_id` = their id, as for tenant updates): in the
+system tenant's log with `tenant_id` + `tenant_slug` added to the usual
+details, and in the target tenant's log with additionally
+`via: "system_admin"`.
 
 ## Tenant settings — read: any role, `Read.All`; write: the tenant's GlobalAdmin (delegated)
 
@@ -377,7 +378,7 @@ exclusive, RFC 3339) → `AuditEvent`s.
 | `sign_in` | user (`actor_id` null for an unknown account) → user | success: `session_id`, `application_id`, `amr`; failure: `reason` (`invalid_password`, `unknown_account`, `disabled`, `mfa_failed` + `factor`; passkeys: `factor: "passkey"` + the verifier's reason, e.g. `invalid_challenge`, `foreign_credential`, `sign_count_regression`; federation: `factor: "federation"`, `idp_id` + the reason, e.g. `id_token_nonce`, `token_refused`, `unknown_kid`, `upstream_error`, `account_exists`, `not_linked`) |
 | `token.refresh_reuse`, `token.code_replay` | client app → user, failure | `family_id` / `authorization_code_id` |
 | `tenant.create`, `tenant.update` | system admin → tenant (logged in the system tenant; a system admin's `tenant.update` of another tenant is ALSO logged in that tenant's own log, in the same transaction; a tenant admin's settings change only in their own) | `slug`, `admin_user_id` / `fields`, `disabled` |
-| `user.create`, `user.update`, `user.delete`, `user.password_reset`, `user.mfa_reset`, `user.sessions_revoke` | admin or app → user (JIT federation: user → self; a system admin's reset in another tenant: system admin → user in the system log, `system` → user in the tenant's, see Tenants) | create: `email`, `password` (`generated` / `set_by_admin`), JIT: `via: "federation"`, `idp_id`; update: `fields`, `disabled`; delete: `email`; reset: `must_change_password`, `generated`; mfa reset: `passkeys_removed`, `telegram_unlinked`; by a system admin also `tenant_id`, `tenant_slug` (+ `via: "system_admin"`, `system_admin_id` in the tenant's log) |
+| `user.create`, `user.update`, `user.delete`, `user.password_reset`, `user.mfa_reset`, `user.sessions_revoke` | admin or app → user (JIT federation: user → self; a system admin's reset in another tenant: system admin → user in both the system log and the tenant's, see Tenants) | create: `email`, `password` (`generated` / `set_by_admin`), JIT: `via: "federation"`, `idp_id`; update: `fields`, `disabled`; delete: `email`; reset: `must_change_password`, `generated`; mfa reset: `passkeys_removed`, `telegram_unlinked`; by a system admin also `tenant_id`, `tenant_slug` (+ `via: "system_admin"` in the tenant's log) |
 | `user.mfa.passkey_register`, `user.mfa.passkey_rename`, `user.mfa.passkey_remove` | user → self (invite: by the link's user), admin → user (remove) | `passkey_id`, `name`, `via` (`me` / `admin` / `invite`) |
 | `user.mfa.passkey_sign_count_regression` | user → self (failure) | `via: "reauth"` |
 | `user.password_change` | user → self | `via`: `sign_in` (forced change) / `me` |
