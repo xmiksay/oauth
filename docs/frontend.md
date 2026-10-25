@@ -21,16 +21,21 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   `aria-controls`) toggling a small nav of Dashboard, My Account and Admin center (only with
   `auth.isAdmin`), the current one `aria-current="page"` with a check mark. Opening focuses the
   first entry; Escape (focus back to the button), a click outside, tabbing out or a navigation
-  closes it. Its Escape is `preventDefault()`ed: `AdminLayout` closes the mobile side nav on a
-  window `keydown` Escape (focus back to the "Toggle navigation" button) but skips a prevented
-  one or one inside a `<dialog>`, so Escape closes the launcher first and the nav stays open.
+  closes it. While open it listens for Escape on `document`, so it closes even when focus has
+  left it (e.g. fallen to `body`).
   Switching areas switches the OIDC client (`auth.use`), which drops `me`; the
   target layout's `SignedInGate` reloads it with that area's token. `GET me` reports
   `directory_roles` for any client's token, so the launcher's Admin entry is right in My
   Account too.
-- **Page layers** (`style.css` `:root`): `--z-backdrop` < `--z-sidenav` < `--z-header`, used as
-  `z-(--z-…)`, plus `--header-h` (the sticky `AppHeader`'s height, `h-(--header-h)`; the mobile
-  side nav and its backdrop start at `top-(--header-h)`). Only page-level layers belong there: a
+- **Admin side nav** (`AdminLayout`): below `md` it's an overlay toggled by `AppHeader`'s
+  "Toggle navigation" button. Only an Escape from inside `<nav id="side-nav">` closes it (focus
+  back to the toggle through `AppHeader`'s exposed `focusMenuButton()`); Escapes from the main
+  content, dialogs or the header never touch it. Crossing the `md` breakpoint (`matchMedia`
+  `change`) resets it to closed, so no stale open state reappears.
+- **Page layers and header height** (`style.css` `@theme`): `--z-index-backdrop` <
+  `--z-index-sidenav` < `--z-index-header` give the utilities `z-backdrop` / `z-sidenav` /
+  `z-header`; `--spacing-header` (the sticky `AppHeader`'s height) gives `h-header`, and the
+  mobile side nav and its backdrop start at `top-header`. Only page-level layers belong there: a
   z-indexed element is the stacking context of its children, so the header's menus sit above
   the side nav because the header does, without a z-index of their own.
 - **Login** (`areas/login`): `useLoginFlow` drives the login transaction of
