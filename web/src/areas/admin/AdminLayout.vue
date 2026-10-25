@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useTenantStore } from '@/stores/tenant'
@@ -14,6 +14,7 @@ const { isAdmin, isGlobalAdmin } = storeToRefs(auth)
 const route = useRoute()
 const menuOpen = ref(false)
 const header = ref<InstanceType<typeof AppHeader> | null>(null)
+const sideNav = ref<HTMLElement | null>(null)
 
 const nav = computed(() =>
   adminNav.filter((i) => !i.systemOnly || (slug.value === SYSTEM_TENANT && isGlobalAdmin.value)),
@@ -21,8 +22,16 @@ const nav = computed(() =>
 
 watch(() => route.fullPath, () => (menuOpen.value = false))
 
-function closeOnEscape() {
+// Into the nav on open: its Escape / Tab handling only works with focus inside it.
+watch(menuOpen, async (open) => {
+  if (!open) return
+  await nextTick()
+  sideNav.value?.querySelector<HTMLElement>('a')?.focus()
+})
+
+function closeOnEscape(e: KeyboardEvent) {
   if (!menuOpen.value) return
+  e.preventDefault()
   menuOpen.value = false
   header.value?.focusMenuButton()
 }
@@ -32,7 +41,7 @@ function closeOnEscape() {
 let wide: MediaQueryList | null = null
 const resetMenu = () => (menuOpen.value = false)
 onMounted(() => {
-  wide = window.matchMedia('(min-width: 768px)')
+  wide = window.matchMedia('(min-width: 48rem)')
   wide.addEventListener('change', resetMenu)
 })
 onUnmounted(() => wide?.removeEventListener('change', resetMenu))
@@ -79,6 +88,7 @@ onUnmounted(() => wide?.removeEventListener('change', resetMenu))
         />
         <nav
           id="side-nav"
+          ref="sideNav"
           aria-label="Admin sections"
           class="fixed top-header bottom-0 left-0 z-sidenav w-56 shrink-0 overflow-y-auto border-r border-neutral-200 bg-white p-2 md:static md:block dark:border-neutral-800 dark:bg-neutral-900"
           :class="menuOpen ? 'block' : 'hidden'"

@@ -5,7 +5,11 @@
 //! outranks every tenant role. The system tenant itself is managed through
 //! its own `/api/v1/users`.
 
-use axum::{body::Bytes, extract::State, http::StatusCode};
+use axum::{
+    body::Bytes,
+    extract::{State, rejection::BytesRejection},
+    http::StatusCode,
+};
 use entity::{tenants, users as user_entity};
 use sea_orm::{ConnectionTrait, TransactionTrait};
 use serde_json::{Map, Value, json};
@@ -67,13 +71,16 @@ pub async fn get(
 /// whitespace) is no fields; anything else must be a JSON object with no
 /// fields: the system admin can only issue a generated one-time password, so
 /// `password` / `must_change_password` are a 400, not silently ignored. (A
-/// fieldless serde struct would also accept `[]`, hence the `Map`.)
+/// fieldless serde struct would also accept `[]`, hence the `Map`.) Errors
+/// never echo serde's text: it can quote the value sent, e.g. an intended
+/// password.
 fn parse_reset_body(body: &[u8]) -> AppResult<()> {
     if body.trim_ascii().is_empty() {
         return Ok(());
     }
-    let fields: Map<String, Value> = serde_json::from_slice(body)
-        .map_err(|e| AppError::BadRequest(format!("invalid request body: {e}")))?;
+    let fields: Map<String, Value> = serde_json::from_slice(body).map_err(|_| {
+        AppError::BadRequest("the body must be empty or a JSON object without fields".into())
+    })?;
     match fields.keys().next() {
         None => Ok(()),
         Some(field) => Err(AppError::BadRequest(format!(
@@ -86,8 +93,10 @@ pub async fn reset_password(
     State(state): State<AppState>,
     SystemAdmin(caller): SystemAdmin,
     Path((slug, id)): Path<(String, Uuid)>,
-    body: Bytes,
+    body: Result<Bytes, BytesRejection>,
 ) -> AppResult<axum::Json<Value>> {
+    // Taken as a `Result` so a failed read (e.g. too large) keeps the JSON error shape.
+    let body = body.map_err(|rejection| AppError::BadRequest(rejection.body_text()))?;
     parse_reset_body(&body)?;
     let chosen = ChosenPassword::new(None, None)?;
     let txn = state.db.begin().await?;
@@ -206,6 +215,7 @@ mod tests {
             "[]",
             "{",
             "password=x",
+            r#""Hunter2!""#,
         ] {
             assert!(
                 matches!(
@@ -215,6 +225,28 @@ mod tests {
                 "{bad:?}"
             );
         }
+    }
+
+    #[test]
+    fn reset_body_errors_never_quote_values() {
+        let message = |body: &str| match parse_reset_body(body.as_bytes()) {
+            Err(AppError::BadRequest(msg)) => msg,
+            other => format!("not a 400: {other:?}"),
+        };
+        for bad in [
+            r#""Hunter2!""#,
+            r#"["Hunter2!"]"#,
+            r#"{"password":"Hunter2!"}"#,
+            "Hunter2!",
+        ] {
+            let msg = message(bad);
+            assert!(
+                !msg.contains("Hunter2") && !msg.starts_with("not a 400"),
+                "{bad:?}: {msg}"
+            );
+        }
+        let msg = message(r#"{"password":"x"}"#);
+        assert!(msg.contains("`password`"), "{msg}");
     }
 
     #[test]

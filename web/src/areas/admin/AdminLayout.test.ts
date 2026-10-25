@@ -14,13 +14,18 @@ const { default: AdminLayout } = await import('./AdminLayout.vue')
 /** jsdom has no matchMedia: one fake query whose `change` the tests fire by hand. */
 const mediaListeners = new Set<() => void>()
 const fireMediaChange = () => mediaListeners.forEach((l) => l())
+const mediaQueries: string[] = []
 
 let w: VueWrapper | null = null
 beforeEach(() => {
-  vi.stubGlobal('matchMedia', () => ({
-    addEventListener: (_: string, l: () => void) => mediaListeners.add(l),
-    removeEventListener: (_: string, l: () => void) => mediaListeners.delete(l),
-  }))
+  mediaQueries.length = 0
+  vi.stubGlobal('matchMedia', (query: string) => {
+    mediaQueries.push(query)
+    return {
+      addEventListener: (_: string, l: () => void) => mediaListeners.add(l),
+      removeEventListener: (_: string, l: () => void) => mediaListeners.delete(l),
+    }
+  })
 })
 afterEach(() => {
   w?.unmount()
@@ -62,6 +67,20 @@ async function focusAndEscape(el: HTMLElement) {
 }
 
 describe('AdminLayout', () => {
+  it('opening the side nav focuses its first link, so Escape works right away', async () => {
+    const w = await mountAdmin()
+    await navToggle(w).trigger('click')
+    await nextTick()
+    const first = w.get('#side-nav a').element
+    expect(document.activeElement).toBe(first)
+    const esc = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    first.dispatchEvent(esc)
+    await nextTick()
+    expect(esc.defaultPrevented).toBe(true)
+    expect(navOpen(w)).toBe(false)
+    expect(document.activeElement).toBe(navToggle(w).element)
+  })
+
   it('Escape inside the side nav closes it and focuses its toggle', async () => {
     const w = await mountAdmin()
     await navToggle(w).trigger('click')
@@ -106,6 +125,7 @@ describe('AdminLayout', () => {
 
   it('closes the side nav when the viewport crosses the md breakpoint', async () => {
     const layout = await mountAdmin()
+    expect(mediaQueries).toEqual(['(min-width: 48rem)'])
     await navToggle(layout).trigger('click')
     fireMediaChange()
     await nextTick()

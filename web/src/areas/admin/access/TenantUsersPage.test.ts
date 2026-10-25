@@ -119,6 +119,16 @@ describe('TenantUsersPage', () => {
     expect(w.find('tr[aria-current]').exists()).toBe(false)
   })
 
+  it('never fetches for an "undefined" tenant when navigating away', async () => {
+    await signIn()
+    const calls = mockFetch(page([bob]), page([]))
+    const w = await mountAt('/admin/tenants/contoso/users', TenantUsersPage)
+    await w.router.push('/admin/tenants')
+    await flushPromises()
+    expect(calls.map((c) => c.url)).toEqual(['/api/v1/tenants/contoso/users?limit=25'])
+    expect(w.text()).toContain('Users of contoso')
+  })
+
   it('drops the selection when the list moves to another page or search', async () => {
     await signIn()
     const carol: User = { ...bob, id: 'u2', email: 'carol@contoso.example' }

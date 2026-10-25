@@ -185,7 +185,7 @@ Additional rules:
 | `PATCH /api/v1/tenants/{slug}` | `{ display_name?, disabled?, audit_retention_days? (30–3650) }` | `Tenant` |
 | `GET /api/v1/tenants/{slug}/users` *paged* `?search=` (email, name) | – | that tenant's `User`s |
 | `GET /api/v1/tenants/{slug}/users/{id}` | – | `UserDetail` (as `GET users/{id}`) |
-| `POST /api/v1/tenants/{slug}/users/{id}/reset-password` | optional: empty, or a JSON object with no fields (`{}`), read as JSON whatever the `Content-Type`; any field or non-object / malformed body → 400 (the password is always generated) | `{ one_time_password, must_change_password: true }` — as `reset-password` without `password`: sessions, refresh tokens and opaque access tokens revoked, the user notified ("reset by a system administrator") |
+| `POST /api/v1/tenants/{slug}/users/{id}/reset-password` | optional: empty, or a JSON object with no fields (`{}`), read as JSON whatever the `Content-Type`; any field or non-object / malformed body → 400 (the password is always generated; the error names a field key at most, never a sent value) | `{ one_time_password, must_change_password: true }` — as `reset-password` without `password`: sessions, refresh tokens and opaque access tokens revoked, the user notified ("reset by a system administrator") |
 | `POST /api/v1/tenants/{slug}/users/{id}/reset-mfa` | – | 204 — as `users/{id}/reset-mfa` (notice: "second factors removed by a system administrator"), same 409 for a passkey-only user (reset the password first) |
 
 Create provisions keys, built-in apps and the first GlobalAdmin (password

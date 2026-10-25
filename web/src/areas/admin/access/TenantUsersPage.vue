@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useAuthStore } from '@/stores/auth'
@@ -9,8 +9,13 @@ import { SYSTEM_TENANT } from '../nav'
 import TenantUsersList from './TenantUsersList.vue'
 
 const route = useRoute()
-// The component is reused across /admin/tenants/:slug/users, so follow the param.
-const target = computed(() => String(route.params.slug))
+// The component is reused across /admin/tenants/:slug/users, so follow the param — but only
+// while it is a string: leaving the route drops it, which must not remount the list for "undefined".
+const slugParam = () => (typeof route.params.slug === 'string' ? route.params.slug : '')
+const target = ref(slugParam())
+watch(slugParam, (s) => {
+  if (s) target.value = s
+})
 const { slug } = storeToRefs(useTenantStore())
 const { isGlobalAdmin } = storeToRefs(useAuthStore())
 const allowed = computed(() => slug.value === SYSTEM_TENANT && isGlobalAdmin.value)
@@ -39,7 +44,7 @@ const allowed = computed(() => slug.value === SYSTEM_TENANT && isGlobalAdmin.val
     </p>
     <!-- Keyed on the slug: another tenant remounts with fresh search, cursors and selection. -->
     <TenantUsersList
-      v-else
+      v-else-if="target"
       :key="target"
       :slug="target"
     />
