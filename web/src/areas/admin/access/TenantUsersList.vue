@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { tenants } from '@/api/access'
 import type { PageQuery, User } from '@/api/types'
 import { usePagedList } from '@/composables/usePagedList'
@@ -11,6 +11,10 @@ const props = defineProps<{ slug: string }>()
 
 const list = usePagedList<User>((q: PageQuery) => tenants.users(props.slug, q))
 const selected = ref<string | null>(null)
+// A new search or page may not contain the selected user; never offer resets for one not listed.
+watch([() => list.page, () => list.search], () => {
+  selected.value = null
+})
 </script>
 
 <template>
