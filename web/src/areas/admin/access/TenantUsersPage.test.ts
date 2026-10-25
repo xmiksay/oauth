@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia, type Pinia } from 'pinia'
-import { createMemoryHistory, createRouter } from 'vue-router'
+import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
+import { h, type Component } from 'vue'
+import { adminPageKey } from '@/router/admin'
 import type { AdminUserDetail, Tenant, User } from '@/api/types'
 import { SEARCH_DEBOUNCE_MS } from '@/composables/usePagedList'
 import { FakeManager, fakeMe, fakeUser, mockFetch } from '@/test/helpers'
@@ -50,7 +52,17 @@ async function signIn(roles: AdminUserDetail['directory_roles'] = ['GlobalAdmin'
   auth.setMe(fakeMe({ directory_roles: roles }))
 }
 
-async function mountAt(path: string, component: object) {
+/** Like `AdminLayout`'s outlet: the routed page keyed by `adminPageKey`. */
+const KeyedView = {
+  render: () =>
+    h(RouterView, null, {
+      default: ({ Component: page, route }: { Component: Component; route: Parameters<typeof adminPageKey>[0] }) =>
+        h(page, { key: adminPageKey(route) }),
+    }),
+}
+
+/** Mounts `component` itself, or with `keyed` the outlet that routes to it. */
+async function mountAt(path: string, component: object, keyed = false) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -59,7 +71,7 @@ async function mountAt(path: string, component: object) {
     ],
   })
   await router.push(path)
-  const w = mount(component, { global: { plugins: [pinia, router] }, attachTo: document.body })
+  const w = mount(keyed ? KeyedView : component, { global: { plugins: [pinia, router] }, attachTo: document.body })
   await flushPromises()
   return Object.assign(w, { router })
 }
@@ -93,7 +105,7 @@ describe('TenantUsersPage', () => {
     await signIn()
     const carol: User = { ...bob, id: 'u2', email: 'carol@fabrikam.example' }
     const calls = mockFetch(page([bob]), page([bob]), { body: bobDetail }, page([carol]))
-    const w = await mountAt('/admin/tenants/contoso/users', TenantUsersPage)
+    const w = await mountAt('/admin/tenants/contoso/users', TenantUsersPage, true)
     await w.find('input[type=search]').setValue('bob')
     await new Promise((r) => setTimeout(r, SEARCH_DEBOUNCE_MS + 50))
     await flushPromises()

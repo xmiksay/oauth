@@ -1,4 +1,11 @@
-import type { RouteRecordRaw } from 'vue-router'
+import type { RouteLocationNormalizedLoaded, RouteRecordRaw } from 'vue-router'
+
+/**
+ * `AdminLayout`'s key for the routed page: the object it shows (`:id`, or a tenant's `:slug`),
+ * so moving to another one remounts the page with fresh state; lists key to ''.
+ */
+export const adminPageKey = (r: RouteLocationNormalizedLoaded) =>
+  String(r.params.id ?? r.params.slug ?? '')
 
 /** Children of `/admin`; list routes match `adminNav` names. */
 export const adminRoutes: RouteRecordRaw[] = [

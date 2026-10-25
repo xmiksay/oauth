@@ -19,7 +19,7 @@ impl<S: Send + Sync, T: DeserializeOwned> FromRequest<S> for Json<T> {
         axum::Json::<T>::from_request(req, state)
             .await
             .map(|axum::Json(value)| Self(value))
-            .map_err(|rejection| AppError::BadRequest(rejection.body_text()))
+            .map_err(|r| AppError::from_body_rejection(r.status(), r.body_text()))
     }
 }
 

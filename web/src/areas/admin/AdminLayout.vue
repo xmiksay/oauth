@@ -6,6 +6,7 @@ import { useTenantStore } from '@/stores/tenant'
 import { useAuthStore } from '@/stores/auth'
 import AppHeader from '@/components/AppHeader.vue'
 import SignedInGate from '@/components/SignedInGate.vue'
+import { adminPageKey } from '@/router/admin'
 import { adminNav, SYSTEM_TENANT } from './nav'
 
 const { slug } = storeToRefs(useTenantStore())
@@ -15,19 +16,38 @@ const route = useRoute()
 const menuOpen = ref(false)
 const header = ref<InstanceType<typeof AppHeader> | null>(null)
 const sideNav = ref<HTMLElement | null>(null)
+const mainEl = ref<HTMLElement | null>(null)
 
 const nav = computed(() =>
   adminNav.filter((i) => !i.systemOnly || (slug.value === SYSTEM_TENANT && isGlobalAdmin.value)),
 )
 
-watch(() => route.fullPath, () => (menuOpen.value = false))
+// A nav link hides the overlay it sits in, which would drop focus to body: land on the page.
+watch(
+  () => route.fullPath,
+  async () => {
+    if (!menuOpen.value) return
+    menuOpen.value = false
+    await nextTick()
+    mainEl.value?.focus()
+  },
+)
 
-// Into the nav on open: its Escape / Tab handling only works with focus inside it.
+// Into the nav on open: its Escape and focus-leave handling only work with focus inside it.
 watch(menuOpen, async (open) => {
   if (!open) return
   await nextTick()
   sideNav.value?.querySelector<HTMLElement>('a')?.focus()
 })
+
+// Focus leaving the overlay closes it, so it never hides what has focus. Not on the way to the
+// toggle (its click closes it), nor to nowhere (null: a click on the nav's own background).
+function closeOnFocusLeave(e: FocusEvent) {
+  const next = e.relatedTarget as Node | null
+  if (!menuOpen.value || !next || sideNav.value?.contains(next)) return
+  if (header.value?.isMenuButton(next)) return
+  menuOpen.value = false
+}
 
 function closeOnEscape(e: KeyboardEvent) {
   if (!menuOpen.value) return
@@ -93,6 +113,7 @@ onUnmounted(() => wide?.removeEventListener('change', resetMenu))
           class="fixed top-header bottom-0 left-0 z-sidenav w-56 shrink-0 overflow-y-auto border-r border-neutral-200 bg-white p-2 md:static md:block dark:border-neutral-800 dark:bg-neutral-900"
           :class="menuOpen ? 'block' : 'hidden'"
           @keydown.esc="closeOnEscape"
+          @focusout="closeOnFocusLeave"
         >
           <ul class="space-y-1">
             <li>
@@ -118,12 +139,16 @@ onUnmounted(() => wide?.removeEventListener('change', resetMenu))
             </li>
           </ul>
         </nav>
-        <main class="min-w-0 flex-1 p-4 sm:p-6">
-          <!-- Keyed by :id so users/A → users/B remounts the detail page (lists key to ''). -->
+        <main
+          ref="mainEl"
+          tabindex="-1"
+          class="min-w-0 flex-1 p-4 outline-none sm:p-6"
+        >
+          <!-- Keyed by the route's object (:id / :slug) so users/A → users/B remounts the page. -->
           <RouterView v-slot="{ Component, route: r }">
             <component
               :is="Component"
-              :key="String(r.params.id ?? '')"
+              :key="adminPageKey(r)"
             />
           </RouterView>
         </main>

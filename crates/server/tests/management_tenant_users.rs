@@ -157,10 +157,22 @@ async fn system_admin_finds_and_resets_a_sub_tenant_admins_password() {
         assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
     }
     // A bad body's error never quotes what was sent (it may be a password).
-    let (st, out) = call(&f.app, Method::POST, &reset, tok, Some(&json!("Hunter2!"))).await;
-    assert_eq!(st, StatusCode::BAD_REQUEST, "{out}");
-    assert!(out["error"].is_string(), "{out}");
-    assert!(!out.to_string().contains("Hunter2"), "{out}");
+    // Nor a key: someone may send their intended password as one.
+    for body in [json!("Hunter2!"), json!({ "Hunter2!": true })] {
+        let (st, out) = call(&f.app, Method::POST, &reset, tok, Some(&body)).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{out}");
+        assert!(out["error"].is_string(), "{out}");
+        assert!(!out.to_string().contains("Hunter2"), "{out}");
+    }
+    // Over axum's 2 MiB body limit: still a 413, in the JSON error shape.
+    let req = Request::post(&reset)
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::from(vec![b' '; 3 << 20]))
+        .unwrap();
+    let (st, _, out) = send(&f.app, req).await;
+    assert_eq!(st, StatusCode::PAYLOAD_TOO_LARGE, "{out}");
+    let out: Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(out["error"], "payload_too_large");
     // A field is refused even without a JSON Content-Type (not read as "no body").
     let req = Request::post(&reset)
         .header(header::AUTHORIZATION, format!("Bearer {token}"))

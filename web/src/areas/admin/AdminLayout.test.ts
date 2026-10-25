@@ -52,7 +52,7 @@ async function mountAdmin() {
   await router.push('/admin')
   w = mount(AdminLayout, { global: { plugins: [pinia, router] }, attachTo: document.body })
   await flushPromises()
-  return w
+  return Object.assign(w, { router })
 }
 
 const navToggle = (w: VueWrapper) => w.get('button[aria-label="Toggle navigation"]')
@@ -93,6 +93,9 @@ describe('AdminLayout', () => {
   it('leaves the side nav open, and focus put, on an Escape from the main content', async () => {
     const w = await mountAdmin()
     await navToggle(w).trigger('click')
+    await nextTick()
+    // Via body: focus moving straight from the nav to the content would already close it.
+    ;(document.activeElement as HTMLElement).blur()
     const input = w.get('#in-main').element as HTMLElement
     await focusAndEscape(input)
     expect(navOpen(w)).toBe(true)
@@ -112,15 +115,63 @@ describe('AdminLayout', () => {
   it('Escape with focus on body closes the app launcher but not the side nav', async () => {
     const w = await mountAdmin()
     await navToggle(w).trigger('click')
+    await nextTick()
+    // Focus to nowhere (null) keeps the nav; straight into the launcher would close it.
+    ;(document.activeElement as HTMLElement).blur()
     await launcherToggle(w).trigger('click')
+    await nextTick()
     expect(launcherOpen(w)).toBe(true)
     ;(document.activeElement as HTMLElement).blur()
     expect(document.activeElement).toBe(document.body)
+    expect(navOpen(w)).toBe(true)
 
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     await nextTick()
     expect(launcherOpen(w)).toBe(false)
     expect(navOpen(w)).toBe(true)
+  })
+
+  it('closes the side nav when focus leaves it for the main content', async () => {
+    const w = await mountAdmin()
+    await navToggle(w).trigger('click')
+    await nextTick()
+    const input = w.get('#in-main').element as HTMLElement
+    input.focus()
+    await nextTick()
+    expect(navOpen(w)).toBe(false)
+    expect(document.activeElement).toBe(input)
+  })
+
+  it('keeps the side nav open while focus moves within it or to its toggle', async () => {
+    const w = await mountAdmin()
+    await navToggle(w).trigger('click')
+    await nextTick()
+    ;(w.findAll('#side-nav a')[1]?.element as HTMLElement).focus()
+    await nextTick()
+    expect(navOpen(w)).toBe(true)
+    ;(navToggle(w).element as HTMLElement).focus()
+    await nextTick()
+    expect(navOpen(w)).toBe(true)
+  })
+
+  it('a nav link closes the overlay and moves focus to the main content', async () => {
+    const w = await mountAdmin()
+    await navToggle(w).trigger('click')
+    await nextTick()
+    await w.findAll('#side-nav a')[1]?.trigger('click')
+    await flushPromises()
+    expect(w.router.currentRoute.value.name).toBe(adminNav[0]?.name)
+    expect(navOpen(w)).toBe(false)
+    expect(document.activeElement).toBe(w.get('main').element)
+  })
+
+  it('leaves focus alone on a route change with the side nav closed', async () => {
+    const w = await mountAdmin()
+    const launcher = launcherToggle(w).element as HTMLElement
+    launcher.focus()
+    await w.router.push({ name: adminNav[0]?.name })
+    await flushPromises()
+    expect(document.activeElement).toBe(launcher)
   })
 
   it('closes the side nav when the viewport crosses the md breakpoint', async () => {

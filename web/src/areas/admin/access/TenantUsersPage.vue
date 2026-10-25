@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useAuthStore } from '@/stores/auth'
@@ -8,14 +8,10 @@ import PageHeader from '@/components/PageHeader.vue'
 import { SYSTEM_TENANT } from '../nav'
 import TenantUsersList from './TenantUsersList.vue'
 
-const route = useRoute()
-// The component is reused across /admin/tenants/:slug/users, so follow the param — but only
-// while it is a string: leaving the route drops it, which must not remount the list for "undefined".
-const slugParam = () => (typeof route.params.slug === 'string' ? route.params.slug : '')
-const target = ref(slugParam())
-watch(slugParam, (s) => {
-  if (s) target.value = s
-})
+// Read once: `AdminLayout` keys the page on the slug (`adminPageKey`), so another tenant is a
+// fresh mount with fresh search, cursors and selection, and leaving the route (which drops the
+// param) never turns into a fetch for "undefined".
+const target = String(useRoute().params.slug)
 const { slug } = storeToRefs(useTenantStore())
 const { isGlobalAdmin } = storeToRefs(useAuthStore())
 const allowed = computed(() => slug.value === SYSTEM_TENANT && isGlobalAdmin.value)
@@ -42,10 +38,8 @@ const allowed = computed(() => slug.value === SYSTEM_TENANT && isGlobalAdmin.val
     >
       Only a Global Administrator of the system tenant can manage other tenants' users.
     </p>
-    <!-- Keyed on the slug: another tenant remounts with fresh search, cursors and selection. -->
     <TenantUsersList
-      v-else-if="target"
-      :key="target"
+      v-else
       :slug="target"
     />
   </section>
