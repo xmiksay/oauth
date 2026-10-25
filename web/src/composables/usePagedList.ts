@@ -15,6 +15,9 @@ export function usePagedList<T>(fetchPage: (q: PageQuery) => Promise<Paged<T>>, 
   const cursors = ref<(string | null)[]>([null])
   const nextCursor = ref<string | null>(null)
   let seq = 0
+  // The search the latest request was sent with: a debounced change back to it is a no-op,
+  // so a caller may reset `search` and reload at once without a second request.
+  let requested: string | undefined
 
   const page = computed(() => cursors.value.length)
   const hasPrev = computed(() => cursors.value.length > 1)
@@ -24,11 +27,12 @@ export function usePagedList<T>(fetchPage: (q: PageQuery) => Promise<Paged<T>>, 
     const mine = ++seq
     loading.value = true
     error.value = null
+    requested = search.value.trim()
     try {
       const res = await fetchPage({
         limit,
         cursor: cursors.value[cursors.value.length - 1] ?? null,
-        search: search.value.trim() || undefined,
+        search: requested || undefined,
       })
       if (mine !== seq) return // a newer request (e.g. typing in search) superseded this one
       items.value = res.items
@@ -68,7 +72,9 @@ export function usePagedList<T>(fetchPage: (q: PageQuery) => Promise<Paged<T>>, 
   let debounce: ReturnType<typeof setTimeout> | undefined
   watch(search, () => {
     clearTimeout(debounce)
-    debounce = setTimeout(reload, SEARCH_DEBOUNCE_MS)
+    debounce = setTimeout(() => {
+      if (search.value.trim() !== requested) void reload()
+    }, SEARCH_DEBOUNCE_MS)
   })
   if (getCurrentScope()) onScopeDispose(() => clearTimeout(debounce))
 

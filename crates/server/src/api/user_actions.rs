@@ -6,7 +6,7 @@ use sea_orm::{
     ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, TransactionTrait,
 };
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
@@ -123,7 +123,7 @@ pub async fn apply_password_reset(
     tenant: &tenants::Model,
     user: &users::Model,
     chosen: &ChosenPassword,
-) -> AppResult<Value> {
+) -> AppResult<Map<String, Value>> {
     directory::set_password(txn, tenant.id, user.id, &chosen.value, chosen.must_change).await?;
     let facts = notify::change("reset by an administrator");
     notify::event(
@@ -135,10 +135,10 @@ pub async fn apply_password_reset(
         &facts,
     )
     .await?;
-    Ok(json!({
-        "must_change_password": chosen.must_change,
-        "generated": chosen.generated,
-    }))
+    Ok(Map::from_iter([
+        ("must_change_password".into(), json!(chosen.must_change)),
+        ("generated".into(), json!(chosen.generated)),
+    ]))
 }
 
 /// The reset-password response: the one-time password only when generated.
@@ -167,7 +167,7 @@ pub async fn reset_password(
             &txn,
             EventType::UserPasswordReset,
             Some(Target::User(id)),
-            details,
+            Value::Object(details),
         )
         .await?;
     txn.commit().await?;
@@ -186,7 +186,7 @@ pub async fn apply_mfa_reset(
     config: &Config,
     tenant: &tenants::Model,
     user: &users::Model,
-) -> AppResult<Value> {
+) -> AppResult<Map<String, Value>> {
     let methods = federation::identities::methods(txn, user).await?;
     let passkeys = methods.passkeys;
     if !methods.can_drop_passkeys() {
@@ -201,7 +201,10 @@ pub async fn apply_mfa_reset(
     let telegram_unlinked = telegram::links::unlink(txn, tenant.id, user.id).await?;
     let facts = notify::change("second factors removed by an administrator");
     notify::event(txn, config, tenant, user, NotifyEvent::MfaChanged, &facts).await?;
-    Ok(json!({ "passkeys_removed": passkeys, "telegram_unlinked": telegram_unlinked }))
+    Ok(Map::from_iter([
+        ("passkeys_removed".into(), json!(passkeys)),
+        ("telegram_unlinked".into(), json!(telegram_unlinked)),
+    ]))
 }
 
 pub async fn reset_mfa(
@@ -219,7 +222,7 @@ pub async fn reset_mfa(
             &txn,
             EventType::UserMfaReset,
             Some(Target::User(id)),
-            details,
+            Value::Object(details),
         )
         .await?;
     txn.commit().await?;

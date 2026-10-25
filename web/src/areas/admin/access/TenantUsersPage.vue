@@ -28,6 +28,9 @@ watch(
     // Leaving the route also changes the param (to undefined) before unmount.
     if (typeof next !== 'string') return
     selected.value = null
+    // The old tenant's search doesn't apply; the debounced search reload sees the reset
+    // as already requested, so this reload is the only request.
+    list.setSearch('')
     if (allowed.value) void list.reload()
   },
 )
