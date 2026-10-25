@@ -61,14 +61,14 @@ onUnmounted(() => window.removeEventListener('keydown', closeOnEscape))
       >
         <div
           v-if="menuOpen"
-          class="fixed inset-0 top-12 z-10 bg-black/30 md:hidden"
+          class="fixed inset-0 top-12 z-(--z-backdrop) bg-black/30 md:hidden"
           aria-hidden="true"
           @click="menuOpen = false"
         />
         <nav
           id="side-nav"
           aria-label="Admin sections"
-          class="fixed top-12 bottom-0 left-0 z-20 w-56 shrink-0 overflow-y-auto border-r border-neutral-200 bg-white p-2 md:static md:block dark:border-neutral-800 dark:bg-neutral-900"
+          class="fixed top-12 bottom-0 left-0 z-(--z-sidenav) w-56 shrink-0 overflow-y-auto border-r border-neutral-200 bg-white p-2 md:static md:block dark:border-neutral-800 dark:bg-neutral-900"
           :class="menuOpen ? 'block' : 'hidden'"
         >
           <ul class="space-y-1">
