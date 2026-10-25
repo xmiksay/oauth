@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useAuthStore } from '@/stores/auth'
 import AppLauncher from './AppLauncher.vue'
@@ -9,6 +10,9 @@ const emit = defineEmits<{ toggleMenu: [] }>()
 
 const auth = useAuthStore()
 const { me } = storeToRefs(auth)
+const menuButtonEl = ref<HTMLButtonElement | null>(null)
+
+defineExpose({ focusMenuButton: () => menuButtonEl.value?.focus() })
 
 async function signOut() {
   try {
@@ -22,10 +26,11 @@ async function signOut() {
 
 <template>
   <header
-    class="sticky top-0 z-(--z-header) flex h-(--header-h) items-center gap-3 border-b border-neutral-200 bg-white px-3 sm:px-4 dark:border-neutral-800 dark:bg-neutral-900"
+    class="sticky top-0 z-header flex h-header items-center gap-3 border-b border-neutral-200 bg-white px-3 sm:px-4 dark:border-neutral-800 dark:bg-neutral-900"
   >
     <button
       v-if="menuButton"
+      ref="menuButtonEl"
       type="button"
       class="btn px-2 md:hidden"
       :aria-expanded="menuOpen"

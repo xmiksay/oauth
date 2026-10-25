@@ -1,13 +1,13 @@
 @import 'tailwindcss';
 
-/* Page layers, lowest first. A z-indexed element is the stacking context of everything inside
-   it: the header's menus can only beat the side nav because the header itself does. */
-:root {
-  --z-backdrop: 10;
-  --z-sidenav: 20;
-  --z-header: 30;
-  /* The sticky header's height; the mobile side nav and its backdrop start below it. */
-  --header-h: 3rem;
+@theme {
+  /* Page layers, lowest first (`z-backdrop` …). A z-indexed element is the stacking context of
+     everything inside it: the header's menus can only beat the side nav because the header does. */
+  --z-index-backdrop: 10;
+  --z-index-sidenav: 20;
+  --z-index-header: 30;
+  /* The sticky header's height (`h-header`); the mobile side nav and its backdrop start below it. */
+  --spacing-header: 3rem;
 }
 
 @layer components {

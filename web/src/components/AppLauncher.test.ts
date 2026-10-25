@@ -44,19 +44,27 @@ describe('AppLauncher', () => {
     expect(current.map((a) => a.attributes('href'))).toEqual(['/admin'])
   })
 
-  it('marks the Escape it handles as handled, and only while open', async () => {
+  it('closes on an Escape anywhere while open, even with focus on body', async () => {
     const { w } = await mountAt('/')
-    const prevented: boolean[] = []
-    const onWindow = (e: KeyboardEvent) => prevented.push(e.defaultPrevented)
-    window.addEventListener('keydown', onWindow)
+    await toggle(w).trigger('click')
+    ;(document.activeElement as HTMLElement).blur()
+    expect(document.activeElement).toBe(document.body)
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await flushPromises()
+    expect(isOpen(w)).toBe(false)
+    expect(document.activeElement).toBe(toggle(w).element)
+  })
+
+  it('ignores Escape while closed (focus stays put)', async () => {
+    const { w } = await mountAt('/')
+    const other = document.body.appendChild(document.createElement('button'))
     try {
-      await toggle(w).trigger('click')
-      await menu(w).find('a').trigger('keydown', { key: 'Escape' })
+      other.focus()
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      expect(document.activeElement).toBe(other)
       expect(isOpen(w)).toBe(false)
-      await toggle(w).trigger('keydown', { key: 'Escape' })
-      expect(prevented).toEqual([true, false])
     } finally {
-      window.removeEventListener('keydown', onWindow)
+      other.remove()
     }
   })
 

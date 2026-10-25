@@ -13,7 +13,7 @@ const auth = useAuthStore()
 const { isAdmin, isGlobalAdmin } = storeToRefs(auth)
 const route = useRoute()
 const menuOpen = ref(false)
-const root = ref<HTMLElement | null>(null)
+const header = ref<InstanceType<typeof AppHeader> | null>(null)
 
 const nav = computed(() =>
   adminNav.filter((i) => !i.systemOnly || (slug.value === SYSTEM_TENANT && isGlobalAdmin.value)),
@@ -21,23 +21,27 @@ const nav = computed(() =>
 
 watch(() => route.fullPath, () => (menuOpen.value = false))
 
-function closeOnEscape(e: KeyboardEvent) {
-  // Someone nearer the focus handled it (the app launcher), or an open dialog owns its Escape.
-  if (e.key !== 'Escape' || !menuOpen.value || e.defaultPrevented) return
-  if (e.target instanceof Element && e.target.closest('dialog')) return
+function closeOnEscape() {
+  if (!menuOpen.value) return
   menuOpen.value = false
-  root.value?.querySelector<HTMLElement>('[aria-controls="side-nav"]')?.focus()
+  header.value?.focusMenuButton()
 }
-onMounted(() => window.addEventListener('keydown', closeOnEscape))
-onUnmounted(() => window.removeEventListener('keydown', closeOnEscape))
+
+// From md up the nav is static and `menuOpen` invisible: reset it, or the overlay reappears
+// on the way back down.
+let wide: MediaQueryList | null = null
+const resetMenu = () => (menuOpen.value = false)
+onMounted(() => {
+  wide = window.matchMedia('(min-width: 768px)')
+  wide.addEventListener('change', resetMenu)
+})
+onUnmounted(() => wide?.removeEventListener('change', resetMenu))
 </script>
 
 <template>
-  <div
-    ref="root"
-    class="flex min-h-screen flex-col"
-  >
+  <div class="flex min-h-screen flex-col">
     <AppHeader
+      ref="header"
       title="Admin center"
       :tenant="slug"
       menu-button
@@ -69,15 +73,16 @@ onUnmounted(() => window.removeEventListener('keydown', closeOnEscape))
       >
         <div
           v-if="menuOpen"
-          class="fixed inset-0 top-(--header-h) z-(--z-backdrop) bg-black/30 md:hidden"
+          class="fixed inset-0 top-header z-backdrop bg-black/30 md:hidden"
           aria-hidden="true"
           @click="menuOpen = false"
         />
         <nav
           id="side-nav"
           aria-label="Admin sections"
-          class="fixed top-(--header-h) bottom-0 left-0 z-(--z-sidenav) w-56 shrink-0 overflow-y-auto border-r border-neutral-200 bg-white p-2 md:static md:block dark:border-neutral-800 dark:bg-neutral-900"
+          class="fixed top-header bottom-0 left-0 z-sidenav w-56 shrink-0 overflow-y-auto border-r border-neutral-200 bg-white p-2 md:static md:block dark:border-neutral-800 dark:bg-neutral-900"
           :class="menuOpen ? 'block' : 'hidden'"
+          @keydown.esc="closeOnEscape"
         >
           <ul class="space-y-1">
             <li>
