@@ -45,7 +45,10 @@ function close(refocus: boolean) {
 }
 
 function onKeydown(e: KeyboardEvent) {
-  if (e.key === 'Escape') close(true)
+  if (e.key !== 'Escape' || !open.value) return
+  // Only the launcher closes, not an open side nav behind it (AdminLayout listens on window).
+  e.stopPropagation()
+  close(true)
 }
 
 function onPointerDown(e: PointerEvent) {
@@ -89,7 +92,7 @@ onUnmounted(() => document.removeEventListener('pointerdown', onPointerDown))
       v-show="open"
       id="app-launcher"
       aria-label="Apps"
-      class="absolute left-0 mt-1 w-56 rounded-md border border-neutral-200 bg-white p-1 shadow-lg dark:border-neutral-800 dark:bg-neutral-900"
+      class="absolute left-0 z-(--z-menu) mt-1 w-56 rounded-md border border-neutral-200 bg-white p-1 shadow-lg dark:border-neutral-800 dark:bg-neutral-900"
     >
       <ul>
         <li
