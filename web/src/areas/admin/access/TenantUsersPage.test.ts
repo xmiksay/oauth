@@ -100,6 +100,7 @@ describe('TenantUsersPage', () => {
     await buttons(w, 'bob@contoso.example')[0]?.trigger('click')
     await flushPromises()
     expect(w.text()).toContain('Recovery codes left')
+    expect(w.find('tr[aria-current=true]').text()).toContain('bob@contoso.example')
     await w.router.push('/admin/tenants/fabrikam/users')
     await flushPromises()
     await new Promise((r) => setTimeout(r, SEARCH_DEBOUNCE_MS + 50))
@@ -115,6 +116,7 @@ describe('TenantUsersPage', () => {
     expect(w.text()).toContain('carol@fabrikam.example')
     expect(w.text()).not.toContain('bob@contoso.example')
     expect(w.text()).not.toContain('Recovery codes left')
+    expect(w.find('tr[aria-current]').exists()).toBe(false)
   })
 
   it('resets the password and shows it once, cleared on close', async () => {

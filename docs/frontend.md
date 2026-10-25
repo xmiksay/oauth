@@ -143,8 +143,10 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
 - **Tenants** (admin `areas/admin/access/TenantsPage`, nav "Tenants": only on the system host
   for a Global Admin): list, create (first admin's one-time password via `SecretOnceDialog`),
   edit, enable / disable. Every tenant but the system one links "Users" to
-  `/admin/tenants/{slug}/users` (`TenantUsersPage`, also for disabled tenants), which lists
-  `tenants/{slug}/users` (search; disabled / "No password" badges) and, for the selected user,
+  `/admin/tenants/{slug}/users` (`TenantUsersPage`, also for disabled tenants), whose
+  `TenantUsersList` (keyed on the slug, so another tenant starts with fresh search, page and
+  selection) lists `tenants/{slug}/users` (search; disabled / "No password" badges) and, for the
+  selected user (`aria-current` row),
   `TenantUserPanel` shows directory roles and the MFA summary (`users/UserBadges`, shared with the
   user detail) with "Reset password" (temporary password shown once, held only in the panel's ref)
   and "Reset MFA" (disabled without factors; the server's 409 for passkeys without a password is

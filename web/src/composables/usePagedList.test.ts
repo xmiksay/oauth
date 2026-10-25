@@ -51,21 +51,22 @@ describe('usePagedList', () => {
     expect(list.page).toBe(1)
   })
 
-  it('skips the debounced reload when the search was already requested', async () => {
-    const fetch = pages({ items: [1], next_cursor: null }, { items: [2], next_cursor: null })
+  it('reloads page 1 with the new search when paging during the debounce', async () => {
+    const fetch = pages(
+      { items: [1], next_cursor: 'c2' },
+      { items: [2], next_cursor: null },
+      { items: [9], next_cursor: null },
+    )
     const list = usePagedList(fetch)
     await list.load()
-    list.setSearch('  ')
+    list.setSearch('an')
     await nextTick()
+    await list.next()
     vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS)
-    list.setSearch('b')
-    await nextTick()
-    list.setSearch('')
-    await list.reload()
-    vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS)
-    await nextTick()
-    expect(fetch).toHaveBeenCalledTimes(2)
-    expect(fetch.mock.calls[1]?.[0]).toMatchObject({ search: undefined })
+    await vi.waitFor(() => expect(list.items).toEqual([9]))
+    expect(fetch).toHaveBeenCalledTimes(3)
+    expect(fetch.mock.calls[2]?.[0]).toMatchObject({ cursor: null, search: 'an' })
+    expect(list.page).toBe(1)
   })
 
   it('keeps the error and clears items on failure', async () => {
