@@ -13,6 +13,7 @@ const auth = useAuthStore()
 const { isAdmin, isGlobalAdmin } = storeToRefs(auth)
 const route = useRoute()
 const menuOpen = ref(false)
+const root = ref<HTMLElement | null>(null)
 
 const nav = computed(() =>
   adminNav.filter((i) => !i.systemOnly || (slug.value === SYSTEM_TENANT && isGlobalAdmin.value)),
@@ -21,14 +22,21 @@ const nav = computed(() =>
 watch(() => route.fullPath, () => (menuOpen.value = false))
 
 function closeOnEscape(e: KeyboardEvent) {
-  if (e.key === 'Escape') menuOpen.value = false
+  // Someone nearer the focus handled it (the app launcher), or an open dialog owns its Escape.
+  if (e.key !== 'Escape' || !menuOpen.value || e.defaultPrevented) return
+  if (e.target instanceof Element && e.target.closest('dialog')) return
+  menuOpen.value = false
+  root.value?.querySelector<HTMLElement>('[aria-controls="side-nav"]')?.focus()
 }
 onMounted(() => window.addEventListener('keydown', closeOnEscape))
 onUnmounted(() => window.removeEventListener('keydown', closeOnEscape))
 </script>
 
 <template>
-  <div class="flex min-h-screen flex-col">
+  <div
+    ref="root"
+    class="flex min-h-screen flex-col"
+  >
     <AppHeader
       title="Admin center"
       :tenant="slug"
@@ -61,14 +69,14 @@ onUnmounted(() => window.removeEventListener('keydown', closeOnEscape))
       >
         <div
           v-if="menuOpen"
-          class="fixed inset-0 top-12 z-(--z-backdrop) bg-black/30 md:hidden"
+          class="fixed inset-0 top-(--header-h) z-(--z-backdrop) bg-black/30 md:hidden"
           aria-hidden="true"
           @click="menuOpen = false"
         />
         <nav
           id="side-nav"
           aria-label="Admin sections"
-          class="fixed top-12 bottom-0 left-0 z-(--z-sidenav) w-56 shrink-0 overflow-y-auto border-r border-neutral-200 bg-white p-2 md:static md:block dark:border-neutral-800 dark:bg-neutral-900"
+          class="fixed top-(--header-h) bottom-0 left-0 z-(--z-sidenav) w-56 shrink-0 overflow-y-auto border-r border-neutral-200 bg-white p-2 md:static md:block dark:border-neutral-800 dark:bg-neutral-900"
           :class="menuOpen ? 'block' : 'hidden'"
         >
           <ul class="space-y-1">

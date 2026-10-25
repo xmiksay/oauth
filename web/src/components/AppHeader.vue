@@ -22,7 +22,7 @@ async function signOut() {
 
 <template>
   <header
-    class="sticky top-0 z-(--z-header) flex h-12 items-center gap-3 border-b border-neutral-200 bg-white px-3 sm:px-4 dark:border-neutral-800 dark:bg-neutral-900"
+    class="sticky top-0 z-(--z-header) flex h-(--header-h) items-center gap-3 border-b border-neutral-200 bg-white px-3 sm:px-4 dark:border-neutral-800 dark:bg-neutral-900"
   >
     <button
       v-if="menuButton"
