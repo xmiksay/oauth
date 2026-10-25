@@ -77,22 +77,32 @@ impl Drop for Guard {
         ];
         // Drop runs inside the test's runtime, which can't be blocked on: use a
         // fresh one on its own thread. FORCE ends the test's pooled connections.
-        let dropped = std::thread::spawn(move || {
+        // Each statement on its own, so a failed database drop still drops the
+        // role; leftovers are swept by `make test-db-clean`.
+        let errors = std::thread::spawn(move || {
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .expect("runtime for dropping the test database");
             rt.block_on(async {
-                let admin = sea_orm::Database::connect(&admin_url).await?;
+                let admin = match sea_orm::Database::connect(&admin_url).await {
+                    Ok(admin) => admin,
+                    Err(e) => return vec![e.to_string()],
+                };
+                let mut errors = Vec::new();
                 for sql in &sql {
-                    admin.execute_unprepared(sql).await?;
+                    if let Err(e) = admin.execute_unprepared(sql).await {
+                        errors.push(format!("{sql}: {e}"));
+                    }
                 }
-                admin.close().await
+                let _ = admin.close().await;
+                errors
             })
         })
-        .join();
-        if !matches!(dropped, Ok(Ok(()))) {
-            eprintln!("could not drop test database {name}");
+        .join()
+        .unwrap_or_else(|_| vec!["cleanup thread panicked".into()]);
+        for e in errors {
+            eprintln!("test database {name} cleanup: {e}");
         }
     }
 }
@@ -112,8 +122,26 @@ async fn local_database(admin_url: String) -> TestDb {
     let admin = sea_orm::Database::connect(&admin_url)
         .await
         .expect("connect to TEST_DATABASE_URL");
+    let version = admin
+        .query_one_raw(sea_orm::Statement::from_string(
+            admin.get_database_backend(),
+            "SELECT current_setting('server_version_num')::int AS v",
+        ))
+        .await
+        .expect("query server version")
+        .expect("one row")
+        .try_get::<i32>("", "v")
+        .expect("server_version_num");
+    // CI runs Postgres 17: an older server's green proves nothing.
+    assert!(
+        version >= 170000,
+        "TEST_DATABASE_URL: Postgres >= 17 required, got {version}"
+    );
+    // template0: nothing the developer added to template1 leaks into tests.
     admin
-        .execute_unprepared(&format!("CREATE DATABASE \"{name}\""))
+        .execute_unprepared(&format!(
+            "CREATE DATABASE \"{name}\" TEMPLATE template0 ENCODING 'UTF8'"
+        ))
         .await
         .expect("create test database");
     admin.close().await.expect("close admin connection");
