@@ -1,7 +1,9 @@
 // Role assignments, consents, audit log, tenant settings and tenants.
 import { query } from './client'
 import { authed, p, t } from './management'
+import type { PasswordReset } from './directory'
 import type {
+  AdminUserDetail,
   AppRoleAssignment,
   AuditEvent,
   ConsentGrant,
@@ -9,6 +11,7 @@ import type {
   Paged,
   PrincipalType,
   Tenant,
+  User,
 } from './types'
 
 export const roleAssignments = {
@@ -86,4 +89,12 @@ export const tenants = {
     slug: string,
     body: { display_name?: string; disabled?: boolean; audit_retention_days?: number },
   ) => authed<Tenant>(`${TENANTS}${p`/${slug}`}`, { method: 'PATCH', body }),
+  /** Rescue a sub-tenant's users (400 for the system tenant itself). */
+  users: (slug: string, q: PageQuery = {}) =>
+    t.get<Paged<User>>(`${p`tenants/${slug}/users`}${query({ ...q })}`),
+  user: (slug: string, id: string) => t.get<AdminUserDetail>(p`tenants/${slug}/users/${id}`),
+  resetPassword: (slug: string, id: string) =>
+    t.post<PasswordReset>(p`tenants/${slug}/users/${id}/reset-password`, {}),
+  /** 409 when the user has passkeys but no password. */
+  resetMfa: (slug: string, id: string) => t.post<void>(p`tenants/${slug}/users/${id}/reset-mfa`),
 }

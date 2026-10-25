@@ -114,6 +114,13 @@ function setDisabled(t: Tenant) {
               {{ formatDate(t.created_at) }}
             </td>
             <td class="space-x-1 text-right whitespace-nowrap">
+              <RouterLink
+                v-if="!t.is_system"
+                :to="{ name: 'admin-tenant-users', params: { slug: t.slug } }"
+                class="btn"
+              >
+                Users
+              </RouterLink>
               <button
                 type="button"
                 class="btn"
