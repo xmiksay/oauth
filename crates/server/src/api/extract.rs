@@ -2,7 +2,7 @@
 //! axum's plain-text 400/404/422.
 
 use axum::{
-    extract::{FromRequest, FromRequestParts, OptionalFromRequest, Request},
+    extract::{FromRequest, FromRequestParts, Request},
     http::request::Parts,
 };
 use serde::de::DeserializeOwned;
@@ -16,22 +16,9 @@ impl<S: Send + Sync, T: DeserializeOwned> FromRequest<S> for Json<T> {
     type Rejection = AppError;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, AppError> {
-        <axum::Json<T> as FromRequest<S>>::from_request(req, state)
+        axum::Json::<T>::from_request(req, state)
             .await
             .map(|axum::Json(value)| Self(value))
-            .map_err(|rejection| AppError::BadRequest(rejection.body_text()))
-    }
-}
-
-/// `Option<Json<T>>`: no `Content-Type` is `None` (a bodyless POST); a JSON
-/// body is parsed as above.
-impl<S: Send + Sync, T: DeserializeOwned> OptionalFromRequest<S> for Json<T> {
-    type Rejection = AppError;
-
-    async fn from_request(req: Request, state: &S) -> Result<Option<Self>, AppError> {
-        <axum::Json<T> as OptionalFromRequest<S>>::from_request(req, state)
-            .await
-            .map(|body| body.map(|axum::Json(value)| Self(value)))
             .map_err(|rejection| AppError::BadRequest(rejection.body_text()))
     }
 }

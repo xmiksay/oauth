@@ -5,17 +5,16 @@
 //! outranks every tenant role. The system tenant itself is managed through
 //! its own `/api/v1/users`.
 
-use axum::{extract::State, http::StatusCode};
+use axum::{body::Bytes, extract::State, http::StatusCode};
 use entity::{tenants, users as user_entity};
 use sea_orm::{ConnectionTrait, TransactionTrait};
-use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
 use super::{
     Caller,
     auth::SystemAdmin,
-    extract::{Json, Path, Query},
+    extract::{Path, Query},
     guard::{find_user, lock_user},
     page::Paged,
     tenants::by_slug,
@@ -62,19 +61,34 @@ pub async fn get(
     Ok(axum::Json(users::full_view(&state.db, &user).await?))
 }
 
-/// Deliberately empty and optional: the system admin can only issue a
-/// one-time password, and `deny_unknown_fields` rejects `password` /
-/// `must_change_password` with a 400 instead of silently ignoring them.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ResetPassword {}
+/// The body is optional, so it is read raw: `Json` would demand a JSON
+/// `Content-Type`, and `Option<Json>` turns a body sent without one into
+/// `None`, silently dropping fields that must be refused. Empty (or
+/// whitespace) is no fields; anything else must be a JSON object with no
+/// fields: the system admin can only issue a generated one-time password, so
+/// `password` / `must_change_password` are a 400, not silently ignored. (A
+/// fieldless serde struct would also accept `[]`, hence the `Map`.)
+fn parse_reset_body(body: &[u8]) -> AppResult<()> {
+    if body.trim_ascii().is_empty() {
+        return Ok(());
+    }
+    let fields: Map<String, Value> = serde_json::from_slice(body)
+        .map_err(|e| AppError::BadRequest(format!("invalid request body: {e}")))?;
+    match fields.keys().next() {
+        None => Ok(()),
+        Some(field) => Err(AppError::BadRequest(format!(
+            "unknown field `{field}`: the password is always generated"
+        ))),
+    }
+}
 
 pub async fn reset_password(
     State(state): State<AppState>,
     SystemAdmin(caller): SystemAdmin,
     Path((slug, id)): Path<(String, Uuid)>,
-    _body: Option<Json<ResetPassword>>,
+    body: Bytes,
 ) -> AppResult<axum::Json<Value>> {
+    parse_reset_body(&body)?;
     let chosen = ChosenPassword::new(None, None)?;
     let txn = state.db.begin().await?;
     let tenant = target_tenant(&txn, &slug).await?;
@@ -177,6 +191,29 @@ mod tests {
             audit_retention_days: 90,
             created_at: now,
             updated_at: now,
+        }
+    }
+
+    #[test]
+    fn reset_body_is_empty_or_a_fieldless_object() {
+        for ok in ["", "  \n", "{}", " { } "] {
+            assert!(parse_reset_body(ok.as_bytes()).is_ok(), "{ok:?}");
+        }
+        for bad in [
+            r#"{"password":"x"}"#,
+            r#"{"must_change_password":false}"#,
+            "null",
+            "[]",
+            "{",
+            "password=x",
+        ] {
+            assert!(
+                matches!(
+                    parse_reset_body(bad.as_bytes()),
+                    Err(AppError::BadRequest(_))
+                ),
+                "{bad:?}"
+            );
         }
     }
 

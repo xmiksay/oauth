@@ -11,9 +11,13 @@
 //! their password / MFA (`/api/v1/tenants/{slug}/users` on the system host).
 mod common;
 
-use axum::http::{Method, StatusCode};
+use axum::{
+    body::Body,
+    http::{Method, Request, StatusCode, header},
+};
 use common::{
     authenticator::{Alg, Authenticator},
+    browser::send,
     flow::{Fixture, PASSWORD, T},
     mail::only_to,
     mgmt::{call, mint_app_token, mint_user_token, user_with_roles},
@@ -152,6 +156,13 @@ async fn system_admin_finds_and_resets_a_sub_tenant_admins_password() {
         let (st, _) = call(&f.app, Method::POST, &reset, tok, Some(&body)).await;
         assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
     }
+    // A field is refused even without a JSON Content-Type (not read as "no body").
+    let req = Request::post(&reset)
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::from(r#"{"password":"x"}"#))
+        .unwrap();
+    let (st, _, _) = send(&f.app, req).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
     assert!(
         events(&f, f.tenant.id, "user.password_reset", ga.id)
             .await
