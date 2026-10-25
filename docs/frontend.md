@@ -21,10 +21,18 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   `aria-controls`) toggling a small nav of Dashboard, My Account and Admin center (only with
   `auth.isAdmin`), the current one `aria-current="page"` with a check mark. Opening focuses the
   first entry; Escape (focus back to the button), a click outside, tabbing out or a navigation
-  closes it. Switching areas switches the OIDC client (`auth.use`), which drops `me`; the
+  closes it. Its Escape is `preventDefault()`ed: `AdminLayout` closes the mobile side nav on a
+  window `keydown` Escape (focus back to the "Toggle navigation" button) but skips a prevented
+  one or one inside a `<dialog>`, so Escape closes the launcher first and the nav stays open.
+  Switching areas switches the OIDC client (`auth.use`), which drops `me`; the
   target layout's `SignedInGate` reloads it with that area's token. `GET me` reports
   `directory_roles` for any client's token, so the launcher's Admin entry is right in My
   Account too.
+- **Page layers** (`style.css` `:root`): `--z-backdrop` < `--z-sidenav` < `--z-header`, used as
+  `z-(--z-…)`, plus `--header-h` (the sticky `AppHeader`'s height, `h-(--header-h)`; the mobile
+  side nav and its backdrop start at `top-(--header-h)`). Only page-level layers belong there: a
+  z-indexed element is the stacking context of its children, so the header's menus sit above
+  the side nav because the header does, without a z-index of their own.
 - **Login** (`areas/login`): `useLoginFlow` drives the login transaction of
   [api/authn.md](api/authn.md) — `GET` the step view, `POST` each step, follow
   the final `redirect` with `window.location.assign`. Same-origin `fetch` sends
