@@ -6,10 +6,10 @@
 //! its own `/api/v1/users`.
 
 use axum::{extract::State, http::StatusCode};
-use entity::tenants;
+use entity::{tenants, users as user_entity};
 use sea_orm::{ConnectionTrait, TransactionTrait};
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
 use super::{
@@ -83,7 +83,7 @@ pub async fn reset_password(
         &caller,
         &tenant,
         EventType::UserPasswordReset,
-        id,
+        &user,
         details,
     )
     .await?;
@@ -100,7 +100,15 @@ pub async fn reset_mfa(
     let tenant = target_tenant(&txn, &slug).await?;
     let user = lock_user(&txn, tenant.id, id).await?;
     let details = apply_mfa_reset(&txn, &state.config, &tenant, &user).await?;
-    audit_both(&txn, &caller, &tenant, EventType::UserMfaReset, id, details).await?;
+    audit_both(
+        &txn,
+        &caller,
+        &tenant,
+        EventType::UserMfaReset,
+        &user,
+        details,
+    )
+    .await?;
     txn.commit().await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -113,26 +121,28 @@ async fn audit_both(
     caller: &Caller,
     tenant: &tenants::Model,
     event_type: EventType,
-    user_id: Uuid,
-    details: Value,
+    user: &user_entity::Model,
+    details: Map<String, Value>,
 ) -> AppResult<()> {
-    let (own, theirs) = cross_tenant_details(details, tenant);
-    let target = Some(Target::User(user_id));
+    let (own, theirs) = cross_tenant_details(details, tenant, &user.email);
+    let target = Some(Target::User(user.id));
     caller.audit(txn, event_type, target, own).await?;
     caller
         .audit_in(txn, tenant.id, event_type, target, theirs)
         .await
 }
 
-/// `details` for the system tenant's log (plus the target tenant) and for
-/// the target tenant's log (plus `via: "system_admin"`).
-fn cross_tenant_details(details: Value, tenant: &tenants::Model) -> (Value, Value) {
-    let mut own = match details {
-        Value::Object(map) => map,
-        _ => serde_json::Map::new(),
-    };
+/// `details` for the system tenant's log (plus the target tenant and the
+/// user's `email`: that log can't resolve a foreign tenant's user id) and
+/// for the target tenant's log (the same plus `via: "system_admin"`).
+fn cross_tenant_details(
+    mut own: Map<String, Value>,
+    tenant: &tenants::Model,
+    email: &str,
+) -> (Value, Value) {
     own.insert("tenant_id".into(), json!(tenant.id));
     own.insert("tenant_slug".into(), json!(tenant.slug));
+    own.insert("email".into(), json!(email));
     let mut theirs = own.clone();
     theirs.insert("via".into(), json!("system_admin"));
     (Value::Object(own), Value::Object(theirs))
@@ -157,35 +167,23 @@ mod tests {
     }
 
     #[test]
-    fn details_name_the_tenant_and_via_only_in_the_target_log() {
+    fn details_name_the_tenant_and_user_and_via_only_in_the_target_log() {
         let t = tenant();
-        let base = json!({ "must_change_password": true, "generated": true });
-        let (own, theirs) = cross_tenant_details(base, &t);
-        assert_eq!(
-            own,
-            json!({
-                "must_change_password": true,
-                "generated": true,
-                "tenant_id": t.id,
-                "tenant_slug": "fabrikam",
-            })
-        );
-        assert_eq!(
-            theirs,
-            json!({
-                "must_change_password": true,
-                "generated": true,
-                "tenant_id": t.id,
-                "tenant_slug": "fabrikam",
-                "via": "system_admin",
-            })
-        );
-    }
-
-    #[test]
-    fn non_object_details_start_empty() {
-        let t = tenant();
-        let (own, _) = cross_tenant_details(Value::Null, &t);
-        assert_eq!(own, json!({ "tenant_id": t.id, "tenant_slug": "fabrikam" }));
+        let base = Map::from_iter([
+            ("must_change_password".into(), json!(true)),
+            ("generated".into(), json!(true)),
+        ]);
+        let (own, theirs) = cross_tenant_details(base, &t, "ann@fabrikam.test");
+        let expected = json!({
+            "must_change_password": true,
+            "generated": true,
+            "tenant_id": t.id,
+            "tenant_slug": "fabrikam",
+            "email": "ann@fabrikam.test",
+        });
+        assert_eq!(own, expected);
+        let mut with_via = expected;
+        with_via["via"] = json!("system_admin");
+        assert_eq!(theirs, with_via);
     }
 }

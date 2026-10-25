@@ -51,6 +51,23 @@ describe('usePagedList', () => {
     expect(list.page).toBe(1)
   })
 
+  it('skips the debounced reload when the search was already requested', async () => {
+    const fetch = pages({ items: [1], next_cursor: null }, { items: [2], next_cursor: null })
+    const list = usePagedList(fetch)
+    await list.load()
+    list.setSearch('  ')
+    await nextTick()
+    vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS)
+    list.setSearch('b')
+    await nextTick()
+    list.setSearch('')
+    await list.reload()
+    vi.advanceTimersByTime(SEARCH_DEBOUNCE_MS)
+    await nextTick()
+    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(fetch.mock.calls[1]?.[0]).toMatchObject({ search: undefined })
+  })
+
   it('keeps the error and clears items on failure', async () => {
     const list = usePagedList(pages())
     await list.load()
