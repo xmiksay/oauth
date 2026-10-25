@@ -49,12 +49,22 @@ function closeOnFocusLeave(e: FocusEvent) {
   menuOpen.value = false
 }
 
+// The one Escape path: on window, so focus fallen to body (a tap on the nav's background) still
+// closes it, and after document's listeners, so an Escape the open app launcher took (prevented)
+// isn't ours too. Escapes from the main content, the header or a dialog never touch it.
 function closeOnEscape(e: KeyboardEvent) {
-  if (!menuOpen.value) return
+  if (e.key !== 'Escape' || e.defaultPrevented || !menuOpen.value) return
+  if (e.target instanceof Element && e.target.closest('dialog')) return
+  const active = document.activeElement
+  if (active && active !== document.body && !sideNav.value?.contains(active)) return
   e.preventDefault()
   menuOpen.value = false
   header.value?.focusMenuButton()
 }
+watch(menuOpen, (open) => {
+  if (open) window.addEventListener('keydown', closeOnEscape)
+  else window.removeEventListener('keydown', closeOnEscape)
+})
 
 // From md up the nav is static and `menuOpen` invisible: reset it, or the overlay reappears
 // on the way back down.
@@ -64,7 +74,10 @@ onMounted(() => {
   wide = window.matchMedia('(min-width: 48rem)')
   wide.addEventListener('change', resetMenu)
 })
-onUnmounted(() => wide?.removeEventListener('change', resetMenu))
+onUnmounted(() => {
+  wide?.removeEventListener('change', resetMenu)
+  window.removeEventListener('keydown', closeOnEscape)
+})
 </script>
 
 <template>
@@ -112,7 +125,6 @@ onUnmounted(() => wide?.removeEventListener('change', resetMenu))
           aria-label="Admin sections"
           class="fixed top-header bottom-0 left-0 z-sidenav w-56 shrink-0 overflow-y-auto border-r border-neutral-200 bg-white p-2 md:static md:block dark:border-neutral-800 dark:bg-neutral-900"
           :class="menuOpen ? 'block' : 'hidden'"
-          @keydown.esc="closeOnEscape"
           @focusout="closeOnFocusLeave"
         >
           <ul class="space-y-1">

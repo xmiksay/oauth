@@ -90,6 +90,20 @@ describe('AdminLayout', () => {
     expect(document.activeElement).toBe(navToggle(w).element)
   })
 
+  it('Escape on document with focus fallen to body closes the side nav', async () => {
+    const w = await mountAdmin()
+    await navToggle(w).trigger('click')
+    await nextTick()
+    ;(document.activeElement as HTMLElement).blur()
+    expect(document.activeElement).toBe(document.body)
+    const esc = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    document.dispatchEvent(esc)
+    await nextTick()
+    expect(esc.defaultPrevented).toBe(true)
+    expect(navOpen(w)).toBe(false)
+    expect(document.activeElement).toBe(navToggle(w).element)
+  })
+
   it('leaves the side nav open, and focus put, on an Escape from the main content', async () => {
     const w = await mountAdmin()
     await navToggle(w).trigger('click')

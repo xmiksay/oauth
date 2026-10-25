@@ -11,10 +11,14 @@ const props = defineProps<{ slug: string }>()
 
 const list = usePagedList<User>((q: PageQuery) => tenants.users(props.slug, q))
 const selected = ref<string | null>(null)
-// A new search or page may not contain the selected user; never offer resets for one not listed.
-watch([() => list.page, () => list.search], () => {
-  selected.value = null
-})
+// Never offer resets for a user not listed: after every load, keep the selection only if the
+// new items still hold it (a click during a search's debounce must not outlive its reload).
+watch(
+  () => list.items,
+  (items) => {
+    if (selected.value && !items.some((u) => u.id === selected.value)) selected.value = null
+  },
+)
 </script>
 
 <template>

@@ -28,9 +28,11 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   `directory_roles` for any client's token, so the launcher's Admin entry is right in My
   Account too.
 - **Admin side nav** (`AdminLayout`): below `md` it's an overlay toggled by `AppHeader`'s
-  "Toggle navigation" button. Only an Escape from inside `<nav id="side-nav">` closes it (focus
-  back to the toggle through `AppHeader`'s exposed `focusMenuButton()`); Escapes from the main
-  content, dialogs or the header never touch it. Crossing the `md` breakpoint (`matchMedia`
+  "Toggle navigation" button. While open it listens for Escape on `window` (after `document`'s
+  listeners, so one the app launcher took, `defaultPrevented`, isn't its too) and closes on one
+  with focus inside `<nav id="side-nav">` or fallen to `body` (e.g. a tap on the nav's
+  background), focus back to the toggle through `AppHeader`'s exposed `focusMenuButton()`;
+  Escapes from the main content, dialogs or the header never touch it. Crossing the `md` breakpoint (`matchMedia`
   `change`) resets it to closed, so no stale open state reappears.
 - **Page layers and header height** (`style.css` `@theme`): `--z-index-backdrop` <
   `--z-index-sidenav` < `--z-index-header` give the utilities `z-backdrop` / `z-sidenav` /
@@ -146,7 +148,7 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   `/admin/tenants/{slug}/users` (`TenantUsersPage`, also for disabled tenants), whose
   `TenantUsersList` (keyed on the slug, so another tenant starts with fresh search, page and
   selection) lists `tenants/{slug}/users` (search; disabled / "No password" badges) and, for the
-  selected user (`aria-current` row),
+  selected user (`aria-current` row; dropped by any load whose items no longer list it),
   `TenantUserPanel` shows directory roles and the MFA summary (`users/UserBadges`, shared with the
   user detail) with "Reset password" (temporary password shown once, held only in the panel's ref)
   and "Reset MFA" (disabled without factors; the server's 409 for passkeys without a password is
@@ -193,7 +195,7 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   `types.ts` (WebAuthn wire shapes in `webauthnTypes.ts`, re-exported by it). Leaving the SPA (an app's redirect URI, an identity provider) goes through
   `lib/navigate` (`navigateTo`, `isWebUrl`: never follow a non-http(s) URL a server sends).
   Lists page with `usePagedList` (cursor stack over `next_cursor`, debounced
-  search).
+  search; Next / Previous while a search change waits reload page 1 with it instead).
 - UI hides actions the caller's directory roles (`GET me`) can't perform and
   shows the server's `403` for the rest. One-time secrets (passwords, client
   secrets, recovery codes) are shown only in `SecretOnceDialog` from
