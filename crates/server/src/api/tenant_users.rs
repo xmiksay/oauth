@@ -73,7 +73,7 @@ pub async fn get(
 /// `password` / `must_change_password` are a 400, not silently ignored. (A
 /// fieldless serde struct would also accept `[]`, hence the `Map`.) Errors
 /// never echo serde's text: it can quote the value sent, e.g. an intended
-/// password.
+/// password — nor a field name, which could be one too.
 fn parse_reset_body(body: &[u8]) -> AppResult<()> {
     if body.trim_ascii().is_empty() {
         return Ok(());
@@ -81,11 +81,12 @@ fn parse_reset_body(body: &[u8]) -> AppResult<()> {
     let fields: Map<String, Value> = serde_json::from_slice(body).map_err(|_| {
         AppError::BadRequest("the body must be empty or a JSON object without fields".into())
     })?;
-    match fields.keys().next() {
-        None => Ok(()),
-        Some(field) => Err(AppError::BadRequest(format!(
-            "unknown field `{field}`: the password is always generated"
-        ))),
+    if fields.is_empty() {
+        Ok(())
+    } else {
+        Err(AppError::BadRequest(
+            "fields are not accepted: the password is always generated".into(),
+        ))
     }
 }
 
@@ -95,8 +96,8 @@ pub async fn reset_password(
     Path((slug, id)): Path<(String, Uuid)>,
     body: Result<Bytes, BytesRejection>,
 ) -> AppResult<axum::Json<Value>> {
-    // Taken as a `Result` so a failed read (e.g. too large) keeps the JSON error shape.
-    let body = body.map_err(|rejection| AppError::BadRequest(rejection.body_text()))?;
+    // Taken as a `Result` so a failed read (e.g. a 413) keeps the JSON error shape.
+    let body = body.map_err(|r| AppError::from_body_rejection(r.status(), r.body_text()))?;
     parse_reset_body(&body)?;
     let chosen = ChosenPassword::new(None, None)?;
     let txn = state.db.begin().await?;
@@ -237,6 +238,7 @@ mod tests {
             r#""Hunter2!""#,
             r#"["Hunter2!"]"#,
             r#"{"password":"Hunter2!"}"#,
+            r#"{"Hunter2!":true}"#,
             "Hunter2!",
         ] {
             let msg = message(bad);
@@ -245,8 +247,10 @@ mod tests {
                 "{bad:?}: {msg}"
             );
         }
-        let msg = message(r#"{"password":"x"}"#);
-        assert!(msg.contains("`password`"), "{msg}");
+        assert_eq!(
+            message(r#"{"password":"x"}"#),
+            "fields are not accepted: the password is always generated"
+        );
     }
 
     #[test]

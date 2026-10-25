@@ -20,6 +20,9 @@ pub enum AppError {
     Forbidden(String),
     #[error("not found")]
     NotFound,
+    /// The request body is over the size limit.
+    #[error("payload too large")]
+    PayloadTooLarge,
     /// The resource already exists (e.g. duplicate slug or email).
     #[error("conflict: {0}")]
     Conflict(String),
@@ -36,12 +39,22 @@ pub enum AppError {
 pub type AppResult<T> = Result<T, AppError>;
 
 impl AppError {
+    /// An axum body / JSON rejection, keeping a 413 a 413 (everything else is a 400).
+    pub fn from_body_rejection(status: StatusCode, text: String) -> Self {
+        if status == StatusCode::PAYLOAD_TOO_LARGE {
+            Self::PayloadTooLarge
+        } else {
+            Self::BadRequest(text)
+        }
+    }
+
     fn status_and_code(&self) -> (StatusCode, &'static str) {
         match self {
             Self::BadRequest(_) => (StatusCode::BAD_REQUEST, "invalid_request"),
             Self::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "invalid_token"),
             Self::Forbidden(_) => (StatusCode::FORBIDDEN, "forbidden"),
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
+            Self::PayloadTooLarge => (StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large"),
             Self::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
             Self::RateLimited { .. } => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
             Self::Unavailable => (StatusCode::SERVICE_UNAVAILABLE, "temporarily_unavailable"),
@@ -58,6 +71,7 @@ impl AppError {
             | Self::Unauthorized(msg)
             | Self::Forbidden(msg) => msg.clone(),
             Self::NotFound => "resource not found".into(),
+            Self::PayloadTooLarge => "request body too large".into(),
             Self::RateLimited { .. } => "too many attempts; retry later".into(),
             Self::Unavailable => "service temporarily unavailable".into(),
             Self::Database(_) | Self::Internal(_) => "internal server error".into(),
@@ -151,5 +165,19 @@ mod tests {
         assert_eq!(status, StatusCode::NOT_FOUND);
         let (status, _) = render(AppError::Unavailable).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn body_rejections_keep_a_413() {
+        let err = AppError::from_body_rejection(StatusCode::PAYLOAD_TOO_LARGE, "len 9".into());
+        let (status, body) = render(err).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(body["error"], "payload_too_large");
+        assert_eq!(body["error_description"], "request body too large");
+
+        let err = AppError::from_body_rejection(StatusCode::UNSUPPORTED_MEDIA_TYPE, "json".into());
+        let (status, body) = render(err).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body["error_description"], "json");
     }
 }

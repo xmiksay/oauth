@@ -12,7 +12,10 @@ const auth = useAuthStore()
 const { me } = storeToRefs(auth)
 const menuButtonEl = ref<HTMLButtonElement | null>(null)
 
-defineExpose({ focusMenuButton: () => menuButtonEl.value?.focus() })
+defineExpose({
+  focusMenuButton: () => menuButtonEl.value?.focus(),
+  isMenuButton: (n: Node) => !!menuButtonEl.value?.contains(n),
+})
 
 async function signOut() {
   try {
