@@ -26,7 +26,7 @@ NVM = want=$$(cat .nvmrc); have=$$(node --version 2>/dev/null | sed 's/^v\([0-9]
 DOTENV = set -a; [ -f .env ] && . ./.env; set +a;
 
 .PHONY: help build run dev-db web-dev lint lint-rust lint-web fmt test test-unit \
-	test-integration web-test web-build docker bootstrap telegram-webhook clean
+	test-integration test-db-clean web-test web-build docker bootstrap telegram-webhook clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -80,6 +80,13 @@ bootstrap: ## Create system tenant + Global Admin (idempotent): make bootstrap A
 
 telegram-webhook: ## Register {PUBLIC_URL}/telegram/webhook with the Telegram bot (loads .env; needs TELEGRAM_*)
 	$(DOTENV) cargo run -- telegram set-webhook
+
+test-db-clean: ## Drop oauth_it_* databases and roles left on TEST_DATABASE_URL by killed test runs
+	@[ -n "$$TEST_DATABASE_URL" ] || { echo "TEST_DATABASE_URL is empty" >&2; exit 1; }
+	psql "$$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -qAt \
+	  -c "SELECT format('DROP DATABASE %I WITH (FORCE)', datname) FROM pg_database WHERE datname LIKE 'oauth\\_it\\_%'" \
+	  -c "SELECT format('DROP ROLE %I', rolname) FROM pg_roles WHERE rolname LIKE 'oauth\\_it\\_%'" \
+	  | psql "$$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -q
 
 clean: ## Remove build artifacts
 	cargo clean

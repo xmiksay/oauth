@@ -39,10 +39,15 @@ asked to choose a new one). A tenant created there, say `acme`, is at
 <http://acme.localhost:5173/admin>; its issuer is `http://acme.localhost:5173`.
 
 `make help` lists all targets. Before pushing: `make lint && make test`
-(integration tests create one database per test on a local Postgres ≥ 17,
-`TEST_DATABASE_URL`, default `postgres://postgres@localhost:5432/postgres`, a
-role allowed to create databases; `TEST_DATABASE_URL=` (empty) starts a
-testcontainers Postgres 17 instead, which needs Docker — CI does that).
+(integration tests create one database — and for one test a login role — per
+test on the Postgres ≥ 17 at `TEST_DATABASE_URL`, default
+`postgres://postgres@localhost:5432/postgres`: a TCP URL of a superuser (it
+creates and force-drops databases and roles). With `make dev-db` instead, use
+`TEST_DATABASE_URL=postgres://oauth:oauth@127.0.0.1:5432/oauth make test`.
+Tests run in parallel against one server, so keep `max_connections` at the
+default 100 or more. `make test-db-clean` drops what killed runs left behind.
+`TEST_DATABASE_URL=` (empty) starts a testcontainers Postgres 17 per test
+instead, which needs Docker — CI does that).
 
 ## Web UI
 
