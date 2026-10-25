@@ -83,7 +83,7 @@ telegram-webhook: ## Register {PUBLIC_URL}/telegram/webhook with the Telegram bo
 
 test-db-clean: ## Drop oauth_it_* databases and roles left on TEST_DATABASE_URL by killed runs (not while tests run)
 	@[ -n "$$TEST_DATABASE_URL" ] || { echo "TEST_DATABASE_URL is empty" >&2; exit 1; }
-	psql "$$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -qAt \
+	set -o pipefail; psql "$$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -qAt \
 	  -c "SELECT format('DROP DATABASE IF EXISTS %I WITH (FORCE);', datname) FROM pg_database WHERE datname LIKE 'oauth\\_it\\_%'" \
 	  -c "SELECT format('DROP ROLE IF EXISTS %I;', rolname) FROM pg_roles WHERE rolname LIKE 'oauth\\_it\\_%'" \
 	  | psql "$$TEST_DATABASE_URL" -v ON_ERROR_STOP=1 -q

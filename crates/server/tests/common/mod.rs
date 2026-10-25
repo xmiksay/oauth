@@ -125,47 +125,12 @@ pub async fn start_postgres() -> TestDb {
 }
 
 async fn local_database(admin_url: String, name: String) -> TestDb {
-    // Parsed before anything is created, so a bad URL leaks nothing.
-    let mut url = url::Url::parse(&admin_url).expect("TEST_DATABASE_URL is a URL");
-    assert!(
-        url.has_host(),
-        "TEST_DATABASE_URL must be a TCP URL (postgres://user@host:port/db)"
-    );
-    url.set_path(&name);
-    let admin = sea_orm::Database::connect(&admin_url)
-        .await
-        .expect("connect to TEST_DATABASE_URL");
-    let version = admin
-        .query_one_raw(sea_orm::Statement::from_string(
-            admin.get_database_backend(),
-            "SELECT current_setting('server_version_num')::int AS v",
-        ))
-        .await
-        .expect("query server version")
-        .expect("one row")
-        .try_get::<i32>("", "v")
-        .expect("server_version_num");
-    // CI runs Postgres 17: an older server's green proves nothing.
-    assert!(
-        version >= 170000,
-        "TEST_DATABASE_URL: Postgres >= 17 required, got {version}"
-    );
-    // template0: nothing the developer added to template1 leaks into tests;
-    // LOCALE 'C': byte-order collation like CI's musl-based postgres:17-alpine.
-    admin
-        .execute_unprepared(&format!(
-            "CREATE DATABASE \"{name}\" TEMPLATE template0 ENCODING 'UTF8' LOCALE 'C'"
-        ))
-        .await
-        .expect("create test database");
-    // From here on the guard drops the database, whatever panics next.
-    let db = TestDb {
-        url: url.into(),
+    let url = create_database(&admin_url, &name).await;
+    TestDb {
+        url,
         role: name.clone(),
         _guard: Guard::Local { admin_url, name },
-    };
-    admin.close().await.expect("close admin connection");
-    db
+    }
 }
 
 async fn container(name: String) -> TestDb {
@@ -178,11 +143,57 @@ async fn container(name: String) -> TestDb {
         .get_host_port_ipv4(5432)
         .await
         .expect("postgres host port");
+    // The same fresh database as locally, so both modes test the same thing;
+    // it goes away with the container.
+    let admin_url = format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres");
     TestDb {
-        url: format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres"),
+        url: create_database(&admin_url, &name).await,
         role: name,
         _guard: Guard::Container(Box::new(container)),
     }
+}
+
+/// Creates database `name` on the server `admin_url` reaches and returns its URL.
+async fn create_database(admin_url: &str, name: &str) -> String {
+    // Parsed before anything is created, so a bad URL leaks nothing.
+    let mut url = url::Url::parse(admin_url).expect("database URL");
+    assert!(
+        url.has_host(),
+        "TEST_DATABASE_URL must be a TCP URL (postgres://user@host:port/db)"
+    );
+    url.set_path(name);
+    let admin = sea_orm::Database::connect(admin_url)
+        .await
+        .expect("connect to TEST_DATABASE_URL");
+    let version = admin
+        .query_one_raw(sea_orm::Statement::from_string(
+            admin.get_database_backend(),
+            "SELECT current_setting('server_version_num')::int AS v",
+        ))
+        .await
+        .expect("query server version")
+        .expect("one row")
+        .try_get::<i32>("", "v")
+        .expect("server_version_num");
+    // CI runs Postgres 17 (and the builtin locale below needs it).
+    assert!(
+        version >= 170000,
+        "TEST_DATABASE_URL: Postgres >= 17 required, got {version}"
+    );
+    // template0: nothing the developer added to template1 leaks in. Builtin
+    // C.UTF-8 (explicit provider, whatever the cluster's default): byte-order
+    // collation but Unicode case mapping, so lower() / ILIKE fold `Ž` as in
+    // production, identically on every server.
+    admin
+        .execute_unprepared(&format!(
+            "CREATE DATABASE \"{name}\" TEMPLATE template0 ENCODING 'UTF8' \
+             LOCALE_PROVIDER builtin BUILTIN_LOCALE 'C.UTF-8'"
+        ))
+        .await
+        .expect("create test database");
+    // Created: the caller's guard owns it now, so don't panic past this point.
+    let _ = admin.close().await;
+    url.into()
 }
 
 pub async fn get(app: &Router, uri: &str) -> (StatusCode, String) {
