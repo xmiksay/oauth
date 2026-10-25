@@ -44,18 +44,17 @@ describe('AppLauncher', () => {
     expect(current.map((a) => a.attributes('href'))).toEqual(['/admin'])
   })
 
-  it('keeps its Escape from closing what is behind it, but only while open', async () => {
+  it('marks the Escape it handles as handled, and only while open', async () => {
     const { w } = await mountAt('/')
-    const seen: string[] = []
-    const onWindow = (e: KeyboardEvent) => seen.push(e.key)
+    const prevented: boolean[] = []
+    const onWindow = (e: KeyboardEvent) => prevented.push(e.defaultPrevented)
     window.addEventListener('keydown', onWindow)
     try {
       await toggle(w).trigger('click')
       await menu(w).find('a').trigger('keydown', { key: 'Escape' })
       expect(isOpen(w)).toBe(false)
-      expect(seen).toEqual([])
       await toggle(w).trigger('keydown', { key: 'Escape' })
-      expect(seen).toEqual(['Escape'])
+      expect(prevented).toEqual([true, false])
     } finally {
       window.removeEventListener('keydown', onWindow)
     }

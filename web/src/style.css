@@ -6,7 +6,8 @@
   --z-backdrop: 10;
   --z-sidenav: 20;
   --z-header: 30;
-  --z-menu: 10; /* inside the header */
+  /* The sticky header's height; the mobile side nav and its backdrop start below it. */
+  --header-h: 3rem;
 }
 
 @layer components {
