@@ -44,12 +44,14 @@ function close(refocus: boolean) {
   if (refocus) toggle.value?.focus()
 }
 
+// On document, not the root: focus may have left the menu (e.g. fallen to body) while it's open.
 function onKeydown(e: KeyboardEvent) {
-  if (e.key !== 'Escape' || !open.value) return
-  // Handled: AdminLayout's window listener skips a prevented Escape, so its side nav stays open.
-  e.preventDefault()
-  close(true)
+  if (e.key === 'Escape') close(true)
 }
+watch(open, (isOpen) => {
+  if (isOpen) document.addEventListener('keydown', onKeydown)
+  else document.removeEventListener('keydown', onKeydown)
+})
 
 function onPointerDown(e: PointerEvent) {
   if (!root.value?.contains(e.target as Node)) close(false)
@@ -62,14 +64,16 @@ function onFocusOut(e: FocusEvent) {
 }
 
 onMounted(() => document.addEventListener('pointerdown', onPointerDown))
-onUnmounted(() => document.removeEventListener('pointerdown', onPointerDown))
+onUnmounted(() => {
+  document.removeEventListener('pointerdown', onPointerDown)
+  document.removeEventListener('keydown', onKeydown)
+})
 </script>
 
 <template>
   <div
     ref="root"
     class="relative"
-    @keydown="onKeydown"
     @focusout="onFocusOut"
   >
     <button
