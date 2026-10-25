@@ -21,6 +21,8 @@ async function signOut() {
 </script>
 
 <template>
+  <!-- A z-indexed sticky header is the stacking context of its menus (the launcher):
+       it must stay above the admin side nav and its backdrop (AdminLayout). -->
   <header
     class="sticky top-0 z-30 flex h-12 items-center gap-3 border-b border-neutral-200 bg-white px-3 sm:px-4 dark:border-neutral-800 dark:bg-neutral-900"
   >
