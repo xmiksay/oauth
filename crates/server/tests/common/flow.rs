@@ -36,7 +36,6 @@ pub const SPA_CB: &str = "http://127.0.0.1/cb";
 pub const TOTP_SECRET: &[u8] = b"12345678901234567890";
 
 pub struct Fixture {
-    pub _pg: TestDb,
     pub db: DatabaseConnection,
     pub config: Config,
     pub app: Router,
@@ -61,6 +60,9 @@ pub struct Fixture {
     pub detached: std::sync::Arc<tokio::sync::Semaphore>,
     /// The fake Bot API, for Telegram-enabled fixtures.
     pub bot: Option<super::telegram::FakeBot>,
+    /// Last: fields drop in order, so the pool and app state go before the
+    /// database is force-dropped.
+    pub _pg: TestDb,
 }
 
 impl Fixture {

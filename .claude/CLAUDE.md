@@ -34,7 +34,8 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
 | `make fmt` | `cargo fmt` |
 | `make test` | `test-unit` + `test-integration` + `web-test` |
 | `make test-unit` | `cargo test --workspace --lib --bins` |
-| `make test-integration` | `cargo test --workspace --test '*'`: one fresh database per test on `TEST_DATABASE_URL` (default the local `postgres://postgres@localhost:5432/postgres`: a TCP superuser URL, Postgres ≥ 17; dropped after the test, `make test-db-clean` sweeps leftovers); `TEST_DATABASE_URL=` (empty) → testcontainers Postgres 17 (Docker; what CI runs) |
+| `make test-integration` | `cargo test --workspace --test '*'`: one fresh database per test on `TEST_DATABASE_URL` (default the local `postgres://postgres@localhost:5432/postgres`: a TCP superuser URL, Postgres ≥ 17; dropped after the test); `TEST_DATABASE_URL=` (empty) → testcontainers Postgres 17 (Docker; what CI runs) |
+| `make test-db-clean` | drop `oauth_it_*` databases and roles that killed test runs left on `TEST_DATABASE_URL` — only while no tests run (it drops live ones too) |
 | `make docker` | build image (`IMAGE=` to override tag) |
 | `make bootstrap ADMIN_EMAIL=… [RESET=1]` | migrate, then create `system` tenant + Global Admin (idempotent; `RESET=1` issues a new one-time password) |
 | `make telegram-webhook` | `oauth telegram set-webhook`: register `{PUBLIC_URL}/telegram/webhook` + secret with the bot (loads `.env`) |

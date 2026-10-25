@@ -46,14 +46,19 @@ impl TestDb {
             .await
             .expect("connect as admin");
         let role = &self.role;
+        // Random: a role left by a killed run must not be a known login.
+        let password = oauth_server::secret::random_token().expect("random password");
         admin
-            .execute_unprepared(&format!("CREATE ROLE \"{role}\" LOGIN PASSWORD '{role}'"))
+            .execute_unprepared(&format!(
+                "CREATE ROLE \"{role}\" LOGIN PASSWORD '{password}'"
+            ))
             .await
             .expect("create login role");
         admin.close().await.expect("close admin connection");
         let mut url = url::Url::parse(&self.url).expect("test database URL");
         url.set_username(role).expect("URL takes a username");
-        url.set_password(Some(role)).expect("URL takes a password");
+        url.set_password(Some(&password))
+            .expect("URL takes a password");
         url.into()
     }
 }
@@ -111,14 +116,22 @@ impl Drop for Guard {
 /// connection, e.g. `postgres://postgres@localhost:5432/postgres` — the Makefile
 /// default), else in a throwaway Postgres 17 container (CI).
 pub async fn start_postgres() -> TestDb {
+    // Names the database (local) and the login role (both modes).
+    let name = format!("oauth_it_{}", uuid::Uuid::now_v7().simple());
     match std::env::var("TEST_DATABASE_URL") {
-        Ok(admin_url) if !admin_url.is_empty() => local_database(admin_url).await,
-        _ => container().await,
+        Ok(admin_url) if !admin_url.is_empty() => local_database(admin_url, name).await,
+        _ => container(name).await,
     }
 }
 
-async fn local_database(admin_url: String) -> TestDb {
-    let name = format!("oauth_it_{}", uuid::Uuid::now_v7().simple());
+async fn local_database(admin_url: String, name: String) -> TestDb {
+    // Parsed before anything is created, so a bad URL leaks nothing.
+    let mut url = url::Url::parse(&admin_url).expect("TEST_DATABASE_URL is a URL");
+    assert!(
+        url.has_host(),
+        "TEST_DATABASE_URL must be a TCP URL (postgres://user@host:port/db)"
+    );
+    url.set_path(&name);
     let admin = sea_orm::Database::connect(&admin_url)
         .await
         .expect("connect to TEST_DATABASE_URL");
@@ -137,24 +150,25 @@ async fn local_database(admin_url: String) -> TestDb {
         version >= 170000,
         "TEST_DATABASE_URL: Postgres >= 17 required, got {version}"
     );
-    // template0: nothing the developer added to template1 leaks into tests.
+    // template0: nothing the developer added to template1 leaks into tests;
+    // LOCALE 'C': byte-order collation like CI's musl-based postgres:17-alpine.
     admin
         .execute_unprepared(&format!(
-            "CREATE DATABASE \"{name}\" TEMPLATE template0 ENCODING 'UTF8'"
+            "CREATE DATABASE \"{name}\" TEMPLATE template0 ENCODING 'UTF8' LOCALE 'C'"
         ))
         .await
         .expect("create test database");
-    admin.close().await.expect("close admin connection");
-    let mut url = url::Url::parse(&admin_url).expect("TEST_DATABASE_URL is a URL");
-    url.set_path(&name);
-    TestDb {
+    // From here on the guard drops the database, whatever panics next.
+    let db = TestDb {
         url: url.into(),
         role: name.clone(),
         _guard: Guard::Local { admin_url, name },
-    }
+    };
+    admin.close().await.expect("close admin connection");
+    db
 }
 
-async fn container() -> TestDb {
+async fn container(name: String) -> TestDb {
     let container = Postgres::default()
         .with_tag("17-alpine")
         .start()
@@ -166,7 +180,7 @@ async fn container() -> TestDb {
         .expect("postgres host port");
     TestDb {
         url: format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres"),
-        role: "noddl".into(),
+        role: name,
         _guard: Guard::Container(Box::new(container)),
     }
 }
