@@ -42,7 +42,7 @@ impl TestDb {
     /// Creates a LOGIN role without privileges beyond PUBLIC's and returns this
     /// database's URL connecting as it.
     pub async fn login_role(&self) -> String {
-        let admin = sea_orm::Database::connect(&self.url)
+        let admin = oauth_server::db::connect(&self.url)
             .await
             .expect("connect as admin");
         let role = &self.role;
@@ -90,7 +90,7 @@ impl Drop for Guard {
                 .build()
                 .expect("runtime for dropping the test database");
             rt.block_on(async {
-                let admin = match sea_orm::Database::connect(&admin_url).await {
+                let admin = match oauth_server::db::connect(&admin_url).await {
                     Ok(admin) => admin,
                     Err(e) => return vec![e.to_string()],
                 };
@@ -162,7 +162,7 @@ async fn create_database(admin_url: &str, name: &str) -> String {
         "TEST_DATABASE_URL must be a TCP URL (postgres://user@host:port/db)"
     );
     url.set_path(name);
-    let admin = sea_orm::Database::connect(admin_url)
+    let admin = oauth_server::db::connect(admin_url)
         .await
         .expect("connect to TEST_DATABASE_URL");
     let version = admin
@@ -183,11 +183,12 @@ async fn create_database(admin_url: &str, name: &str) -> String {
     // template0: nothing the developer added to template1 leaks in. Builtin
     // C.UTF-8 (explicit provider, whatever the cluster's default): byte-order
     // collation but Unicode case mapping, so lower() / ILIKE fold `Ž` as in
-    // production, identically on every server.
+    // production, identically on every server; libc C, so any cluster's
+    // template0 locale is compatible with UTF8.
     admin
         .execute_unprepared(&format!(
             "CREATE DATABASE \"{name}\" TEMPLATE template0 ENCODING 'UTF8' \
-             LOCALE_PROVIDER builtin BUILTIN_LOCALE 'C.UTF-8'"
+             LOCALE_PROVIDER builtin BUILTIN_LOCALE 'C.UTF-8' LC_COLLATE 'C' LC_CTYPE 'C'"
         ))
         .await
         .expect("create test database");
