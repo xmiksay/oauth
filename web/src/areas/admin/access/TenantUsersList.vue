@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
 import { tenants } from '@/api/access'
 import type { PageQuery, User } from '@/api/types'
 import { usePagedList } from '@/composables/usePagedList'
@@ -10,17 +10,9 @@ import TenantUserPanel from './TenantUserPanel.vue'
 const props = defineProps<{ slug: string }>()
 
 const list = usePagedList<User>((q: PageQuery) => tenants.users(props.slug, q))
+// Independent of the list: only a click on another row or the panel's Close changes it, so no
+// reload (search, page, a stale response) can unmount the panel or a password it shows.
 const selected = ref<string | null>(null)
-// Never offer resets for a user not listed: after every successful load, keep the selection
-// only if the new items still hold it (a click during a search's debounce must not outlive its
-// reload). A failed load lists nothing and proves nothing, so it keeps the panel.
-watch(
-  () => list.items,
-  (items) => {
-    if (list.error) return
-    if (selected.value && !items.some((u) => u.id === selected.value)) selected.value = null
-  },
-)
 </script>
 
 <template>
@@ -81,6 +73,7 @@ watch(
       :slug="slug"
       :user-id="selected"
       @changed="list.load()"
+      @close="selected = null"
     />
   </div>
 </template>

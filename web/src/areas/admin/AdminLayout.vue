@@ -70,8 +70,20 @@ watch(menuOpen, (open) => {
 
 // From md up the nav is static and `menuOpen` invisible: reset it, or the overlay reappears
 // on the way back down.
+// Focus in the nav would fall to body as it closes: land on the page.
 let wide: MediaQueryList | null = null
-const resetMenu = () => (menuOpen.value = false)
+function resetMenu() {
+  if (!menuOpen.value) return
+  const hadFocus = sideNav.value?.contains(document.activeElement) ?? false
+  menuOpen.value = false
+  if (hadFocus) mainEl.value?.focus()
+}
+
+// A tap on the backdrop leaves focus wherever it was (maybe the nav it hides): back to the toggle.
+function closeFromBackdrop() {
+  menuOpen.value = false
+  header.value?.focusMenuButton()
+}
 onMounted(() => {
   wide = window.matchMedia('(min-width: 48rem)')
   wide.addEventListener('change', resetMenu)
@@ -119,7 +131,7 @@ onUnmounted(() => {
           v-if="menuOpen"
           class="fixed inset-0 top-header z-backdrop bg-black/30 md:hidden"
           aria-hidden="true"
-          @click="menuOpen = false"
+          @click="closeFromBackdrop"
         />
         <nav
           id="side-nav"

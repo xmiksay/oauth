@@ -11,7 +11,7 @@ import { hasMfaFactors, RESET_MFA_MESSAGE, resetMfaExplained } from '../users/mf
 
 /** One user of another tenant (system host): roles, MFA summary and the two rescue resets. */
 const props = defineProps<{ slug: string; userId: string }>()
-const emit = defineEmits<{ changed: [] }>()
+const emit = defineEmits<{ changed: []; close: [] }>()
 
 const user = ref<AdminUserDetail | null>(null)
 const loader = useAction()
@@ -34,17 +34,35 @@ async function resetMfa() {
 </script>
 
 <template>
-  <div class="card space-y-4">
-    <ErrorAlert :error="loader.error.value" />
-    <template v-if="user">
-      <div>
-        <h2 class="font-semibold">
-          {{ user.display_name || user.email }}
-        </h2>
-        <p class="muted text-sm break-all">
+  <section
+    class="card space-y-4"
+    aria-label="Selected user"
+  >
+    <div class="flex items-start justify-between gap-2">
+      <div
+        v-if="user"
+        class="min-w-0"
+      >
+        <h2 class="font-semibold break-all">
           {{ user.email }}
+        </h2>
+        <p
+          v-if="user.display_name"
+          class="muted text-sm"
+        >
+          {{ user.display_name }}
         </p>
       </div>
+      <button
+        type="button"
+        class="btn ml-auto"
+        @click="emit('close')"
+      >
+        Close
+      </button>
+    </div>
+    <ErrorAlert :error="loader.error.value" />
+    <template v-if="user">
       <UserBadges :user="user" />
       <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
         <dt class="muted">
@@ -71,5 +89,5 @@ async function resetMfa() {
         />
       </div>
     </template>
-  </div>
+  </section>
 </template>
