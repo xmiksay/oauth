@@ -69,14 +69,10 @@ watch(menuOpen, (open) => {
 })
 
 // From md up the nav is static and `menuOpen` invisible: reset it, or the overlay reappears
-// on the way back down.
-// Focus in the nav would fall to body as it closes: land on the page.
+// on the way back down. Focus stays put: the nav is still visible from md up.
 let wide: MediaQueryList | null = null
 function resetMenu() {
-  if (!menuOpen.value) return
-  const hadFocus = sideNav.value?.contains(document.activeElement) ?? false
   menuOpen.value = false
-  if (hadFocus) mainEl.value?.focus()
 }
 
 // A tap on the backdrop leaves focus wherever it was (maybe the nav it hides): back to the toggle.
