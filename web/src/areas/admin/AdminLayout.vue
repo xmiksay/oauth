@@ -68,7 +68,7 @@ onUnmounted(() => window.removeEventListener('keydown', closeOnEscape))
         <nav
           id="side-nav"
           aria-label="Admin sections"
-          class="fixed inset-y-12 left-0 z-20 w-56 shrink-0 overflow-y-auto border-r border-neutral-200 bg-white p-2 md:static md:block dark:border-neutral-800 dark:bg-neutral-900"
+          class="fixed top-12 bottom-0 left-0 z-20 w-56 shrink-0 overflow-y-auto border-r border-neutral-200 bg-white p-2 md:static md:block dark:border-neutral-800 dark:bg-neutral-900"
           :class="menuOpen ? 'block' : 'hidden'"
         >
           <ul class="space-y-1">
