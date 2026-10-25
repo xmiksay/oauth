@@ -15,6 +15,7 @@ use axum::http::{Method, StatusCode};
 use common::{
     authenticator::{Alg, Authenticator},
     flow::{Fixture, PASSWORD, T},
+    mail::only_to,
     mgmt::{call, mint_app_token, mint_user_token, user_with_roles},
     passkeys::{drop_password, register_ok},
 };
@@ -45,7 +46,10 @@ fn users_of(slug: &str, rest: &str) -> String {
 /// The fixture plus a bootstrapped system tenant, its root Global Admin and
 /// a management token of theirs.
 async fn setup() -> (Fixture, tenants::Model, users::Model, String) {
-    let f = Fixture::new().await;
+    setup_on(Fixture::new().await).await
+}
+
+async fn setup_on(f: Fixture) -> (Fixture, tenants::Model, users::Model, String) {
     let opts = bootstrap::Options {
         admin_email: "root@example.com".into(),
         display_name: None,
@@ -80,7 +84,8 @@ async fn events(
 
 /// Exactly one event in each log: the system admin's own (actor: them) and
 /// the target tenant's (actor: them too, `via: system_admin`), both naming
-/// the user's email; returns the target tenant's details.
+/// the user's email, only the system's naming the tenant (the target's row
+/// already does); returns the target tenant's details.
 async fn audited_in_both(
     f: &Fixture,
     system: &tenants::Model,
@@ -103,7 +108,8 @@ async fn audited_in_both(
     assert_eq!(theirs[0].actor_id, Some(root.id));
     assert_eq!(theirs[0].details["via"], "system_admin");
     assert!(theirs[0].details.get("system_admin_id").is_none());
-    assert_eq!(theirs[0].details["tenant_slug"], T);
+    assert!(theirs[0].details.get("tenant_slug").is_none());
+    assert!(theirs[0].details.get("tenant_id").is_none());
     assert_eq!(theirs[0].details["email"], target.email.as_str());
     theirs[0].details.clone()
 }
@@ -228,6 +234,30 @@ async fn system_admin_resets_mfa_but_never_locks_a_passkey_only_user_out() {
 }
 
 #[tokio::test]
+async fn the_user_is_told_a_system_administrator_reset_them() {
+    let (f, _, _, token) = setup_on(Fixture::with_email().await).await;
+    let tok = Some(token.as_str());
+    f.verify(&f.user).await;
+    f.enroll_totp(&f.user).await;
+    f.deliver().await; // anything enrollment queued
+    let pw = users_of(T, &format!("/{}/reset-password", f.user.id));
+    let (st, _) = call(&f.app, Method::POST, &pw, tok, None).await;
+    assert_eq!(st, StatusCode::OK);
+    let notice = f.deliver().await;
+    let body = &only_to(&notice, &f.user.email).body;
+    assert!(body.contains("reset by a system administrator"), "{body}");
+    let mfa = users_of(T, &format!("/{}/reset-mfa", f.user.id));
+    let (st, _) = call(&f.app, Method::POST, &mfa, tok, None).await;
+    assert_eq!(st, StatusCode::NO_CONTENT);
+    let notice = f.deliver().await;
+    let body = &only_to(&notice, &f.user.email).body;
+    assert!(
+        body.contains("second factors removed by a system administrator"),
+        "{body}"
+    );
+}
+
+#[tokio::test]
 async fn tenant_user_routes_refuse_wrong_tenants_users_and_callers() {
     let (f, system, root, token) = setup().await;
     let tok = Some(token.as_str());
@@ -284,6 +314,10 @@ async fn tenant_user_routes_refuse_wrong_tenants_users_and_callers() {
     );
     let reset = users_of("fabrikam", &format!("/{}/reset-password", boss.id));
     let (st, out) = call(&f.app, Method::POST, &reset, tok, Some(&empty)).await;
+    assert_eq!(st, StatusCode::OK, "{out}");
+    assert!(out["one_time_password"].is_string());
+    // The body is optional: a bare POST (no Content-Type) works too.
+    let (st, out) = call(&f.app, Method::POST, &reset, tok, None).await;
     assert_eq!(st, StatusCode::OK, "{out}");
     assert!(out["one_time_password"].is_string());
 

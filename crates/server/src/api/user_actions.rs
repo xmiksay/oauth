@@ -113,6 +113,31 @@ pub struct ResetPassword {
     must_change_password: Option<bool>,
 }
 
+/// Who resets a user's credentials, as the user's notice names them.
+#[derive(Clone, Copy)]
+pub enum Resetter {
+    /// An administrator of the user's own tenant.
+    TenantAdmin,
+    /// A system Global Admin (`tenant_users`).
+    SystemAdmin,
+}
+
+impl Resetter {
+    fn password_notice(self) -> &'static str {
+        match self {
+            Self::TenantAdmin => "reset by an administrator",
+            Self::SystemAdmin => "reset by a system administrator",
+        }
+    }
+
+    fn mfa_notice(self) -> &'static str {
+        match self {
+            Self::TenantAdmin => "second factors removed by an administrator",
+            Self::SystemAdmin => "second factors removed by a system administrator",
+        }
+    }
+}
+
 /// Sets `chosen` as `user`'s password on `txn`, signing them out everywhere
 /// (sessions, refresh tokens, opaque access tokens —
 /// `directory::set_password`), and tells them. Returns the audit details.
@@ -123,9 +148,10 @@ pub async fn apply_password_reset(
     tenant: &tenants::Model,
     user: &users::Model,
     chosen: &ChosenPassword,
+    by: Resetter,
 ) -> AppResult<Map<String, Value>> {
     directory::set_password(txn, tenant.id, user.id, &chosen.value, chosen.must_change).await?;
-    let facts = notify::change("reset by an administrator");
+    let facts = notify::change(by.password_notice());
     notify::event(
         txn,
         config,
@@ -161,7 +187,15 @@ pub async fn reset_password(
     let txn = state.db.begin().await?;
     let user = lock_user(&txn, tenant_id, id).await?;
     ensure_can_modify_user(&txn, &caller, id).await?;
-    let details = apply_password_reset(&txn, &state.config, &caller.tenant, &user, &chosen).await?;
+    let details = apply_password_reset(
+        &txn,
+        &state.config,
+        &caller.tenant,
+        &user,
+        &chosen,
+        Resetter::TenantAdmin,
+    )
+    .await?;
     caller
         .audit(
             &txn,
@@ -186,6 +220,7 @@ pub async fn apply_mfa_reset(
     config: &Config,
     tenant: &tenants::Model,
     user: &users::Model,
+    by: Resetter,
 ) -> AppResult<Map<String, Value>> {
     let methods = federation::identities::methods(txn, user).await?;
     let passkeys = methods.passkeys;
@@ -199,7 +234,7 @@ pub async fn apply_mfa_reset(
     delete_mfa(txn, tenant.id, user.id).await?;
     passkey::store::remove_all(txn, tenant.id, user.id).await?;
     let telegram_unlinked = telegram::links::unlink(txn, tenant.id, user.id).await?;
-    let facts = notify::change("second factors removed by an administrator");
+    let facts = notify::change(by.mfa_notice());
     notify::event(txn, config, tenant, user, NotifyEvent::MfaChanged, &facts).await?;
     Ok(Map::from_iter([
         ("passkeys_removed".into(), json!(passkeys)),
@@ -216,7 +251,14 @@ pub async fn reset_mfa(
     let txn = state.db.begin().await?;
     let user = lock_user(&txn, caller.tenant_id(), id).await?;
     ensure_can_modify_user(&txn, &caller, id).await?;
-    let details = apply_mfa_reset(&txn, &state.config, &caller.tenant, &user).await?;
+    let details = apply_mfa_reset(
+        &txn,
+        &state.config,
+        &caller.tenant,
+        &user,
+        Resetter::TenantAdmin,
+    )
+    .await?;
     caller
         .audit(
             &txn,
@@ -268,4 +310,25 @@ pub async fn revoke_sessions(
         .await?;
     txn.commit().await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Resetter;
+
+    #[test]
+    fn notices_name_who_reset_the_user() {
+        let tenant = Resetter::TenantAdmin;
+        let system = Resetter::SystemAdmin;
+        assert_eq!(tenant.password_notice(), "reset by an administrator");
+        assert_eq!(system.password_notice(), "reset by a system administrator");
+        assert_eq!(
+            tenant.mfa_notice(),
+            "second factors removed by an administrator"
+        );
+        assert_eq!(
+            system.mfa_notice(),
+            "second factors removed by a system administrator"
+        );
+    }
 }

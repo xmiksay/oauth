@@ -185,8 +185,8 @@ Additional rules:
 | `PATCH /api/v1/tenants/{slug}` | `{ display_name?, disabled?, audit_retention_days? (30–3650) }` | `Tenant` |
 | `GET /api/v1/tenants/{slug}/users` *paged* `?search=` (email, name) | – | that tenant's `User`s |
 | `GET /api/v1/tenants/{slug}/users/{id}` | – | `UserDetail` (as `GET users/{id}`) |
-| `POST /api/v1/tenants/{slug}/users/{id}/reset-password` | `{}` (no fields: always generated) | `{ one_time_password, must_change_password: true }` — as `reset-password` without `password`: sessions, refresh tokens and opaque access tokens revoked, the user notified |
-| `POST /api/v1/tenants/{slug}/users/{id}/reset-mfa` | – | 204 — as `users/{id}/reset-mfa`, same 409 for a passkey-only user (reset the password first) |
+| `POST /api/v1/tenants/{slug}/users/{id}/reset-password` | optional: none (no `Content-Type`) or `{}`; any field → 400 (always generated) | `{ one_time_password, must_change_password: true }` — as `reset-password` without `password`: sessions, refresh tokens and opaque access tokens revoked, the user notified ("reset by a system administrator") |
+| `POST /api/v1/tenants/{slug}/users/{id}/reset-mfa` | – | 204 — as `users/{id}/reset-mfa` (notice: "second factors removed by a system administrator"), same 409 for a passkey-only user (reset the password first) |
 
 Create provisions keys, built-in apps and the first GlobalAdmin (password
 must be changed at first sign-in) in one transaction; slug rules as in
@@ -208,8 +208,8 @@ twice in its transaction, both times with the system admin as actor
 (`actor_type: user`, `actor_id` = their id, as for tenant updates): in the
 system tenant's log with `tenant_id`, `tenant_slug` and the user's `email`
 added to the usual details (that log can't resolve another tenant's user
-id), and in the target tenant's log with the same plus
-`via: "system_admin"`.
+id), and in the target tenant's log with the user's `email` and
+`via: "system_admin"` added (the row itself names that tenant).
 
 ## Tenant settings — read: any role, `Read.All`; write: the tenant's GlobalAdmin (delegated)
 
@@ -379,7 +379,7 @@ exclusive, RFC 3339) → `AuditEvent`s.
 | `sign_in` | user (`actor_id` null for an unknown account) → user | success: `session_id`, `application_id`, `amr`; failure: `reason` (`invalid_password`, `unknown_account`, `disabled`, `mfa_failed` + `factor`; passkeys: `factor: "passkey"` + the verifier's reason, e.g. `invalid_challenge`, `foreign_credential`, `sign_count_regression`; federation: `factor: "federation"`, `idp_id` + the reason, e.g. `id_token_nonce`, `token_refused`, `unknown_kid`, `upstream_error`, `account_exists`, `not_linked`) |
 | `token.refresh_reuse`, `token.code_replay` | client app → user, failure | `family_id` / `authorization_code_id` |
 | `tenant.create`, `tenant.update` | system admin → tenant (logged in the system tenant; a system admin's `tenant.update` of another tenant is ALSO logged in that tenant's own log, in the same transaction; a tenant admin's settings change only in their own) | `slug`, `admin_user_id` / `fields`, `disabled` |
-| `user.create`, `user.update`, `user.delete`, `user.password_reset`, `user.mfa_reset`, `user.sessions_revoke` | admin or app → user (JIT federation: user → self; a system admin's reset in another tenant: system admin → user in both the system log and the tenant's, see Tenants) | create: `email`, `password` (`generated` / `set_by_admin`), JIT: `via: "federation"`, `idp_id`; update: `fields`, `disabled`; delete: `email`; reset: `must_change_password`, `generated`; mfa reset: `passkeys_removed`, `telegram_unlinked`; by a system admin also `tenant_id`, `tenant_slug`, `email` (+ `via: "system_admin"` in the tenant's log) |
+| `user.create`, `user.update`, `user.delete`, `user.password_reset`, `user.mfa_reset`, `user.sessions_revoke` | admin or app → user (JIT federation: user → self; a system admin's reset in another tenant: system admin → user in both the system log and the tenant's, see Tenants) | create: `email`, `password` (`generated` / `set_by_admin`), JIT: `via: "federation"`, `idp_id`; update: `fields`, `disabled`; delete: `email`; reset: `must_change_password`, `generated`; mfa reset: `passkeys_removed`, `telegram_unlinked`; by a system admin also `email`, plus `tenant_id`, `tenant_slug` in the system log and `via: "system_admin"` in the tenant's |
 | `user.mfa.passkey_register`, `user.mfa.passkey_rename`, `user.mfa.passkey_remove` | user → self (invite: by the link's user), admin → user (remove) | `passkey_id`, `name`, `via` (`me` / `admin` / `invite`) |
 | `user.mfa.passkey_sign_count_regression` | user → self (failure) | `via: "reauth"` |
 | `user.password_change` | user → self | `via`: `sign_in` (forced change) / `me` |
