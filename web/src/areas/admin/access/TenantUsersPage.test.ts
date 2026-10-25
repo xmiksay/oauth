@@ -141,39 +141,68 @@ describe('TenantUsersPage', () => {
     expect(w.text()).toContain('Users of contoso')
   })
 
-  it('drops the selection when the list moves to another page or search', async () => {
+  const wait = async () => {
+    await new Promise((r) => setTimeout(r, SEARCH_DEBOUNCE_MS + 50))
+    await flushPromises()
+  }
+
+  it('drops the selection when another page no longer lists it', async () => {
     await signIn()
     const carol: User = { ...bob, id: 'u2', email: 'carol@contoso.example' }
-    const first = { body: { items: [bob], next_cursor: 'c2' } }
-    const calls = mockFetch(first, { body: bobDetail }, page([carol]), first, { body: bobDetail }, page([bob]))
+    const calls = mockFetch({ body: { items: [bob], next_cursor: 'c2' } }, { body: bobDetail }, page([carol]))
     const w = await mountAt('/admin/tenants/contoso/users', TenantUsersPage)
-    const select = async () => {
-      await buttons(w, 'bob@contoso.example')[0]?.trigger('click')
-      await flushPromises()
-      expect(w.text()).toContain('Recovery codes left')
-    }
-    await select()
+    await buttons(w, 'bob@contoso.example')[0]?.trigger('click')
+    await flushPromises()
+    expect(w.text()).toContain('Recovery codes left')
     await buttons(w, 'Next')[0]?.trigger('click')
     await flushPromises()
     expect(w.text()).toContain('carol@contoso.example')
     expect(w.text()).not.toContain('Recovery codes left')
     expect(buttons(w, 'Reset password')).toHaveLength(0)
-
-    await buttons(w, 'Previous')[0]?.trigger('click')
-    await flushPromises()
-    await select()
-    await w.find('input[type=search]').setValue('bob')
-    await new Promise((r) => setTimeout(r, SEARCH_DEBOUNCE_MS + 50))
-    await flushPromises()
-    expect(w.text()).not.toContain('Recovery codes left')
-    expect(w.find('tr[aria-current]').exists()).toBe(false)
     expect(calls.map((c) => c.url)).toEqual([
       '/api/v1/tenants/contoso/users?limit=25',
       '/api/v1/tenants/contoso/users/u1',
       '/api/v1/tenants/contoso/users?limit=25&cursor=c2',
+    ])
+  })
+
+  it('drops a selection made during the debounce that the search’s results lack', async () => {
+    await signIn()
+    const alice: User = { ...bob, id: 'u3', email: 'alice@contoso.example' }
+    const aliceDetail: AdminUserDetail = { ...bobDetail, ...alice }
+    const calls = mockFetch(page([alice, bob]), { body: aliceDetail }, page([bob]))
+    const w = await mountAt('/admin/tenants/contoso/users', TenantUsersPage)
+    await buttons(w, 'alice@contoso.example')[0]?.trigger('click')
+    await flushPromises()
+    await w.find('input[type=search]').setValue('bob')
+    await buttons(w, 'alice@contoso.example')[0]?.trigger('click')
+    await flushPromises()
+    expect(w.text()).toContain('Recovery codes left')
+    await wait()
+    expect(w.text()).not.toContain('alice@contoso.example')
+    expect(w.text()).not.toContain('Recovery codes left')
+    expect(w.find('tr[aria-current]').exists()).toBe(false)
+    expect(calls.map((c) => c.url)).toEqual([
+      '/api/v1/tenants/contoso/users?limit=25',
+      '/api/v1/tenants/contoso/users/u3',
+      '/api/v1/tenants/contoso/users?limit=25&search=bob',
+    ])
+  })
+
+  it('keeps the selection while a reload still lists it', async () => {
+    await signIn()
+    const calls = mockFetch(page([bob]), { body: bobDetail }, page([bob]))
+    const w = await mountAt('/admin/tenants/contoso/users', TenantUsersPage)
+    await buttons(w, 'bob@contoso.example')[0]?.trigger('click')
+    await flushPromises()
+    await w.find('input[type=search]').setValue('bo ')
+    await wait()
+    expect(w.text()).toContain('Recovery codes left')
+    expect(w.find('tr[aria-current=true]').text()).toContain('bob@contoso.example')
+    expect(calls.map((c) => c.url)).toEqual([
       '/api/v1/tenants/contoso/users?limit=25',
       '/api/v1/tenants/contoso/users/u1',
-      '/api/v1/tenants/contoso/users?limit=25&search=bob',
+      '/api/v1/tenants/contoso/users?limit=25&search=bo',
     ])
   })
 
