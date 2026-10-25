@@ -58,9 +58,12 @@ jobs:
       - name: Lint
         run: make lint
 
-      # Integration tests start Postgres via testcontainers on the runner's Docker.
+      # Empty TEST_DATABASE_URL: integration tests start Postgres 17 via
+      # testcontainers on the runner's Docker.
       - name: Test
         run: make test
+        env:
+          TEST_DATABASE_URL: ""
 
       - name: Build SPA
         run: make web-build

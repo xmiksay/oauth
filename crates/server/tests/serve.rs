@@ -157,14 +157,12 @@ async fn startup_rewrites_stale_builtin_redirect_uris_before_ready() {
 async fn migration_failure_stops_the_server_with_an_error() {
     let pg = common::start_postgres().await;
     let admin = db::connect(&pg.url).await.unwrap();
-    for sql in [
-        "CREATE ROLE noddl LOGIN PASSWORD 'noddl'",
-        // PG15+ already withholds CREATE on `public` from PUBLIC; be explicit.
-        "REVOKE CREATE ON SCHEMA public FROM PUBLIC",
-    ] {
-        admin.execute_unprepared(sql).await.unwrap();
-    }
-    let url = pg.url.replacen("postgres:postgres@", "noddl:noddl@", 1);
+    // PG15+ already withholds CREATE on `public` from PUBLIC; be explicit.
+    admin
+        .execute_unprepared("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
+        .await
+        .unwrap();
+    let url = pg.login_role().await;
     let conn = db::connect(&url).await.unwrap();
 
     let (listeners, _) = listeners().await;
