@@ -6,6 +6,11 @@ SHELL := /usr/bin/env bash
 CARGO_BUILD_JOBS ?= 4
 export CARGO_BUILD_JOBS
 
+# Integration tests create a database per test on this server (admin connection);
+# empty → a throwaway testcontainers Postgres 17 instead (CI).
+TEST_DATABASE_URL ?= postgres://postgres@localhost:5432/postgres
+export TEST_DATABASE_URL
+
 IMAGE ?= ghcr.io/xmiksay/oauth:dev
 NPM := npm --prefix web
 
@@ -57,7 +62,7 @@ test: test-unit test-integration web-test ## Run every test suite
 test-unit: ## Rust unit tests (lib + bin)
 	cargo test --workspace --lib --bins
 
-test-integration: ## Rust integration tests (testcontainers Postgres; needs Docker)
+test-integration: ## Rust integration tests (local Postgres at TEST_DATABASE_URL; empty → testcontainers)
 	cargo test --workspace --test '*'
 
 web-test: ## Frontend unit tests (vitest)

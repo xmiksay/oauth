@@ -28,14 +28,105 @@ use testcontainers_modules::{
 };
 use tower::ServiceExt;
 
-/// A throwaway Postgres 17. Keep the container alive for the whole test: it is
-/// removed when dropped.
+/// A throwaway database. Keep it alive for the whole test: it is removed when
+/// dropped.
 pub struct TestDb {
     pub url: String,
-    _container: ContainerAsync<Postgres>,
+    /// Name for a role a test creates ([`TestDb::login_role`]): roles are
+    /// server-wide, so on a shared server it is unique and dropped with the database.
+    role: String,
+    _guard: Guard,
 }
 
+impl TestDb {
+    /// Creates a LOGIN role without privileges beyond PUBLIC's and returns this
+    /// database's URL connecting as it.
+    pub async fn login_role(&self) -> String {
+        let admin = sea_orm::Database::connect(&self.url)
+            .await
+            .expect("connect as admin");
+        let role = &self.role;
+        admin
+            .execute_unprepared(&format!("CREATE ROLE \"{role}\" LOGIN PASSWORD '{role}'"))
+            .await
+            .expect("create login role");
+        admin.close().await.expect("close admin connection");
+        let mut url = url::Url::parse(&self.url).expect("test database URL");
+        url.set_username(role).expect("URL takes a username");
+        url.set_password(Some(role)).expect("URL takes a password");
+        url.into()
+    }
+}
+
+enum Guard {
+    Container(Box<ContainerAsync<Postgres>>),
+    Local { admin_url: String, name: String },
+}
+
+impl Drop for Guard {
+    fn drop(&mut self) {
+        let Guard::Local { admin_url, name } = self else {
+            return;
+        };
+        let admin_url = admin_url.clone();
+        // Separate statements: DROP DATABASE can't run in the implicit
+        // transaction of a multi-statement query.
+        let sql = [
+            format!("DROP DATABASE IF EXISTS \"{name}\" WITH (FORCE)"),
+            format!("DROP ROLE IF EXISTS \"{name}\""),
+        ];
+        // Drop runs inside the test's runtime, which can't be blocked on: use a
+        // fresh one on its own thread. FORCE ends the test's pooled connections.
+        let dropped = std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime for dropping the test database");
+            rt.block_on(async {
+                let admin = sea_orm::Database::connect(&admin_url).await?;
+                for sql in &sql {
+                    admin.execute_unprepared(sql).await?;
+                }
+                admin.close().await
+            })
+        })
+        .join();
+        if !matches!(dropped, Ok(Ok(()))) {
+            eprintln!("could not drop test database {name}");
+        }
+    }
+}
+
+/// A fresh database: on the server `TEST_DATABASE_URL` points at (an admin
+/// connection, e.g. `postgres://postgres@localhost:5432/postgres` — the Makefile
+/// default), else in a throwaway Postgres 17 container (CI).
 pub async fn start_postgres() -> TestDb {
+    match std::env::var("TEST_DATABASE_URL") {
+        Ok(admin_url) if !admin_url.is_empty() => local_database(admin_url).await,
+        _ => container().await,
+    }
+}
+
+async fn local_database(admin_url: String) -> TestDb {
+    let name = format!("oauth_it_{}", uuid::Uuid::now_v7().simple());
+    let admin = sea_orm::Database::connect(&admin_url)
+        .await
+        .expect("connect to TEST_DATABASE_URL");
+    admin
+        .execute_unprepared(&format!("CREATE DATABASE \"{name}\""))
+        .await
+        .expect("create test database");
+    admin.close().await.expect("close admin connection");
+    let mut url = url::Url::parse(&admin_url).expect("TEST_DATABASE_URL is a URL");
+    url.set_path(&name);
+    TestDb {
+        url: url.into(),
+        role: name.clone(),
+        _guard: Guard::Local { admin_url, name },
+    }
+}
+
+async fn container() -> TestDb {
     let container = Postgres::default()
         .with_tag("17-alpine")
         .start()
@@ -47,7 +138,8 @@ pub async fn start_postgres() -> TestDb {
         .expect("postgres host port");
     TestDb {
         url: format!("postgres://postgres:postgres@127.0.0.1:{port}/postgres"),
-        _container: container,
+        role: "noddl".into(),
+        _guard: Guard::Container(Box::new(container)),
     }
 }
 

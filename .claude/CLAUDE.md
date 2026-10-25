@@ -34,7 +34,7 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
 | `make fmt` | `cargo fmt` |
 | `make test` | `test-unit` + `test-integration` + `web-test` |
 | `make test-unit` | `cargo test --workspace --lib --bins` |
-| `make test-integration` | `cargo test --workspace --test '*'` (testcontainers — Docker required) |
+| `make test-integration` | `cargo test --workspace --test '*'`: one fresh database per test on `TEST_DATABASE_URL` (default the local `postgres://postgres@localhost:5432/postgres`, Postgres ≥ 17, dropped after the test); `TEST_DATABASE_URL=` (empty) → testcontainers Postgres 17 (Docker; what CI runs) |
 | `make docker` | build image (`IMAGE=` to override tag) |
 | `make bootstrap ADMIN_EMAIL=… [RESET=1]` | migrate, then create `system` tenant + Global Admin (idempotent; `RESET=1` issues a new one-time password) |
 | `make telegram-webhook` | `oauth telegram set-webhook`: register `{PUBLIC_URL}/telegram/webhook` + secret with the bot (loads `.env`) |
@@ -218,7 +218,7 @@ Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md); manag
 - Never log request query strings (they carry codes / hints / tx ids);
   `app::request_span` logs the route template.
 - Each file ≤ 400 lines. Backend changes ship with unit tests (`#[cfg(test)]`)
-  and integration tests (`crates/server/tests/`, in-process router + testcontainers).
+  and integration tests (`crates/server/tests/`, in-process router + a per-test database, `common::start_postgres`).
 - Branches `feat/m1a-*` / `feat/m1b-*` / `feat/m2-*` per roadmap step, ff-only onto `main`; `make lint` and
   `make test` green before push.
 

@@ -39,7 +39,10 @@ asked to choose a new one). A tenant created there, say `acme`, is at
 <http://acme.localhost:5173/admin>; its issuer is `http://acme.localhost:5173`.
 
 `make help` lists all targets. Before pushing: `make lint && make test`
-(integration tests start Postgres through testcontainers, so Docker must run).
+(integration tests create one database per test on a local Postgres ≥ 17,
+`TEST_DATABASE_URL`, default `postgres://postgres@localhost:5432/postgres`, a
+role allowed to create databases; `TEST_DATABASE_URL=` (empty) starts a
+testcontainers Postgres 17 instead, which needs Docker — CI does that).
 
 ## Web UI
 
