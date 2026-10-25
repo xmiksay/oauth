@@ -27,11 +27,6 @@ function resetPassword() {
   return tenants.resetPassword(props.slug, props.userId)
 }
 
-async function afterPasswordReset() {
-  await load()
-  emit('changed')
-}
-
 async function resetMfa() {
   await resetMfaExplained(() => tenants.resetMfa(props.slug, props.userId))
   await load()
@@ -64,7 +59,8 @@ async function resetMfa() {
       <div class="flex flex-wrap gap-2">
         <ResetPasswordButton
           :action="resetPassword"
-          @reset="afterPasswordReset"
+          @reset="load"
+          @done="emit('changed')"
         />
         <ConfirmButton
           label="Reset MFA"

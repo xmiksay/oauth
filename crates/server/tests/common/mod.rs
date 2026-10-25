@@ -11,6 +11,7 @@ pub mod mgmt;
 pub mod passkeys;
 pub mod seed;
 pub mod telegram;
+pub mod tenant_users;
 pub mod upstream;
 
 use std::{collections::HashMap, path::Path};

@@ -19,9 +19,11 @@ describe('ResetPasswordButton', () => {
   it('shows the temporary password once, emits reset and clears it on close', async () => {
     const w = await confirmReset('Temp-123')
     expect(w.emitted('reset')).toHaveLength(1)
+    expect(w.emitted('done')).toBeUndefined()
     expect(w.find('[data-testid=secret-values]').text()).toBe('Temp-123')
     await buttons(w, 'Done')[0]?.trigger('click')
     await flushPromises()
+    expect(w.emitted('done')).toHaveLength(1)
     expect(w.find('[data-testid=secret-values]').exists()).toBe(false)
     expect(w.html()).not.toContain('Temp-123')
     w.unmount()
@@ -30,6 +32,7 @@ describe('ResetPasswordButton', () => {
   it('opens no dialog when the server returns no password', async () => {
     const w = await confirmReset(null)
     expect(w.emitted('reset')).toHaveLength(1)
+    expect(w.emitted('done')).toHaveLength(1)
     expect(w.find('[data-testid=secret-values]').exists()).toBe(false)
     w.unmount()
   })

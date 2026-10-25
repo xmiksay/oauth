@@ -232,6 +232,58 @@ describe('TenantUsersPage', () => {
     await flushPromises()
     expect(w.find('[data-testid=secret-values]').exists()).toBe(false)
     expect(w.html()).not.toContain('Temp-123')
+    expect(calls.at(-1)?.url).toBe('/api/v1/tenants/contoso/users?limit=25')
+  })
+
+  it('refreshes the list only once the password is closed, and a failed refresh keeps the panel', async () => {
+    await signIn()
+    const calls = mockFetch(
+      page([bob]),
+      { body: bobDetail },
+      { body: { one_time_password: 'Temp-123', must_change_password: true } },
+      { body: { ...bobDetail, has_password: true } },
+      { status: 500, body: { error: 'server_error' } },
+    )
+    const w = await mountAt('/admin/tenants/contoso/users', TenantUsersPage)
+    await buttons(w, 'bob@contoso.example')[0]?.trigger('click')
+    await flushPromises()
+    await buttons(w, 'Reset password')[0]?.trigger('click')
+    await buttons(w, 'Reset password')[1]?.trigger('click')
+    await flushPromises()
+    expect(w.find('[data-testid=secret-values]').text()).toBe('Temp-123')
+    expect(calls.map((c) => c.url)).toEqual([
+      '/api/v1/tenants/contoso/users?limit=25',
+      '/api/v1/tenants/contoso/users/u1',
+      '/api/v1/tenants/contoso/users/u1/reset-password',
+      '/api/v1/tenants/contoso/users/u1',
+    ])
+    await buttons(w, 'Done')[0]?.trigger('click')
+    await flushPromises()
+    expect(calls.at(-1)?.url).toBe('/api/v1/tenants/contoso/users?limit=25')
+    expect(calls).toHaveLength(5)
+    expect(w.text()).toContain('Recovery codes left')
+    expect(w.html()).not.toContain('Temp-123')
+  })
+
+  it('keeps the shown password when the list refresh fails mid-dialog', async () => {
+    await signIn()
+    mockFetch(
+      page([bob]),
+      { body: bobDetail },
+      { body: { one_time_password: 'Temp-123', must_change_password: true } },
+      { body: { ...bobDetail, has_password: true } },
+      { status: 500, body: { error: 'server_error' } },
+    )
+    const w = await mountAt('/admin/tenants/contoso/users', TenantUsersPage)
+    await buttons(w, 'bob@contoso.example')[0]?.trigger('click')
+    await flushPromises()
+    await buttons(w, 'Reset password')[0]?.trigger('click')
+    await buttons(w, 'Reset password')[1]?.trigger('click')
+    await flushPromises()
+    // Stand-in for any list load landing while the dialog is open.
+    await w.findComponent({ name: 'ListShell' }).props('list').load()
+    await flushPromises()
+    expect(w.find('[data-testid=secret-values]').text()).toBe('Temp-123')
   })
 
   it('explains the 409 of an MFA reset for a passkey-only user', async () => {
