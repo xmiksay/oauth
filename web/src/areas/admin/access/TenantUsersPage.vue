@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { tenants } from '@/api/access'
@@ -13,13 +13,24 @@ import { SYSTEM_TENANT } from '../nav'
 import TenantUserPanel from './TenantUserPanel.vue'
 
 const route = useRoute()
-const target = String(route.params.slug)
+// The component is reused across /admin/tenants/:slug/users, so follow the param.
+const target = computed(() => String(route.params.slug))
 const { slug } = storeToRefs(useTenantStore())
 const { isGlobalAdmin } = storeToRefs(useAuthStore())
 const allowed = computed(() => slug.value === SYSTEM_TENANT && isGlobalAdmin.value)
 
-const list = usePagedList<User>((q: PageQuery) => tenants.users(target, q))
+const list = usePagedList<User>((q: PageQuery) => tenants.users(target.value, q))
 const selected = ref<string | null>(null)
+
+watch(
+  () => route.params.slug,
+  (next) => {
+    // Leaving the route also changes the param (to undefined) before unmount.
+    if (typeof next !== 'string') return
+    selected.value = null
+    if (allowed.value) void list.reload()
+  },
+)
 </script>
 
 <template>

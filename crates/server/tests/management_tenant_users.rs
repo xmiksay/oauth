@@ -79,7 +79,7 @@ async fn events(
 }
 
 /// Exactly one event in each log: the system admin's own (actor: them) and
-/// the target tenant's (actor: system); returns the target tenant's details.
+/// the target tenant's (actor: them too, `via: system_admin`); returns the target tenant's details.
 async fn audited_in_both(
     f: &Fixture,
     system: &tenants::Model,
@@ -96,10 +96,10 @@ async fn audited_in_both(
     assert!(own[0].details.get("via").is_none());
     let theirs = events(f, f.tenant.id, event_type, user).await;
     assert_eq!(theirs.len(), 1, "{theirs:?}");
-    assert_eq!(theirs[0].actor_type, ActorType::System);
-    assert_eq!(theirs[0].actor_id, None);
+    assert_eq!(theirs[0].actor_type, ActorType::User);
+    assert_eq!(theirs[0].actor_id, Some(root.id));
     assert_eq!(theirs[0].details["via"], "system_admin");
-    assert_eq!(theirs[0].details["system_admin_id"], json!(root.id));
+    assert!(theirs[0].details.get("system_admin_id").is_none());
     assert_eq!(theirs[0].details["tenant_slug"], T);
     theirs[0].details.clone()
 }

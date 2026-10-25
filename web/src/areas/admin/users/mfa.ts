@@ -9,9 +9,6 @@ export function hasMfaFactors(mfa: UserDetail['mfa']): boolean {
 export const RESET_MFA_MESSAGE =
   "The user's authenticator app, recovery codes and passkeys are removed and Telegram is unlinked. They can set up new ones in My Account."
 
-export const RESET_PASSWORD_MESSAGE =
-  "A new temporary password is generated and shown once. All of the user's sessions end."
-
 /** Runs a reset-MFA call, turning the server's 409 (passkeys but no password) into advice. */
 export async function resetMfaExplained(call: () => Promise<void>): Promise<void> {
   try {

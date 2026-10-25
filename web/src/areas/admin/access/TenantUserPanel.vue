@@ -5,22 +5,15 @@ import type { AdminUserDetail } from '@/api/types'
 import { useAction } from '@/composables/useAction'
 import ErrorAlert from '@/components/ErrorAlert.vue'
 import ConfirmButton from '@/components/ConfirmButton.vue'
-import SecretOnceDialog from '@/components/SecretOnceDialog.vue'
 import UserBadges from '../users/UserBadges.vue'
-import {
-  hasMfaFactors,
-  RESET_MFA_MESSAGE,
-  RESET_PASSWORD_MESSAGE,
-  resetMfaExplained,
-} from '../users/mfa'
+import ResetPasswordButton from '../users/ResetPasswordButton.vue'
+import { hasMfaFactors, RESET_MFA_MESSAGE, resetMfaExplained } from '../users/mfa'
 
 /** One user of another tenant (system host): roles, MFA summary and the two rescue resets. */
 const props = defineProps<{ slug: string; userId: string }>()
 const emit = defineEmits<{ changed: [] }>()
 
 const user = ref<AdminUserDetail | null>(null)
-// Secret-once: only here, cleared when the dialog closes.
-const oneTime = ref<string[] | null>(null)
 const loader = useAction()
 
 async function load() {
@@ -30,9 +23,11 @@ async function load() {
 
 onMounted(load)
 
-async function resetPassword() {
-  const res = await tenants.resetPassword(props.slug, props.userId)
-  if (res.one_time_password) oneTime.value = [res.one_time_password]
+function resetPassword() {
+  return tenants.resetPassword(props.slug, props.userId)
+}
+
+async function afterPasswordReset() {
   await load()
   emit('changed')
 }
@@ -67,11 +62,9 @@ async function resetMfa() {
         <dd>{{ user.mfa.recovery_codes_remaining }}</dd>
       </dl>
       <div class="flex flex-wrap gap-2">
-        <ConfirmButton
-          label="Reset password"
-          title="Reset password?"
-          :message="RESET_PASSWORD_MESSAGE"
+        <ResetPasswordButton
           :action="resetPassword"
+          @reset="afterPasswordReset"
         />
         <ConfirmButton
           label="Reset MFA"
@@ -82,11 +75,5 @@ async function resetMfa() {
         />
       </div>
     </template>
-    <SecretOnceDialog
-      title="Temporary password"
-      description="Give this password to the user. They must change it at their next sign-in."
-      :values="oneTime"
-      @close="oneTime = null"
-    />
   </div>
 </template>
