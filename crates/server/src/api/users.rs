@@ -62,7 +62,17 @@ pub async fn list(
     Query(q): Query<ListQuery>,
 ) -> AppResult<Paged<Value>> {
     caller.require(Area::Directory, Access::Read)?;
-    let mut select = users::Entity::find().filter(users::Column::TenantId.eq(caller.tenant_id()));
+    page_of(&state.db, caller.tenant_id(), &q).await
+}
+
+/// A page of `tenant_id`'s users (`GET users`, and the system admin's view
+/// of another tenant).
+pub async fn page_of(
+    conn: &impl sea_orm::ConnectionTrait,
+    tenant_id: Uuid,
+    q: &ListQuery,
+) -> AppResult<Paged<Value>> {
+    let mut select = users::Entity::find().filter(users::Column::TenantId.eq(tenant_id));
     if let Some(cond) = search(
         q.search.as_deref(),
         &[users::Column::Email, users::Column::DisplayName],
@@ -70,7 +80,7 @@ pub async fn list(
         select = select.filter(cond);
     }
     let page = page::fetch(
-        &state.db,
+        conn,
         select,
         users::Column::Id,
         q.page.parse()?,
@@ -88,14 +98,21 @@ pub async fn get(
     Path(id): Path<Uuid>,
 ) -> AppResult<axum::Json<Value>> {
     caller.require(Area::Directory, Access::Read)?;
-    let conn = &state.db;
-    let user = find_user(conn, caller.tenant_id(), id).await?;
-    let mut out = detailed_view(conn, &user).await?;
-    let identities = super::user_identities::list_view(conn, &user, true).await?;
+    let user = find_user(&state.db, caller.tenant_id(), id).await?;
+    Ok(axum::Json(full_view(&state.db, &user).await?))
+}
+
+/// The `GET users/{id}` shape: [`detailed_view`] plus `identities`.
+pub async fn full_view(
+    conn: &impl sea_orm::ConnectionTrait,
+    user: &users::Model,
+) -> AppResult<Value> {
+    let mut out = detailed_view(conn, user).await?;
+    let identities = super::user_identities::list_view(conn, user, true).await?;
     if let Some(obj) = out.as_object_mut() {
         obj.insert("identities".into(), json!(identities));
     }
-    Ok(axum::Json(out))
+    Ok(out)
 }
 
 /// [`view`] plus `directory_roles` and `mfa` (also served by `GET me`).

@@ -122,4 +122,10 @@ export const adminRoutes: RouteRecordRaw[] = [
     component: () => import('@/areas/admin/access/TenantsPage.vue'),
     meta: { title: 'Tenants' },
   },
+  {
+    path: 'tenants/:slug/users',
+    name: 'admin-tenant-users',
+    component: () => import('@/areas/admin/access/TenantUsersPage.vue'),
+    meta: { title: 'Tenant users' },
+  },
 ]
