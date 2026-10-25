@@ -92,18 +92,25 @@ describe('TenantUsersPage', () => {
   it('follows the slug when the route is reused for another tenant', async () => {
     await signIn()
     const carol: User = { ...bob, id: 'u2', email: 'carol@fabrikam.example' }
-    const calls = mockFetch(page([bob]), { body: bobDetail }, page([carol]))
+    const calls = mockFetch(page([bob]), page([bob]), { body: bobDetail }, page([carol]))
     const w = await mountAt('/admin/tenants/contoso/users', TenantUsersPage)
+    await w.find('input[type=search]').setValue('bob')
+    await new Promise((r) => setTimeout(r, SEARCH_DEBOUNCE_MS + 50))
+    await flushPromises()
     await buttons(w, 'bob@contoso.example')[0]?.trigger('click')
     await flushPromises()
     expect(w.text()).toContain('Recovery codes left')
     await w.router.push('/admin/tenants/fabrikam/users')
     await flushPromises()
+    await new Promise((r) => setTimeout(r, SEARCH_DEBOUNCE_MS + 50))
+    await flushPromises()
     expect(calls.map((c) => c.url)).toEqual([
       '/api/v1/tenants/contoso/users?limit=25',
+      '/api/v1/tenants/contoso/users?limit=25&search=bob',
       '/api/v1/tenants/contoso/users/u1',
       '/api/v1/tenants/fabrikam/users?limit=25',
     ])
+    expect((w.find('input[type=search]').element as HTMLInputElement).value).toBe('')
     expect(w.text()).toContain('Users of fabrikam')
     expect(w.text()).toContain('carol@fabrikam.example')
     expect(w.text()).not.toContain('bob@contoso.example')

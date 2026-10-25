@@ -79,20 +79,23 @@ async fn events(
 }
 
 /// Exactly one event in each log: the system admin's own (actor: them) and
-/// the target tenant's (actor: them too, `via: system_admin`); returns the target tenant's details.
+/// the target tenant's (actor: them too, `via: system_admin`), both naming
+/// the user's email; returns the target tenant's details.
 async fn audited_in_both(
     f: &Fixture,
     system: &tenants::Model,
     root: &users::Model,
     event_type: &str,
-    user: Uuid,
+    target: &users::Model,
 ) -> Value {
+    let user = target.id;
     let own = events(f, system.id, event_type, user).await;
     assert_eq!(own.len(), 1, "{own:?}");
     assert_eq!(own[0].actor_type, ActorType::User);
     assert_eq!(own[0].actor_id, Some(root.id));
     assert_eq!(own[0].details["tenant_slug"], T);
     assert_eq!(own[0].details["tenant_id"], json!(f.tenant.id));
+    assert_eq!(own[0].details["email"], target.email.as_str());
     assert!(own[0].details.get("via").is_none());
     let theirs = events(f, f.tenant.id, event_type, user).await;
     assert_eq!(theirs.len(), 1, "{theirs:?}");
@@ -101,6 +104,7 @@ async fn audited_in_both(
     assert_eq!(theirs[0].details["via"], "system_admin");
     assert!(theirs[0].details.get("system_admin_id").is_none());
     assert_eq!(theirs[0].details["tenant_slug"], T);
+    assert_eq!(theirs[0].details["email"], target.email.as_str());
     theirs[0].details.clone()
 }
 
@@ -170,7 +174,7 @@ async fn system_admin_finds_and_resets_a_sub_tenant_admins_password() {
     let (st, _) = call(&f.app, Method::GET, "/api/v1/users", Some(&ga_token), None).await;
     assert_eq!(st, StatusCode::UNAUTHORIZED);
 
-    let details = audited_in_both(&f, &system, &root, "user.password_reset", ga.id).await;
+    let details = audited_in_both(&f, &system, &root, "user.password_reset", &ga).await;
     assert_eq!(details["generated"], true);
     assert_eq!(details["must_change_password"], true);
     for e in audit_events::Entity::find().all(&f.db).await.unwrap() {
@@ -191,7 +195,7 @@ async fn system_admin_resets_mfa_but_never_locks_a_passkey_only_user_out() {
         .await
         .unwrap();
     assert!(totp.is_none());
-    let details = audited_in_both(&f, &system, &root, "user.mfa_reset", f.user.id).await;
+    let details = audited_in_both(&f, &system, &root, "user.mfa_reset", &f.user).await;
     assert_eq!(details["passkeys_removed"], 0);
     assert_eq!(details["telegram_unlinked"], false);
 
@@ -208,7 +212,7 @@ async fn system_admin_resets_mfa_but_never_locks_a_passkey_only_user_out() {
         .unwrap();
     assert_eq!(left.len(), 1);
     // Refused: still one event per log.
-    audited_in_both(&f, &system, &root, "user.mfa_reset", f.user.id).await;
+    audited_in_both(&f, &system, &root, "user.mfa_reset", &f.user).await;
 
     // The documented recovery: reset the password, then the MFA.
     let pw = users_of(T, &format!("/{}/reset-password", f.user.id));
