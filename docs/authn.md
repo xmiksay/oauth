@@ -64,6 +64,7 @@ Request logs record method + route template only — never the query string
 | password / factor attempts per IP | 30 / 5 min |
 | attempts per account (also re-authentication) | 10 / 15 min |
 | `/authorize` transactions per IP | 60 / 5 min |
+| device user codes entered per IP / device codes requested per IP | 10 / 5 min, 30 / 5 min |
 | home-realm discovery per IP | 30 / 5 min |
 | upstream sign-ins started per IP | 30 / 5 min |
 | password-reset requests per IP / per address | 10 / 15 min, 3 / 15 min |

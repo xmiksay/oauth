@@ -142,6 +142,52 @@ pub async fn resolve_delegated(
     Ok(Some(out))
 }
 
+/// The validated `scope` of an interactive request (authorize, device
+/// authorization): OIDC scopes plus the one resource's expanded values.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Resolved {
+    pub oidc: Vec<String>,
+    pub resource_id: Option<Uuid>,
+    /// Never `.default`: already expanded.
+    pub resource_scopes: Vec<String>,
+}
+
+/// Parses and resolves `raw` for `client`. `Ok(Err(description))` =
+/// `invalid_scope`; at least one scope is required.
+pub async fn resolve_request(
+    conn: &impl ConnectionTrait,
+    client: &applications::Model,
+    raw: &str,
+) -> anyhow::Result<Result<Resolved, String>> {
+    let requested = match parse(raw) {
+        Ok(r) if r.oidc.is_empty() && r.resource.is_none() => {
+            return Ok(Err("scope is required".into()));
+        }
+        Ok(r) => r,
+        Err(msg) => return Ok(Err(msg)),
+    };
+    let (resource_id, resource_scopes) = match &requested.resource {
+        None => (None, Vec::new()),
+        Some((prefix, values)) => {
+            let Some(resource) = find_resource(conn, client.tenant_id, prefix).await? else {
+                return Ok(Err("unknown resource".into()));
+            };
+            let Some(scopes) = resolve_delegated(conn, client.id, &resource, values).await? else {
+                return Ok(Err("the resource does not expose a requested scope".into()));
+            };
+            (
+                Some(resource.id),
+                scopes.into_iter().map(|s| s.value).collect(),
+            )
+        }
+    };
+    Ok(Ok(Resolved {
+        oidc: requested.oidc,
+        resource_id,
+        resource_scopes,
+    }))
+}
+
 /// The scope values `resource_id` currently exposes.
 pub async fn exposed_values(
     conn: &impl ConnectionTrait,

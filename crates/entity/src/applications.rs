@@ -27,6 +27,8 @@ pub struct Model {
     pub groups_claim_format: GroupsClaimFormat,
     pub access_token_ttl_secs: i32,
     pub refresh_token_ttl_secs: i32,
+    /// Opt-in to the device authorization grant (RFC 8628).
+    pub device_code_enabled: bool,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
 }

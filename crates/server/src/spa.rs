@@ -1,16 +1,17 @@
 //! Serves the built Vue SPA (`web/dist`) on tenant hosts (the host gate in
 //! `app.rs` keeps it off the apex, whose `/` redirects to the system admin
 //! portal). `/` (the portal / dashboard) and client-side routes under
-//! `/login|logout|myaccount|admin` fall back to `index.html`; anything else is
-//! looked up as a static asset.
+//! `/login|logout|device|myaccount|admin` fall back to `index.html`; anything
+//! else is looked up as a static asset.
 
 use std::path::Path;
 
 use axum::Router;
 use tower_http::services::{ServeDir, ServeFile};
 
-/// `logout` is the sign-out confirmation page (`oidc::logout`).
-const SPA_AREAS: [&str; 4] = ["login", "logout", "myaccount", "admin"];
+/// `logout` is the sign-out confirmation page (`oidc::logout`), `device` the
+/// device-code verification page (`verification_uri`).
+const SPA_AREAS: [&str; 5] = ["login", "logout", "device", "myaccount", "admin"];
 
 pub fn router<S: Clone + Send + Sync + 'static>(dist: &Path) -> Router<S> {
     let index = dist.join("index.html");

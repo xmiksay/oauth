@@ -43,7 +43,10 @@
    Account), optional trust of upstream MFA, home-realm discovery.
 2. **`feat/m2-idp-presets`** — Google, Entra (single / multi-tenant with
    a `tid`-templated issuer) and GitHub (OAuth2 adapter).
-3. **`feat/m2-device-code`** — device authorization grant (RFC 8628).
+3. **`feat/m2-device-code`** (done) — device authorization grant (RFC 8628):
+   per-app opt-in, `/oauth2/devicecode`, the `/device` verification page
+   (sign-in + mandatory confirmation), a session of the device's own,
+   `authorization_pending` / `slow_down` / `access_denied` / `expired_token`.
 
 ## M3 — delegation
 

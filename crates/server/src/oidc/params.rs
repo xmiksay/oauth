@@ -81,6 +81,11 @@ pub struct AuthRequest {
     /// The id of the identity provider to go to directly.
     #[serde(default)]
     pub idp: Option<String>,
+    /// Set when this "request" is the browser side of a device authorization
+    /// (RFC 8628): the row the sign-in approves or denies instead of issuing a
+    /// code (there is then no redirect URI, state, nonce or PKCE challenge).
+    #[serde(default)]
+    pub device: Option<Uuid>,
 }
 
 #[cfg(test)]
@@ -122,6 +127,7 @@ mod tests {
             max_age: Some(0),
             domain_hint: Some("contoso.com".into()),
             idp: None,
+            device: None,
         };
         let json = serde_json::to_value(&req).unwrap();
         assert_eq!(json["prompt"], "consent");
@@ -134,7 +140,9 @@ mod tests {
         let fields = old.as_object_mut().unwrap();
         fields.remove("domain_hint");
         fields.remove("idp");
+        fields.remove("device");
         let parsed = serde_json::from_value::<AuthRequest>(old).unwrap();
         assert_eq!((parsed.domain_hint, parsed.idp), (None, None));
+        assert_eq!(parsed.device, None);
     }
 }

@@ -78,8 +78,9 @@ Additional rules:
   roles / required permissions may be added or removed (403).
 - **Privileged apps' credentials:** an app holding management-API access (an
   app role assignment of, or a consent grant on, the management API) can
-  only have its secrets added / deleted and its `redirect_uris` /
-  `post_logout_redirect_uris` / `web_origins` changed by a GlobalAdmin — otherwise an
+  only have its secrets added / deleted, its `redirect_uris` /
+  `post_logout_redirect_uris` / `web_origins` changed and `device_code_enabled`
+  toggled by a GlobalAdmin — otherwise an
   ApplicationAdmin could take over its `Directory.ReadWrite.All` (403).
 - **Per-app caps:** 50 secrets, 200 scopes, 200 app roles, 200 required
   permissions (409 beyond). Creates lock the parent app row before
@@ -157,6 +158,7 @@ Additional rules:
   "access_token_format": "jwt|opaque", "signing_alg": "RS256|ES256",
   "groups_claim_format": "id|name",         // what the groups claim of tokens for this resource carries
   "access_token_ttl_secs": 3600, "refresh_token_ttl_secs": 1209600,
+  "device_code_enabled": false,             // RFC 8628 device code grant opt-in
   "created_at", "updated_at" }
 // ClientSecret (the value only in the create response, as "secret")
 { "id", "hint": "abc", "description": null, "expires_at", "created_at" }
@@ -275,7 +277,7 @@ can be the `groups` claim (`groups_claim_format`).
 | Method & path | Body | Response |
 |---|---|---|
 | `GET applications` *paged* `?search=` (name, client_id) | – | `Application`s |
-| `POST applications` | `{ display_name, client_id?, client_type? (confidential), redirect_uris?, post_logout_redirect_uris?, web_origins?, identifier_uri?, access_token_format?, signing_alg?, groups_claim_format?, access_token_ttl_secs?, refresh_token_ttl_secs? }` | 201 `Application` |
+| `POST applications` | `{ display_name, client_id?, client_type? (confidential), redirect_uris?, post_logout_redirect_uris?, web_origins?, identifier_uri?, access_token_format?, signing_alg?, groups_claim_format?, access_token_ttl_secs?, refresh_token_ttl_secs?, device_code_enabled? (false) }` | 201 `Application` |
 | `GET applications/{id}` | – | `Application` |
 | `PATCH applications/{id}` | same fields except `client_id`, `client_type` (immutable → 400); `identifier_uri: null` clears it | `Application` |
 | `DELETE applications/{id}` | – | 204 (everything of the app cascades) |
@@ -312,6 +314,10 @@ Validation:
   group's name can be reused — bind authorization to names only where
   that's acceptable). The overage rule is the same for both: more than 200
   groups → no `groups`, `hasgroups: true`.
+- `device_code_enabled` (boolean): the app may use the device authorization
+  grant (`/oauth2/devicecode` + the `device_code` token grant, see
+  [../architecture.md](../architecture.md#device-authorization-grant)).
+  Not settable on built-in apps (403).
 
 ### Secrets
 

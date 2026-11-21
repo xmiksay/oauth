@@ -3,8 +3,8 @@
 Part of the [architecture](architecture.md); backend contracts in
 [api/authn.md](api/authn.md) and [api/management.md](api/management.md).
 
-One Vue 3 SPA (TypeScript, Tailwind v4, Pinia, vue-router) with the `/` portal and four
-areas — `/login`, `/logout`, `/myaccount`, `/admin` — built to `web/dist` and served
+One Vue 3 SPA (TypeScript, Tailwind v4, Pinia, vue-router) with the `/` portal, the `/device`
+page and four areas — `/login`, `/logout`, `/myaccount`, `/admin` — built to `web/dist` and served
 by the backend same-origin on every tenant host (`spa`). The tenant is the
 first hostname label (`stores/tenant`; a single-label dev apex like `localhost`
 redirects to `system.<host>/admin`); dev runs Vite on `*.localhost:5173`,
@@ -104,6 +104,20 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   `invalid_token` → "This link is invalid, has expired or was already used." and
   the form goes away. The invite page also offers "Create a passkey instead"
   (`…/invite/passkey/options` → `create()` → `…/invite/passkey`).
+- **Device code** (`areas/device`, route `device` at `/device`, public — no `meta.area`): the
+  RFC 8628 verification page. It takes the code the device shows (prefilled from `?user_code=`
+  of `verification_uri_complete`, which it `router.replace`s out of the URL — it still waits
+  for a click), `POST`s `/api/authn/device` and follows the returned `/login?tx=…` with a full
+  page load (`navigateTo`, only `isWebUrl`). `401 invalid_code` → "That code is invalid or has
+  expired…", `429` → "Too many attempts…". The login flow ends back here: `?result=approved`
+  shows "Your device is now signed in", `?error=access_denied|consent_required|expired_token|
+  login_required` (else a generic line) explains the outcome above the form. In the login flow a
+  view with `device: true` gets the title "Confirm device sign-in" and `ConsentStep`'s device
+  mode: "Sign in to {client} on another device as {email}?", a warning never to enter a code
+  someone else supplied, the resource's scopes (when there is a resource) and Deny / Allow.
+  The admin app's Authentication tab has "Allow the device code flow" (`device_code_enabled`,
+  saved with the redirect URIs; disabled like the rest of that form for built-in apps and
+  without app write access).
 - **Logout** (`areas/logout`): the RP-initiated-logout confirmation page
   (`POST /oauth2/logout`) and the `?signed_out=1` view.
 - **My Account email & notifications**: the Profile page's `EmailSection` shows the

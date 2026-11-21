@@ -28,7 +28,8 @@ pub fn login(outcome: &'static str) {
     metrics::counter!(LOGINS_TOTAL, "outcome" => outcome).increment(1);
 }
 
-/// `grant`: authorization_code | refresh_token | client_credentials;
+/// `grant`: authorization_code | refresh_token | client_credentials |
+/// device_code;
 /// `format`: jwt | opaque.
 pub fn token_issued(grant: &'static str, format: &'static str) {
     metrics::counter!(TOKENS_ISSUED_TOTAL, "grant" => grant, "format" => format).increment(1);

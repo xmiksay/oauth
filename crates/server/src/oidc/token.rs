@@ -1,5 +1,6 @@
 //! `POST /oauth2/token`: `authorization_code`, `refresh_token`,
-//! `client_credentials`. Errors per RFC 6749 §5.2, always `no-store`.
+//! `client_credentials` and the device code grant (`device_grant`). Errors
+//! per RFC 6749 §5.2, always `no-store`.
 
 use std::{collections::HashMap, net::IpAddr};
 
@@ -16,7 +17,7 @@ use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, Transactio
 use uuid::Uuid;
 
 use super::{
-    client_auth,
+    client_auth, device_grant,
     error::{ErrorCode, OAuthError, OAuthResult},
     form_params, pkce, refresh_grant, scope,
 };
@@ -70,6 +71,10 @@ async fn handle(
         Some("client_credentials") => Ok((
             client_credentials(state, tenant, &client, &params).await?,
             "client_credentials",
+        )),
+        Some(device_grant::GRANT_TYPE) => Ok((
+            device_grant::grant(state, tenant, ip, headers, &client, &params).await?,
+            "device_code",
         )),
         Some(_) => Err(OAuthError::new(
             ErrorCode::UnsupportedGrantType,

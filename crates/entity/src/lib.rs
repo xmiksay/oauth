@@ -14,6 +14,7 @@ pub mod audit_events;
 pub mod authorization_codes;
 pub mod client_secrets;
 pub mod consent_grants;
+pub mod device_authorizations;
 pub mod directory_role_assignments;
 pub mod email_tokens;
 pub mod federation_states;
@@ -250,6 +251,28 @@ mod tests {
                     session_id: None,
                     created_at: now(),
                     expires_at: now(),
+                }
+            ),
+            format!(
+                "{:?}",
+                device_authorizations::Model {
+                    id,
+                    tenant_id: id,
+                    application_id: id,
+                    device_code_hash: bytes.clone(),
+                    user_code_hash: bytes.clone(),
+                    scopes: vec![],
+                    resource_application_id: None,
+                    status: enums::DeviceStatus::Pending,
+                    user_id: None,
+                    amr: vec![],
+                    auth_time: None,
+                    interval_secs: 5,
+                    last_polled_at: None,
+                    created_at: now(),
+                    expires_at: now(),
+                    decided_at: None,
+                    consumed_at: None,
                 }
             ),
             format!(
