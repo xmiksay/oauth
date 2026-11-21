@@ -44,13 +44,22 @@ pub const DEVICE_AUTHORIZE_PER_IP: Limit = Limit {
     max: 30,
     window_secs: 300,
 };
-/// User codes entered from one IP within one tenant. A user code carries
-/// ~34.5 bits and lives 15 minutes, so guessing one stays hopeless even
-/// spread over many addresses.
+/// User codes entered from one IP within one tenant.
 pub const USER_CODE_PER_IP: Limit = Limit {
     max: 10,
     window_secs: 300,
 };
+/// User codes that matched no pending request, per tenant from all
+/// addresses together ([`USER_CODE_MISS_KEY`]). Per-IP buckets alone don't
+/// bound guessing: an IPv6 /48 is 65,536 of them. With this cap a tenant
+/// takes at most 900 wrong guesses in a code's 15 minutes; against 20^8
+/// (~2^34.6) codes that is a hit chance of ~3.5e-8 per live code. The price:
+/// a flood of wrong codes blocks code entry tenant-wide for the window.
+pub const USER_CODE_MISSES: Limit = Limit {
+    max: 300,
+    window_secs: 300,
+};
+pub const USER_CODE_MISS_KEY: &str = "usercode-miss";
 
 /// Home-realm discovery lookups from one IP within one tenant.
 pub const DISCOVER_PER_IP: Limit = Limit {
@@ -149,12 +158,7 @@ pub async fn hit(
     limit: Limit,
     now: DateTime<Utc>,
 ) -> anyhow::Result<Result<(), u64>> {
-    let start_secs = window_start(now.timestamp(), limit.window_secs);
-    let start: DateTime<FixedOffset> = Utc
-        .timestamp_opt(start_secs, 0)
-        .single()
-        .context("rate limit window out of range")?
-        .fixed_offset();
+    let start = window_start_at(now, limit)?;
     let expires = start + chrono::Duration::seconds(limit.window_secs);
     let row = conn
         .query_one_raw(Statement::from_sql_and_values(
@@ -182,6 +186,49 @@ pub async fn hit(
     } else {
         Ok(Ok(()))
     }
+}
+
+/// Whether the bucket is already full, without counting an attempt — for a
+/// bucket that [`hit`] fills only on failures. `Err(retry_after_secs)` when
+/// full. Concurrent attempts can each pass this before any of them is
+/// counted; the per-IP bucket hit first bounds that overshoot.
+pub async fn check(
+    conn: &impl ConnectionTrait,
+    tenant_id: Uuid,
+    key: &str,
+    limit: Limit,
+    now: DateTime<Utc>,
+) -> anyhow::Result<Result<(), u64>> {
+    let start = window_start_at(now, limit)?;
+    let row = conn
+        .query_one_raw(Statement::from_sql_and_values(
+            conn.get_database_backend(),
+            r"SELECT count FROM rate_limit_buckets
+              WHERE tenant_id = $1 AND key_hash = $2 AND window_start = $3",
+            [tenant_id.into(), secret::hash(key).into(), start.into()],
+        ))
+        .await
+        .context("reading rate limit bucket")?;
+    let count: i32 = match row {
+        Some(row) => row
+            .try_get("", "count")
+            .context("reading rate limit count")?,
+        None => 0,
+    };
+    if count >= limit.max {
+        Ok(Err(retry_after(now.timestamp(), limit.window_secs)))
+    } else {
+        Ok(Ok(()))
+    }
+}
+
+fn window_start_at(now: DateTime<Utc>, limit: Limit) -> anyhow::Result<DateTime<FixedOffset>> {
+    let start_secs = window_start(now.timestamp(), limit.window_secs);
+    Ok(Utc
+        .timestamp_opt(start_secs, 0)
+        .single()
+        .context("rate limit window out of range")?
+        .fixed_offset())
 }
 
 #[cfg(test)]

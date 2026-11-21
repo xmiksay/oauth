@@ -132,7 +132,7 @@ still waits for a click).
 
 | Call | Body | Response |
 |---|---|---|
-| `POST /api/authn/device` | `{ "user_code" }` | `200 { "redirect": "{origin}/login?tx={id}" }` and the tx-binding cookie: a login transaction for the device request, at `consent` when this browser has a session, else at `password`. With a session and a scope needing admin consent: no transaction, the request is denied and the answer is `200 { "redirect": "{origin}/device?error=consent_required" }`. Case, `-` and whitespace in the code are ignored. `401 invalid_code` for anything else — unknown, expired, already decided, another tenant's, or of a client that turned the grant off (never distinguished); `429` over 10 / 5 min per IP (counted before the lookup) |
+| `POST /api/authn/device` | `{ "user_code" }` | `200 { "redirect": "{origin}/login?tx={id}" }` and the tx-binding cookie: a login transaction for the device request, at `consent` when this browser has a session, else at `password`. With a session and a scope needing admin consent: no transaction, the request is denied and the answer is `200 { "redirect": "{origin}/device?error=consent_required" }`. Case, `-` and whitespace in the code are ignored. `401 invalid_code` for anything else — unknown, expired, already decided, another tenant's, or of a client that turned the grant off (never distinguished); `429` over 10 / 5 min per IP (counted before the lookup) or after 300 wrong codes / 5 min in the tenant ([why](../device_code.md#guessing-user-codes)) |
 
 The transaction runs like any other (`password` → `mfa` → … → `consent`), but
 ends on `/device` instead of a client redirect URI:
@@ -241,6 +241,7 @@ successes too. IPv6 clients are bucketed per /64.
 | client IP, per tenant | 30 / 5 min | `discover` |
 | client IP, per tenant | 30 / 5 min | `federation/{idp}` |
 | client IP, per tenant | 10 / 5 min | `POST /api/authn/device` (user codes entered) |
+| tenant | 300 / 5 min | `POST /api/authn/device`: only codes matching no pending request count; when full, every entry is refused |
 | client IP, per tenant | 30 / 5 min | `POST /oauth2/devicecode` → `429` JSON (`rate_limited`) |
 
 ## Passkeys

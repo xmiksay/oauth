@@ -22,6 +22,10 @@ pub struct NewSession<'a> {
     pub auth_time: DateTime<FixedOffset>,
     pub ip: Option<IpAddr>,
     pub user_agent: Option<&'a str>,
+    /// Keeps the session at least until then (instead of only
+    /// `SESSION_TTL_HOURS`): a device's session must outlive its refresh
+    /// tokens, or the user could no longer see and revoke it.
+    pub min_expires_at: Option<DateTime<FixedOffset>>,
 }
 
 /// Creates a session; returns it with the cookie value.
@@ -47,7 +51,11 @@ pub async fn create(
         auth_time: Set(new.auth_time),
         ip: Set(new.ip.map(|ip| ip.to_string())),
         user_agent: Set(user_agent),
-        expires_at: Set(now + Duration::hours(i64::from(config.session_ttl_hours))),
+        expires_at: Set(expires_at(
+            now,
+            config.session_ttl_hours,
+            new.min_expires_at,
+        )),
         ..Default::default()
     };
     let session = sessions::Entity::insert(row)
@@ -55,6 +63,15 @@ pub async fn create(
         .await
         .context("creating session")?;
     Ok((session, token))
+}
+
+fn expires_at(
+    now: DateTime<FixedOffset>,
+    ttl_hours: u32,
+    min: Option<DateTime<FixedOffset>>,
+) -> DateTime<FixedOffset> {
+    let ttl = now + Duration::hours(i64::from(ttl_hours));
+    min.map_or(ttl, |min| min.max(ttl))
 }
 
 pub async fn find_by_id(
@@ -120,4 +137,19 @@ pub async fn delete(conn: &impl ConnectionTrait, id: Uuid) -> anyhow::Result<()>
         .await
         .context("deleting session")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expiry_is_the_ttl_unless_a_later_minimum_is_asked() {
+        let now = chrono::Utc::now().fixed_offset();
+        let ttl = now + Duration::hours(24);
+        assert_eq!(expires_at(now, 24, None), ttl);
+        assert_eq!(expires_at(now, 24, Some(now + Duration::hours(1))), ttl);
+        let later = now + Duration::days(14);
+        assert_eq!(expires_at(now, 24, Some(later)), later);
+    }
 }

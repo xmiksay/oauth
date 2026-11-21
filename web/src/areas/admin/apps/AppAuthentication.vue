@@ -118,6 +118,7 @@ async function save() {
     </div>
     <label class="flex items-start gap-2 text-sm">
       <input
+        id="aa-device"
         v-model="deviceCode"
         type="checkbox"
         class="mt-1"

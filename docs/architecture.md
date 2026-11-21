@@ -328,7 +328,8 @@ Cross-origin SPAs (public client + PKCE on another host) need to read the
 protocol endpoints from the browser. CORS — preflight and actual responses —
 exists **only** on discovery, JWKS, `/oauth2/token`, `/oauth2/revoke` and
 `/oauth2/userinfo`; never on the login API, the management API, introspection
-(confidential clients only) or logout (the `POST` is the tenant's own SPA,
+(confidential clients only), `/oauth2/devicecode` (its clients are devices
+without a usable browser, never a web page) or logout (the `POST` is the tenant's own SPA,
 CSRF-checked by `Origin`; `GET` is a navigation).
 
 - **Allowed origins of an app** = its explicit `web_origins` ∪, for a public

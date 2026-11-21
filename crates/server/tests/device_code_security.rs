@@ -16,13 +16,14 @@ use common::{
     ORIGIN, at,
     device::{approve_as, enable, enter, poll, rows, start},
     flow::Fixture,
-    mgmt::{app_admin_token, app_by_client_id, audited, call},
+    mgmt::{app_admin_token, app_by_client_id, audited, audited_any, call},
 };
+use entity::{refresh_tokens, sessions};
 use oauth_server::{
     authn::rate_limit,
     directory::{self, NewTenant},
 };
-use sea_orm::ConnectionTrait;
+use sea_orm::{ConnectionTrait, EntityTrait, PaginatorTrait};
 use serde_json::json;
 
 #[tokio::test]
@@ -119,6 +120,69 @@ async fn code_entry_is_csrf_checked_and_rate_limited() {
     let (_, start) = start(&f, &f.spa, None, "openid").await;
     let (status, body) = enter(&mut browser, start["user_code"].as_str().unwrap()).await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+}
+
+#[tokio::test]
+async fn wrong_codes_are_capped_per_tenant_across_addresses() {
+    let f = Fixture::new().await;
+    enable(&f, &f.spa).await;
+    let (key, misses) = (rate_limit::USER_CODE_MISS_KEY, rate_limit::USER_CODE_MISSES);
+    // Wrong guesses from many other addresses, one short of the cap.
+    for _ in 1..misses.max {
+        let hit = rate_limit::hit(&f.db, f.tenant.id, key, misses, chrono::Utc::now()).await;
+        assert!(hit.unwrap().is_ok());
+    }
+    // Right codes don't count towards it.
+    let mut browser = f.browser();
+    for _ in 0..2 {
+        let (_, started) = start(&f, &f.spa, None, "openid").await;
+        let (status, body) = enter(&mut browser, started["user_code"].as_str().unwrap()).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    // The last miss fills it; from then on even a right code is refused.
+    let (status, _) = enter(&mut browser, "BCDF-GHJK").await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (_, started) = start(&f, &f.spa, None, "openid").await;
+    let (status, body) = enter(&mut f.browser(), started["user_code"].as_str().unwrap()).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(body["error"], "rate_limited");
+}
+
+#[tokio::test]
+async fn concurrent_polls_redeem_once() {
+    let f = Fixture::new().await;
+    enable(&f, &f.spa).await;
+    for round in 0..3_usize {
+        let (_, started) = start(&f, &f.spa, None, "openid offline_access").await;
+        let user_code = started["user_code"].as_str().unwrap();
+        approve_as(&f, user_code, "ann@example.com", true).await;
+        let device_code = started["device_code"].as_str().unwrap();
+        let sessions_before = sessions::Entity::find().count(&f.db).await.unwrap();
+        let (a, b, c, d) = tokio::join!(
+            poll(&f, &f.spa, None, device_code),
+            poll(&f, &f.spa, None, device_code),
+            poll(&f, &f.spa, None, device_code),
+            poll(&f, &f.spa, None, device_code),
+        );
+        let all = [a, b, c, d];
+        let won: Vec<_> = all.iter().filter(|(s, _)| *s == StatusCode::OK).collect();
+        assert_eq!(won.len(), 1, "round {round}: {all:?}");
+        assert!(won[0].1["refresh_token"].is_string(), "round {round}");
+        for (status, body) in all.iter().filter(|(s, _)| *s != StatusCode::OK) {
+            assert_eq!(
+                (*status, body["error"].as_str()),
+                (StatusCode::BAD_REQUEST, Some("invalid_grant")),
+                "round {round}"
+            );
+        }
+        let redeemed = audited_any(&f.db, "device_code.redeem").await;
+        assert_eq!(redeemed.len(), round + 1, "round {round}");
+        let sessions_after = sessions::Entity::find().count(&f.db).await.unwrap();
+        // Only the winner made the device a session.
+        assert_eq!(sessions_after, sessions_before + 1, "round {round}");
+        let issued = refresh_tokens::Entity::find().count(&f.db).await.unwrap();
+        assert_eq!(issued, u64::try_from(round + 1).unwrap(), "round {round}");
+    }
 }
 
 #[tokio::test]

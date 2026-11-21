@@ -11,20 +11,21 @@
 //! code entry, sign-in, confirmation and polling.
 mod common;
 
-use axum::http::StatusCode;
+use axum::http::{Method, StatusCode};
 use common::{
     ORIGIN,
     device::{approve_as, decide, enable, enter_tx, forget_last_poll, poll, rows, sign_in, start},
     flow::Fixture,
-    mgmt::audited_any,
+    mgmt::{audited_any, call, mint_user_token},
 };
-use entity::{enums::DeviceStatus, login_transactions, sessions};
+use entity::{enums::DeviceStatus, login_transactions, refresh_tokens, sessions};
 use oauth_server::jobs::sweeper;
 use sea_orm::{ConnectionTrait, EntityTrait};
 use serde_json::Value;
 use uuid::Uuid;
 
 const EMAIL: &str = "ann@example.com";
+const ME_SESSIONS: &str = "/api/v1/me/sessions";
 const SCOPE: &str = "openid offline_access api://orders/Orders.Read";
 
 #[tokio::test]
@@ -196,6 +197,72 @@ async fn oidc_only_request_confirms_without_resource() {
     let (status, tokens) = poll(&f, &f.spa, None, device_code).await;
     assert_eq!(status, StatusCode::OK, "{tokens}");
     assert!(tokens.get("refresh_token").is_none());
+    // Nothing outlives the session here, so it keeps the normal TTL.
+    let sid = device_session(&f).await;
+    let ttl = chrono::Duration::hours(i64::from(f.config.session_ttl_hours));
+    let late = chrono::Utc::now().fixed_offset() + ttl;
+    assert!(sid.expires_at <= late, "{:?}", sid.expires_at);
+}
+
+/// The session the (only) redeemed device request got.
+async fn device_session(f: &Fixture) -> sessions::Model {
+    let redeemed = audited_any(&f.db, "device_code.redeem").await;
+    assert_eq!(redeemed.len(), 1);
+    let sid = Uuid::parse_str(redeemed[0]["session_id"].as_str().unwrap()).unwrap();
+    sessions::Entity::find_by_id(sid)
+        .one(&f.db)
+        .await
+        .unwrap()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn device_session_lives_as_long_as_its_refresh_tokens() {
+    let f = Fixture::new().await;
+    enable(&f, &f.spa).await;
+    let (_, start) = start(&f, &f.spa, None, "openid offline_access").await;
+    approve_as(&f, start["user_code"].as_str().unwrap(), EMAIL, true).await;
+    let (status, tokens) = poll(&f, &f.spa, None, start["device_code"].as_str().unwrap()).await;
+    assert_eq!(status, StatusCode::OK, "{tokens}");
+    let session = device_session(&f).await;
+    // Past SESSION_TTL_HOURS the refresh token still works, so the user must
+    // still find the device in My Account and be able to sign it out.
+    let family = refresh_tokens::Entity::find().all(&f.db).await.unwrap();
+    assert_eq!(family.len(), 1);
+    assert_eq!(session.expires_at, family[0].expires_at);
+    let ttl = chrono::Duration::hours(i64::from(f.config.session_ttl_hours));
+    assert!(session.expires_at > chrono::Utc::now().fixed_offset() + ttl);
+    sweeper::run_once(&f.db).await.unwrap().unwrap();
+
+    let token = mint_user_token(&f.db, &f.config, &f.tenant, &f.user).await;
+    let (_, list) = call(&f.app, Method::GET, ME_SESSIONS, Some(&token), None).await;
+    let listed = list["items"].as_array().unwrap();
+    assert!(
+        listed.iter().any(|i| i["id"] == session.id.to_string()),
+        "{list}"
+    );
+    let refresh = |rt: String| {
+        let f = &f;
+        async move {
+            let form = [
+                ("grant_type", "refresh_token"),
+                ("refresh_token", rt.as_str()),
+                ("client_id", "spa-app"),
+            ];
+            let (status, _, body) = f.post_form("/oauth2/token", &form, None).await;
+            (status, body)
+        }
+    };
+    let (status, body) = refresh(tokens["refresh_token"].as_str().unwrap().to_owned()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let path = format!("{ME_SESSIONS}/{}", session.id);
+    let (status, _) = call(&f.app, Method::DELETE, &path, Some(&token), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, body) = refresh(body["refresh_token"].as_str().unwrap().to_owned()).await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("invalid_grant"))
+    );
 }
 
 #[tokio::test]

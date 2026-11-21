@@ -29,6 +29,7 @@ function fakeApp(over: Partial<Application> = {}): Application {
     groups_claim_format: 'id',
     access_token_ttl_secs: 3600,
     refresh_token_ttl_secs: 86400,
+    device_code_enabled: false,
     created_at: '',
     updated_at: '',
     ...over,
@@ -73,5 +74,27 @@ describe('AppAuthentication', () => {
     expect(w.find('[data-testid=derived-origins]').exists()).toBe(false)
     expect(w.find('#aa-origins').attributes('disabled')).toBeDefined()
     expect(w.find('button[type=submit]').exists()).toBe(false)
+  })
+
+  it('toggles the device code flow and sends only that change', async () => {
+    const w = await mountForm(fakeApp())
+    const box = w.find('#aa-device')
+    expect((box.element as HTMLInputElement).checked).toBe(false)
+
+    applications.update.mockResolvedValue(fakeApp({ device_code_enabled: true }))
+    await box.setValue(true)
+    await w.find('form').trigger('submit')
+    await flushPromises()
+    expect(applications.update).toHaveBeenCalledWith('a1', { device_code_enabled: true })
+    expect(w.text()).toContain('Saved.')
+  })
+
+  it('shows the device code flag of the app and disables it for built-ins', async () => {
+    const w = await mountForm(fakeApp({ builtin: true, device_code_enabled: true }), [
+      'GlobalAdmin',
+    ])
+    const box = w.find('#aa-device')
+    expect((box.element as HTMLInputElement).checked).toBe(true)
+    expect(box.attributes('disabled')).toBeDefined()
   })
 })

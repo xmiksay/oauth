@@ -7,7 +7,7 @@
 
 use axum::{extract::State, http::HeaderMap};
 use entity::{
-    applications,
+    applications, device_authorizations,
     enums::{LoginStage, Outcome as AuditOutcome},
     sessions,
 };
@@ -47,25 +47,24 @@ pub async fn enter(
 ) -> AuthnResult<Outcome> {
     let ctx = Ctx::new(&state, &tenant, ip, &headers);
     let conn = &state.db;
+    let now = chrono::Utc::now();
     // Counted before the lookup, so parallel guesses can't slip past it.
     let key = format!("usercode:{}", rate_limit::ip_key(ctx.ip));
     let limit = rate_limit::USER_CODE_PER_IP;
-    if let Err(retry_after) =
-        rate_limit::hit(conn, tenant.id, &key, limit, chrono::Utc::now()).await?
-    {
+    if let Err(retry_after) = rate_limit::hit(conn, tenant.id, &key, limit, now).await? {
+        return Err(AuthnError::RateLimited { retry_after });
+    }
+    let (key, misses) = (rate_limit::USER_CODE_MISS_KEY, rate_limit::USER_CODE_MISSES);
+    if let Err(retry_after) = rate_limit::check(conn, tenant.id, key, misses, now).await? {
         return Err(AuthnError::RateLimited { retry_after });
     }
     // Unknown, expired, decided or of a client that opted out: all the same.
     let code = user_code::normalize(&body.user_code).ok_or(AuthnError::InvalidCode)?;
-    let row = device_flow::find_pending(conn, tenant.id, &code)
-        .await?
-        .ok_or(AuthnError::InvalidCode)?;
-    let client = applications::Entity::find_by_id(row.application_id)
-        .filter(applications::Column::TenantId.eq(tenant.id))
-        .one(conn)
-        .await?
-        .filter(|c| c.device_code_enabled)
-        .ok_or(AuthnError::InvalidCode)?;
+    let Some((row, client)) = find(conn, tenant.id, &code).await? else {
+        // Only misses fill it, so users entering real codes don't.
+        let _ = rate_limit::hit(conn, tenant.id, key, misses, now).await?;
+        return Err(AuthnError::InvalidCode);
+    };
     let (oidc, resource_scopes) = scope::split_stored(&row.scopes);
     let req = AuthRequest {
         client_id: client.client_id.clone(),
@@ -123,6 +122,23 @@ pub async fn enter(
         url: format!("{origin}/login?tx={id}"),
         cookies: vec![cookie::set(&state.config, Kind::TxBinding, &binding)?],
     })
+}
+
+/// The pending request a user code names, with its still opted-in client.
+async fn find(
+    conn: &impl ConnectionTrait,
+    tenant_id: Uuid,
+    code: &str,
+) -> anyhow::Result<Option<(device_authorizations::Model, applications::Model)>> {
+    let Some(row) = device_flow::find_pending(conn, tenant_id, code).await? else {
+        return Ok(None);
+    };
+    let client = applications::Entity::find_by_id(row.application_id)
+        .filter(applications::Column::TenantId.eq(tenant_id))
+        .one(conn)
+        .await?
+        .filter(|c| c.device_code_enabled);
+    Ok(client.map(|c| (row, c)))
 }
 
 /// `{origin}/device?{query}` — where a device sign-in ends.
