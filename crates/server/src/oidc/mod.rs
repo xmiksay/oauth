@@ -3,6 +3,8 @@
 
 mod authorize;
 pub mod client_auth;
+mod device_authorization;
+mod device_grant;
 mod discovery;
 pub mod error;
 mod introspect;
@@ -38,6 +40,10 @@ pub fn router(state: AppState) -> Router<AppState> {
         .route(
             "/discovery/keys",
             get(discovery::jwks).options(cors::preflight_get),
+        )
+        .route(
+            "/oauth2/devicecode",
+            post(device_authorization::device_authorization),
         )
         .route(
             "/oauth2/userinfo",

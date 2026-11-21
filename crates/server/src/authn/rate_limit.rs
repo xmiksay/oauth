@@ -38,6 +38,20 @@ pub const AUTHORIZE_PER_IP: Limit = Limit {
     window_secs: 300,
 };
 
+/// Device authorizations requested from one IP within one tenant (bounds
+/// the rows an unauthenticated client can make `/oauth2/devicecode` create).
+pub const DEVICE_AUTHORIZE_PER_IP: Limit = Limit {
+    max: 30,
+    window_secs: 300,
+};
+/// User codes entered from one IP within one tenant. A user code carries
+/// ~34.5 bits and lives 15 minutes, so guessing one stays hopeless even
+/// spread over many addresses.
+pub const USER_CODE_PER_IP: Limit = Limit {
+    max: 10,
+    window_secs: 300,
+};
+
 /// Home-realm discovery lookups from one IP within one tenant.
 pub const DISCOVER_PER_IP: Limit = Limit {
     max: 30,

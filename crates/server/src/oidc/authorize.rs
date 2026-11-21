@@ -167,12 +167,7 @@ async fn to_login(
     {
         return Ok(AuthnError::RateLimited { retry_after }.into_response());
     }
-    // Reuse the browser's existing binding so parallel tabs keep working.
-    let binding =
-        match cookie::read(env.headers, &state.config, Kind::TxBinding).find(|v| v.len() == 43) {
-            Some(existing) => existing.to_owned(),
-            None => crate::secret::random_token()?,
-        };
+    let binding = tx::browser_binding(env.headers, &state.config)?;
     let id = tx::create(
         &state.db,
         tx::NewTx {
@@ -256,44 +251,24 @@ async fn validate(
             );
         }
     };
-    let requested = match scope::parse(get("scope").unwrap_or_default()) {
-        Ok(r) if r.oidc.is_empty() && r.resource.is_none() => {
-            return reject(ErrorCode::InvalidScope, "scope is required");
-        }
-        Ok(r) => r,
-        Err(msg) => return reject(ErrorCode::InvalidScope, &msg),
-    };
-    let (resource_id, resource_scopes) = match &requested.resource {
-        None => (None, Vec::new()),
-        Some((prefix, values)) => {
-            let Some(resource) = scope::find_resource(conn, client.tenant_id, prefix).await? else {
-                return reject(ErrorCode::InvalidScope, "unknown resource");
-            };
-            let Some(scopes) = scope::resolve_delegated(conn, client.id, &resource, values).await?
-            else {
-                return reject(
-                    ErrorCode::InvalidScope,
-                    "the resource does not expose a requested scope",
-                );
-            };
-            (
-                Some(resource.id),
-                scopes.into_iter().map(|s| s.value).collect(),
-            )
-        }
-    };
+    let scopes =
+        match scope::resolve_request(conn, client, get("scope").unwrap_or_default()).await? {
+            Ok(scopes) => scopes,
+            Err(msg) => return reject(ErrorCode::InvalidScope, &msg),
+        };
     Ok(Ok(AuthRequest {
         client_id: client.client_id.clone(),
         redirect_uri: redirect_uri.to_owned(),
         state: get("state").map(str::to_owned),
         nonce: get("nonce").map(str::to_owned),
         code_challenge: challenge.to_owned(),
-        oidc_scopes: requested.oidc,
-        resource_id,
-        resource_scopes,
+        oidc_scopes: scopes.oidc,
+        resource_id: scopes.resource_id,
+        resource_scopes: scopes.resource_scopes,
         prompt,
         max_age,
         domain_hint: hint("domain_hint"),
         idp: hint("idp"),
+        device: None,
     }))
 }

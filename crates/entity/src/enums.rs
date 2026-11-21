@@ -189,6 +189,19 @@ impl LoginStage {
     }
 }
 
+/// State of a device authorization (RFC 8628).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter, DeriveActiveEnum)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
+pub enum DeviceStatus {
+    /// Waiting for the user to enter the code and decide.
+    #[sea_orm(string_value = "pending")]
+    Pending,
+    #[sea_orm(string_value = "approved")]
+    Approved,
+    #[sea_orm(string_value = "denied")]
+    Denied,
+}
+
 /// What a WebAuthn challenge may be answered for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter, DeriveActiveEnum)]
 #[sea_orm(rs_type = "String", db_type = "Text")]

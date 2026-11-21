@@ -70,20 +70,24 @@ impl<'a> Ctx<'a> {
         self.state.config.issuer(&self.tenant.slug)
     }
 
-    /// An RFC 6749 §4.1.2.1 error sent back to the (validated) redirect URI.
+    /// An RFC 6749 §4.1.2.1 error sent back to the (validated) redirect URI;
+    /// a device sign-in has none and ends on `/device?error=…` instead.
     pub fn error_redirect(
         &self,
         req: &AuthRequest,
         code: ErrorCode,
         description: &str,
     ) -> AuthnResult<StepOutcome> {
-        let url = redirect::error_url(
-            &req.redirect_uri,
-            code,
-            description,
-            req.state.as_deref(),
-            &self.issuer(),
-        );
+        let url = match req.device {
+            Some(_) => super::device_code::result_url(self, &format!("error={}", code.as_str())),
+            None => redirect::error_url(
+                &req.redirect_uri,
+                code,
+                description,
+                req.state.as_deref(),
+                &self.issuer(),
+            ),
+        };
         Ok(StepOutcome::Redirect {
             url,
             cookies: Vec::new(),

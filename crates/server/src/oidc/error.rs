@@ -25,6 +25,10 @@ pub enum ErrorCode {
     InvalidToken,
     InsufficientScope,
     ServerError,
+    /// RFC 8628 §3.5 device-grant poll answers.
+    AuthorizationPending,
+    SlowDown,
+    ExpiredToken,
 }
 
 impl ErrorCode {
@@ -44,6 +48,9 @@ impl ErrorCode {
             Self::InvalidToken => "invalid_token",
             Self::InsufficientScope => "insufficient_scope",
             Self::ServerError => "server_error",
+            Self::AuthorizationPending => "authorization_pending",
+            Self::SlowDown => "slow_down",
+            Self::ExpiredToken => "expired_token",
         }
     }
 

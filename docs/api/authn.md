@@ -2,8 +2,8 @@
 
 Every path here is on the tenant's own host `{origin}` =
 `{scheme}://{t}.{PUBLIC_URL host}[:port]` (unknown hosts → 404). The contract
-the SPA pages `/login?tx=<id>` and `/logout` call. `/oauth2/authorize`
-creates a **login transaction**, sets the transaction-binding cookie and
+the SPA pages `/login?tx=<id>`, `/device` and `/logout` call. `/oauth2/authorize`
+(or a device's user code, see [Device code](#device-code)) creates a **login transaction**, sets the transaction-binding cookie and
 redirects the browser to `{origin}/login?tx=<id>`; the SPA then walks the steps below until
 the API answers with a `redirect`, which the SPA follows
 (`window.location.assign`).
@@ -52,6 +52,7 @@ the API answers with a `redirect`, which the SPA follows
   "idp_hint": null,
   "link": null,
   "notice": null,
+  "device": false,
   "features": { "password_reset": true, "federation": true }
 }
 ```
@@ -74,7 +75,10 @@ authorize request named with `idp={id}` or `domain_hint={domain}`, else `null`.
 the upstream identity waiting to be linked. `notice` (password step):
 `"link_unavailable"` when a parked identity was dropped because its provider
 was disabled, deleted or no longer `link_only`, else `null`. `features.federation`: the
-tenant has an enabled provider (offer email-domain discovery).
+tenant has an enabled provider (offer email-domain discovery). `device`: the transaction
+signs a device in ([Device code](#device-code)); its `consent` step is then always shown
+(also when nothing awaits consent — `consent` is `null` without a resource) and lists
+every requested scope of the resource, granted before or not.
 
 ## Federation
 
@@ -114,6 +118,29 @@ link (audited as a failed `user.identity_link`); nothing in the response
 says so — the user can link again from My Account.
 My Account callbacks also return `federation_error=session_ended` when the
 session that started the link has ended.
+
+## Device code
+
+The browser side of the device authorization grant (RFC 8628; protocol in
+[../architecture.md](../architecture.md#device-authorization-grant)). A device
+shows `verification_uri` = `{origin}/device` and a user code like `BDFG-KLMN`
+(`verification_uri_complete` adds `?user_code=…`; the page prefills it but
+still waits for a click).
+
+| Call | Body | Response |
+|---|---|---|
+| `POST /api/authn/device` | `{ "user_code" }` | `200 { "redirect": "{origin}/login?tx={id}" }` and the tx-binding cookie: a login transaction for the device request, at `consent` when this browser has a session, else at `password`. Case, `-` and whitespace in the code are ignored. `401 invalid_code` for anything else — unknown, expired, already decided, another tenant's, or of a client that turned the grant off (never distinguished); `429` over 10 / 5 min per IP (counted before the lookup) |
+
+The transaction runs like any other (`password` → `mfa` → … → `consent`), but
+ends on `/device` instead of a client redirect URI:
+
+| Final `redirect` | Meaning |
+|---|---|
+| `{origin}/device?result=approved` | Approved; the device's next poll gets tokens (a new session cookie is set when the browser signed in now) |
+| `{origin}/device?error=access_denied` | The user chose Deny; the device gets `access_denied` |
+| `{origin}/device?error=consent_required` | A requested scope needs admin consent; the request is denied (`access_denied` for the device) |
+| `{origin}/device?error=expired_token` | The request expired or was decided elsewhere before approval |
+| `{origin}/device?error=login_required` | The reused session ended while the confirmation was open |
 
 ## Email links (no transaction)
 
@@ -210,6 +237,8 @@ successes too. IPv6 clients are bucketed per /64.
 | client IP, per tenant | 30 / 5 min | `email/{verify,reset,invite}`, `email/invite/passkey[/options]` |
 | client IP, per tenant | 30 / 5 min | `discover` |
 | client IP, per tenant | 30 / 5 min | `federation/{idp}` |
+| client IP, per tenant | 10 / 5 min | `POST /api/authn/device` (user codes entered) |
+| client IP, per tenant | 30 / 5 min | `POST /oauth2/devicecode` → `429` JSON (`rate_limited`) |
 
 ## Passkeys
 

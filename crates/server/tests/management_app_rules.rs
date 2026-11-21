@@ -162,6 +162,10 @@ async fn credentials_of_privileged_apps_need_a_global_admin() {
     let origins = json!({ "web_origins": ["https://attacker.example"] });
     let (st, _) = call(&f.app, Method::PATCH, &svc_path, Some(&aa), Some(&origins)).await;
     assert_eq!(st, StatusCode::FORBIDDEN);
+    // The device code grant is another way to its tokens.
+    let device = json!({ "device_code_enabled": true });
+    let (st, _) = call(&f.app, Method::PATCH, &svc_path, Some(&aa), Some(&device)).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
     let rename = json!({ "display_name": "Service" });
     let (st, _) = call(&f.app, Method::PATCH, &svc_path, Some(&aa), Some(&rename)).await;
     assert_eq!(st, StatusCode::OK, "non-credential fields stay editable");

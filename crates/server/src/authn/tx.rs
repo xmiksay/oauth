@@ -22,8 +22,8 @@ use super::{
     ip::ClientIp,
 };
 use crate::{
-    app::AppState, consent::Decision, federation, oidc::params::AuthRequest, secret,
-    tenancy::Tenant,
+    app::AppState, config::Config, consent::Decision, federation, oidc::params::AuthRequest,
+    secret, tenancy::Tenant,
 };
 
 pub const TX_TTL_MINUTES: i64 = 15;
@@ -61,6 +61,15 @@ pub async fn create(conn: &impl ConnectionTrait, new: NewTx<'_>) -> anyhow::Resu
         .await
         .context("creating login transaction")?;
     Ok(id)
+}
+
+/// The value of the browser's transaction-binding cookie, or a new one.
+/// Reusing the existing binding keeps parallel tabs working.
+pub fn browser_binding(headers: &HeaderMap, config: &Config) -> anyhow::Result<String> {
+    match cookie::read(headers, config, Kind::TxBinding).find(|v| v.len() == 43) {
+        Some(existing) => Ok(existing.to_owned()),
+        None => secret::random_token(),
+    }
 }
 
 /// A live transaction with its decoded request.
@@ -256,10 +265,12 @@ pub async fn view(state: &AppState, tenant: &Tenant, tx: &LoadedTx) -> AuthnResu
                 Decision::NeedsUser(values) => values.clone(),
                 Decision::Granted | Decision::NeedsAdmin(_) => Vec::new(),
             };
+            // A device request lists everything the device will get.
+            let device = tx.req.device.is_some();
             let scopes: Vec<Value> = eval
                 .scopes
                 .iter()
-                .filter(|s| pending.contains(&s.value))
+                .filter(|s| device || pending.contains(&s.value))
                 .map(|s| json!({ "value": s.value, "description": s.description }))
                 .collect();
             eval.resource.map(|r| {
@@ -316,6 +327,7 @@ pub async fn view(state: &AppState, tenant: &Tenant, tx: &LoadedTx) -> AuthnResu
         "idp_hint": hint.map(brief),
         "link": link,
         "notice": notice,
+        "device": tx.req.device.is_some(),
         "features": {
             "password_reset": state.config.email_enabled(),
             "federation": !idps.is_empty(),

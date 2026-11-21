@@ -59,6 +59,7 @@ pub fn view(a: &applications::Model) -> Value {
         "groups_claim_format": a.groups_claim_format.to_value(),
         "access_token_ttl_secs": a.access_token_ttl_secs,
         "refresh_token_ttl_secs": a.refresh_token_ttl_secs,
+        "device_code_enabled": a.device_code_enabled,
         "created_at": ts(&a.created_at),
         "updated_at": ts(&a.updated_at),
     })
@@ -135,6 +136,7 @@ pub struct AppBody {
     groups_claim_format: Option<String>,
     access_token_ttl_secs: Option<i32>,
     refresh_token_ttl_secs: Option<i32>,
+    device_code_enabled: Option<bool>,
 }
 
 fn parse<E: ActiveEnum<Value = String>>(raw: &str, field: &str, allowed: &str) -> AppResult<E> {
@@ -225,6 +227,12 @@ fn apply(
         mark(
             set_changed(&mut row.refresh_token_ttl_secs, ttl),
             "refresh_token_ttl_secs",
+        );
+    }
+    if let Some(enabled) = body.device_code_enabled {
+        mark(
+            set_changed(&mut row.device_code_enabled, enabled),
+            "device_code_enabled",
         );
     }
     Ok(fields)
@@ -330,10 +338,11 @@ pub async fn update(
             )));
         }
     }
+    // Each opens a way to obtain the app's tokens, like a credential.
     if fields.iter().any(|f| {
         matches!(
             *f,
-            "redirect_uris" | "post_logout_redirect_uris" | "web_origins"
+            "redirect_uris" | "post_logout_redirect_uris" | "web_origins" | "device_code_enabled"
         )
     }) {
         ensure_may_manage_credentials(&txn, &caller, &app).await?;

@@ -18,7 +18,7 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
 | `crates/server/` | bin `oauth` (`serve`, `bootstrap`) + lib `oauth_server` (all modules; integration tests use it) |
 | `crates/entity/` | SeaORM entities (one file per table) + `enums.rs` |
 | `crates/migration/` | `sea-orm-migration` Migrator (append-only, raw SQL) |
-| `web/` | Vite + Vue 3 + TS + Tailwind + Pinia SPA (`/` portal, `/login`, `/logout`, `/myaccount`, `/admin` on each tenant host); conventions below |
+| `web/` | Vite + Vue 3 + TS + Tailwind + Pinia SPA (`/` portal, `/login`, `/logout`, `/device`, `/myaccount`, `/admin` on each tenant host); conventions below |
 | `docs/examples/k8s.yml` | Non-authoritative Kubernetes example (ConfigMap, Deployment, Service, PDB, Ingress for apex + `*.` wildcard); used by no real deployment; the manifests live outside this repo (CI only swaps the test Deployment's image). Requirements every deployment must meet: [docs/deploy.md](../docs/deploy.md#deployment-requirements) |
 | `.github/workflows/ci.yml` | `gate` (`make lint` + `make test` + `make web-build`) and `docker` (build only) on PR, push to `main` and `v*` tags; `publish` pushes to GHCR (`:main` + `:sha-<short>` from `main`, `:X.Y.Z` from `vX.Y.Z`, which must equal the workspace version, be on `main` and not be in GHCR yet; releases build without cache); `deploy-test` rolls the digest out to test.oauth.cz (`services/deployment/oauth-test`) over WireGuard. Actions pinned by SHA. Environments, secrets, release procedure: [docs/deploy.md](../docs/deploy.md) |
 
@@ -122,7 +122,7 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   `authorization_codes`, `refresh_tokens`, `opaque_access_tokens`, `outbox`,
   `email_tokens`, `known_devices`, `webauthn_challenges`, `telegram_links`,
   `telegram_link_codes`, `telegram_otps`, `identity_providers`,
-  `user_identities` or `federation_states` (nor a `mail::Email`'s body, nor
+  `user_identities`, `federation_states` or `device_authorizations` (nor a `mail::Email`'s body, nor
   a `login_transactions` row's `pending_identity`).
   Never log a Bot API URL or a reqwest error's text (the URL carries the bot
   token: `telegram::api` logs error kinds only), a chat id or a message text. `webauthn_credentials` holds only public keys and credential ids, so
@@ -145,6 +145,14 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   that belongs to a user. The client secret is write-only (`has_secret`).
   The last-sign-in-method rule is `federation::identities::Methods` —
   anything removing a password, passkey or identity goes through it.
+- Device code grant (`device_flow`, `oidc::device_authorization` /
+  `device_grant`, `authn::device_code`; [docs/architecture.md](../docs/architecture.md#device-authorization-grant)):
+  the browser side is an ordinary login transaction whose `AuthRequest.device`
+  names the row; it always stops at the consent step (a phished user code
+  must never approve silently) and ends on `/device`, never at a client
+  redirect URI. Polls and redemption hold the row `FOR UPDATE`; the decision
+  is a CAS on `pending`. Toggling `device_code_enabled` is a credential
+  change (`ensure_may_manage_credentials`).
 - Bearer values (cookies, codes, tokens) come from `secret::random_token`
   and are stored only as `secret::hash`; unguessable handles from
   `secret::random_uuid` (not UUIDv7).
@@ -236,7 +244,7 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
 Layout: `src/api/` (HTTP), `src/auth/oidc.ts` (UserManager settings, `SPA_SCOPE`),
 `src/stores/` (Pinia: `auth`, `tenant`, `application`), `src/composables/`
 (`usePagedList`, `useAction`, `usePrincipalNames`), `src/components/` (shared UI),
-`src/areas/{portal,login,email,logout,myaccount,admin}/` (pages; `portal` = `/`; admin split into
+`src/areas/{portal,login,email,logout,device,myaccount,admin}/` (pages; `portal` = `/`; admin split into
 `users/ groups/ apps/ access/ federation/`), `src/router/` (`admin.ts` = admin child routes),
 `src/lib/format.ts` (pure helpers), `src/lib/navigate.ts` (full-page navigation, mocked in
 tests), `src/test/helpers.ts` (fetch / UserManager fakes).

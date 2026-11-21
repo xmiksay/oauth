@@ -12,6 +12,7 @@ mod complete;
 pub mod cookie;
 mod ctx;
 mod device;
+mod device_code;
 mod email;
 mod federation;
 mod federation_link;
@@ -66,6 +67,7 @@ pub fn router(state: AppState) -> Router<AppState> {
         // A top-level GET from the provider: the CSRF layer lets GETs pass,
         // the state and the binding cookie protect it.
         .route("/federation/callback", get(federation::callback))
+        .route("/api/authn/device", post(device_code::enter))
         .route("/api/authn/password-reset", post(reset::request))
         .route("/api/authn/email/reset", post(reset::complete))
         .route("/api/authn/email/invite", post(email::accept_invite))

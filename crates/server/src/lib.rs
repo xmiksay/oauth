@@ -10,6 +10,7 @@ pub mod config;
 pub mod consent;
 pub mod cors;
 pub mod db;
+pub mod device_flow;
 pub mod directory;
 pub mod error;
 pub mod federation;

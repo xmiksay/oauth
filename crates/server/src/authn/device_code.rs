@@ -1,0 +1,196 @@
+//! Browser side of the device authorization grant (RFC 8628). The SPA's
+//! `/device` page submits the user code to `POST /api/authn/device`, which
+//! starts an ordinary login transaction for that request (at the consent
+//! step when this browser is signed in already). Its `AuthRequest.device`
+//! makes completion approve the device request instead of issuing a code,
+//! and errors land on `/device?…` instead of a client redirect URI.
+
+use axum::{extract::State, http::HeaderMap};
+use entity::{
+    applications,
+    enums::{LoginStage, Outcome as AuditOutcome},
+    sessions,
+};
+use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter};
+use serde::Deserialize;
+use serde_json::{Value, json};
+use uuid::Uuid;
+
+use super::{
+    AuthnError, AuthnResult, JsonBody, Outcome,
+    cookie::{self, Kind},
+    ctx::Ctx,
+    ip::ClientIp,
+    rate_limit, session, tx,
+};
+use crate::{
+    app::AppState,
+    audit,
+    device_flow::{self, Decision, user_code},
+    oidc::{params::AuthRequest, scope},
+    tenancy::Tenant,
+};
+
+#[derive(Deserialize)]
+pub struct EnterBody {
+    user_code: String,
+}
+
+pub async fn enter(
+    State(state): State<AppState>,
+    tenant: Tenant,
+    ip: ClientIp,
+    headers: HeaderMap,
+    JsonBody(body): JsonBody<EnterBody>,
+) -> AuthnResult<Outcome> {
+    let ctx = Ctx::new(&state, &tenant, ip, &headers);
+    let conn = &state.db;
+    // Counted before the lookup, so parallel guesses can't slip past it.
+    let key = format!("usercode:{}", rate_limit::ip_key(ctx.ip));
+    let limit = rate_limit::USER_CODE_PER_IP;
+    if let Err(retry_after) =
+        rate_limit::hit(conn, tenant.id, &key, limit, chrono::Utc::now()).await?
+    {
+        return Err(AuthnError::RateLimited { retry_after });
+    }
+    // Unknown, expired, decided or of a client that opted out: all the same.
+    let code = user_code::normalize(&body.user_code).ok_or(AuthnError::InvalidCode)?;
+    let row = device_flow::find_pending(conn, tenant.id, &code)
+        .await?
+        .ok_or(AuthnError::InvalidCode)?;
+    let client = applications::Entity::find_by_id(row.application_id)
+        .filter(applications::Column::TenantId.eq(tenant.id))
+        .one(conn)
+        .await?
+        .filter(|c| c.device_code_enabled)
+        .ok_or(AuthnError::InvalidCode)?;
+    let (oidc, resource_scopes) = scope::split_stored(&row.scopes);
+    let req = AuthRequest {
+        client_id: client.client_id,
+        redirect_uri: String::new(),
+        state: None,
+        nonce: None,
+        code_challenge: String::new(),
+        oidc_scopes: oidc,
+        resource_id: row.resource_application_id,
+        resource_scopes,
+        prompt: None,
+        max_age: None,
+        domain_hint: None,
+        idp: None,
+        device: Some(row.id),
+    };
+    // Signed in already: straight to the confirmation, which a device
+    // request always gets (a phished code must not approve silently).
+    let current = session::current(conn, &state.config, &tenant, &headers).await?;
+    let (stage, session) = match &current {
+        Some((session, _)) => (LoginStage::Consent, Some(session)),
+        None => (LoginStage::Password, None),
+    };
+    let binding = tx::browser_binding(&headers, &state.config)?;
+    let id = tx::create(
+        conn,
+        tx::NewTx {
+            tenant_id: tenant.id,
+            client_app_id: client.id,
+            req: &req,
+            stage,
+            session,
+            binding: &binding,
+        },
+    )
+    .await?;
+    let origin = state.config.tenant_origin(&tenant.slug);
+    Ok(Outcome::Redirect {
+        url: format!("{origin}/login?tx={id}"),
+        cookies: vec![cookie::set(&state.config, Kind::TxBinding, &binding)?],
+    })
+}
+
+/// `{origin}/device?{query}` — where a device sign-in ends.
+pub fn result_url(ctx: &Ctx<'_>, query: &str) -> String {
+    let origin = ctx.state.config.tenant_origin(&ctx.tenant.slug);
+    format!("{origin}/device?{query}")
+}
+
+/// Approves the device request with the session the browser now has;
+/// `false` = it expired or was decided meanwhile. Runs on the completion's
+/// transaction.
+pub async fn approve(
+    conn: &impl ConnectionTrait,
+    ctx: &Ctx<'_>,
+    device_id: Uuid,
+    client_app_id: Uuid,
+    session: &sessions::Model,
+) -> anyhow::Result<bool> {
+    let decision = Decision::Approve {
+        amr: &session.amr,
+        auth_time: session.auth_time,
+    };
+    let user_id = session.user_id;
+    if !device_flow::decide(conn, ctx.tenant.id, device_id, user_id, decision).await? {
+        return Ok(false);
+    }
+    let details = json!({
+        "device_authorization_id": device_id,
+        "session_id": session.id,
+    });
+    record(
+        conn,
+        ctx,
+        audit::EventType::DeviceCodeApprove,
+        user_id,
+        client_app_id,
+        details,
+    )
+    .await?;
+    Ok(true)
+}
+
+/// Denies the device request (the user declined, or the scopes need an
+/// administrator's consent); the device's next poll gets `access_denied`.
+pub async fn deny(
+    conn: &impl ConnectionTrait,
+    ctx: &Ctx<'_>,
+    device_id: Uuid,
+    client_app_id: Uuid,
+    user_id: Uuid,
+    reason: &'static str,
+) -> anyhow::Result<()> {
+    if device_flow::decide(conn, ctx.tenant.id, device_id, user_id, Decision::Deny).await? {
+        let details = json!({ "device_authorization_id": device_id, "reason": reason });
+        record(
+            conn,
+            ctx,
+            audit::EventType::DeviceCodeDeny,
+            user_id,
+            client_app_id,
+            details,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+async fn record(
+    conn: &impl ConnectionTrait,
+    ctx: &Ctx<'_>,
+    event_type: audit::EventType,
+    user_id: Uuid,
+    client_app_id: Uuid,
+    details: Value,
+) -> anyhow::Result<()> {
+    audit::record(
+        conn,
+        audit::Event {
+            tenant_id: ctx.tenant.id,
+            actor: audit::Actor::User(Some(user_id)),
+            event_type,
+            target: Some(audit::Target::Application(client_app_id)),
+            outcome: AuditOutcome::Success,
+            ip: ctx.ip,
+            details,
+        },
+    )
+    .await
+}

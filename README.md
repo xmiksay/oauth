@@ -62,6 +62,7 @@ One Vue SPA served by the backend on every tenant host `{t}.{PUBLIC_URL host}`:
 | `/myaccount` | My Account: profile, email, password, authenticator app + recovery codes, passkeys, Telegram, linked accounts, notifications, sessions, app permissions |
 | `/login?tx=…` | Sign-in steps (password, passkey or an upstream identity provider → link an unknown identity → authenticator / recovery / Telegram code / passkey → forced password change → consent) |
 | `/logout` | Sign-out confirmation / "signed out" page |
+| `/device` | Enter the code a device (TV, CLI) shows to sign it in (OAuth device code grant, for apps that enable it) |
 
 Admin center and My Account are the tenant's built-in OIDC clients
 (`admin-portal`, `my-account`) and sign in like any other app. The header's app

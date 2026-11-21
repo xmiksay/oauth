@@ -34,7 +34,7 @@ Spawned by `serve::run_with` after migrations; stop on the shutdown token (a run
 
 | Job | Every | Does |
 |---|---|---|
-| `sweeper` | 60 s | `DELETE … WHERE expires_at < now()` on `login_transactions`, `authorization_codes`, `sessions`, `refresh_tokens`, `opaque_access_tokens`, `rate_limit_buckets`, `outbox`, `email_tokens`, `known_devices`, `webauthn_challenges`, `telegram_link_codes`, `telegram_otps`, `federation_states` (readers already ignore expired rows; this bounds growth), and `audit_events` older than their tenant's `audit_retention_days` |
+| `sweeper` | 60 s | `DELETE … WHERE expires_at < now()` on `login_transactions`, `authorization_codes`, `sessions`, `refresh_tokens`, `opaque_access_tokens`, `rate_limit_buckets`, `outbox`, `email_tokens`, `known_devices`, `webauthn_challenges`, `telegram_link_codes`, `telegram_otps`, `federation_states`, `device_authorizations` (readers already ignore expired rows; this bounds growth), and `audit_events` older than their tenant's `audit_retention_days` |
 | `rotation` | 5 min | Per (tenant, alg), each tenant in its own transaction (one failing tenant doesn't block the others) while the run's lock transaction holds the leader lock: `KEY_PREPUBLISH_HOURS` before the active key is `KEY_ROTATION_DAYS` old, publish a `next` key (in JWKS, not signing); once it has been published that long, retire the active key (`expires_at` = now + the tenant's longest access-token TTL, min 1 h, + 1 h) and activate the next one — retire first, in one transaction, because the partial unique indexes allow one active key per (tenant, alg) per statement. Runs on an explicit `now` (tests move the clock) |
 | `outbox` | 10 s | Per channel, each only when configured: `email` (SMTP), then `telegram` (bot; chat looked up at send time, no link → dead — [telegram.md](telegram.md#notices)). Claim-then-send: a short transaction (holding the job lock) leases up to 8 due messages of the channel (`attempts + 1`, `next_attempt_at = now + 10 min`, `SKIP LOCKED`; 8 × 60 s + 30 s skew margin < 10 min is a compile-time check), then each is sent outside any transaction (60 s per send) — never starting a send that could end within 30 s of the lease's end, skipping a row whose lease was taken over — and recorded with its own statement fenced on the claimed `(attempts, next_attempt_at)`: sent / backoff 1 m, 5 m, 30 m, 2 h, then 6 h / dead after 8 attempts or a permanent rejection (bodies of sent and dead rows dropped, enforced by a CHECK), times taken at the outcome. Rows a run stops before (shutdown — checked between messages — or the deadline) are released (due now, attempt undone); after a crash they retry after the lease. A message past its `expires_at` is never attempted again. Each job run is its own task, so a panic is logged and the loop goes on. Logs carry id, kind and error kind only. Explicit clock. Details in [email.md](email.md#delivery) |
 
@@ -67,7 +67,8 @@ proxy sits in front; the server ignores the forwarded host either way).
 | `GET /.well-known/openid-configuration` (CORS: [CORS](#cors) for this and JWKS / token / userinfo / revoke, incl. `OPTIONS` preflights) | app | `oidc::discovery`, `cors` |
 | `GET /discovery/keys` — JWKS (next + active + unexpired retired), `max-age=300` | app | `oidc::discovery` |
 | `GET /oauth2/authorize` | app | `oidc::authorize` |
-| `POST /oauth2/token` | app | `oidc::token`, `oidc::refresh_grant` |
+| `POST /oauth2/token` | app | `oidc::token`, `oidc::refresh_grant`, `oidc::device_grant` |
+| `POST /oauth2/devicecode` — device authorization request (RFC 8628) | app | `oidc::device_authorization` |
 | `GET\|POST /oauth2/userinfo` | app | `oidc::userinfo` |
 | `POST /oauth2/introspect` (RFC 7662) | app | `oidc::introspect` |
 | `POST /oauth2/revoke` (RFC 7009) | app | `oidc::revoke` |
@@ -75,8 +76,9 @@ proxy sits in front; the server ignores the forwarded host either way).
 | `GET /api/authn/tx/{id}`, `POST …/{password,totp,recovery,passkey/options,passkey,telegram/send,telegram,change-password,consent,federation/{idp},discover}` — login JSON API, contract in [api/authn.md](api/authn.md) | app | `authn` |
 | `GET /federation/callback` — return from an upstream identity provider ([federation.md](federation.md)) | app | `authn::federation` |
 | `POST /api/authn/password-reset`, `POST /api/authn/email/{verify,reset,invite,invite/passkey/options,invite/passkey}` — email links (the token is the credential), same contract | app | `authn::{reset,email}` |
+| `POST /api/authn/device` — a device's user code entered on `/device` → login transaction, same contract | app | `authn::device_code` |
 | `/api/v1/{settings,users,groups,directory-roles,applications,identity-providers,role-assignments,consents,audit-events}[/…]`, `/api/v1/me[/…]`, and on the system host only `/api/v1/tenants[/{slug}[/users[/…]]]` (system Global Admins) — management REST API, bearer tokens for the host tenant's `management-api`; contract in [api/management.md](api/management.md) (+ [identity providers](api/identity_providers.md)) | app | `api` |
-| `/` (the portal; apex `/` redirects, above) and `/{login,logout,myaccount,admin}[/…]` → `index.html` (incl. the public link pages `/login/reset`, `/login/invite`, `/myaccount/verify-email`) | app | `spa` |
+| `/` (the portal; apex `/` redirects, above) and `/{login,logout,device,myaccount,admin}[/…]` → `index.html` (incl. the public link pages `/login/reset`, `/login/invite`, `/myaccount/verify-email`) | app | `spa` |
 | any other path → static file from `WEB_DIST_DIR`, else 404 | app | `spa` |
 | `GET /metrics` — Prometheus text format | metrics | `metrics` |
 
@@ -103,13 +105,14 @@ Implemented:
 | `tenancy` | `resolve_host` middleware (host → active tenant, apex redirect, else 404) and the `Tenant` extractor reading its result |
 | `secret` | Random bearer secrets (256-bit, base64url), random UUIDv4 handles, SHA-256 storage hash, constant-time compare |
 | `cors` | CORS on discovery / JWKS / userinfo / token / revoke only: `validate_origin`, `origin_of` (a redirect URI's origin), `effective_origins` (explicit ∪ a public client's redirect-URI origins), `tenant_allows`; `http` (preflight handlers, `tenant_wide` middleware, `for_client` for token / revoke) — see [CORS](#cors) |
-| `oidc` | Protocol endpoints; `params` (duplicate-rejecting form/query parsing, `AuthRequest`), `pkce`, `redirect` (matching + building), `scope` (parsing, resource resolution), `client_auth`, `error` (`OAuthError`, RFC 6749 JSON + `WWW-Authenticate`, `no-store`) |
+| `oidc` | Protocol endpoints; `params` (duplicate-rejecting form/query parsing, `AuthRequest`), `pkce`, `redirect` (matching + building), `scope` (parsing, resource resolution, `resolve_request` shared by authorize and device authorization), `client_auth`, `error` (`OAuthError`, RFC 6749 JSON + `WWW-Authenticate`, `no-store`), `device_authorization` / `device_grant` (RFC 8628) |
+| `device_flow` | Device authorization state: `user_code` (alphabet, normalising, hashing), issue (code pair, user code unique per tenant), lookup by user code, the decision (CAS on `pending`), poll bookkeeping (`slow_down`), consumption |
 | `mail` | `Mailer` trait (`Email`, `MailError` transient/permanent) + `SmtpMailer` (lettre, rustls on AWS-LC, webpki roots, 15 s command timeout); `templates` (plain-text link messages and security notices); `outbox` (`enqueue` on the caller's transaction, body sealed, backoff schedule); `tokens` (email link tokens: issue voids the user's older ones of that purpose, atomic single-use `consume` scoped to the tenant); `links::send` (token + message + outbox row) |
 | `notify` | Security notices (`notify::event`, `email_changed` to the old address) honouring `notification_prefs` (no row = on); email only to a verified address, Telegram to a linked chat |
 | `http` | Shared outbound client recipe (rustls on AWS-LC, webpki roots, no redirects, no proxy, timeouts) and capped body reads |
 | `federation` | Upstream OIDC (relying-party side): `discovery` (discovery + JWKS caches), `exchange` (code exchange), `id_token` (signature + claims), `flow` (begin / finish of a round trip), `state` (single-use `federation_states`), `identities` (links, last-method rule), `idps`, `policy`, `profile` (bounding upstream claims), `resolve` (public-address-only DNS), `urls` — [federation.md](federation.md) |
 | `telegram` | Bot: `api` (reqwest `sendMessage` / `setWebhook`, token never logged; outbox `Courier`), `update` (pure update parsing), `links` (link codes, links), `otp` (sign-in codes), `webhook`, `set_webhook` (CLI) — [telegram.md](telegram.md) |
-| `authn` | Login JSON API + CSRF guard (`AuthnError`, `JsonBody`), `passkey` (passkey sign-in), `invite_passkey` (invitation accepted with a passkey), `cookie` (session, tx-binding and device cookies), `device` (known devices + new sign-in notice), `telegram` (sending sign-in codes), `reset` (password-reset request / completion), `email` (verify / invite link redemption), `federation` / `federation_login` / `federation_link` / `federation_pending` (upstream sign-in, linking callbacks, stage `link`), `ctx`, `tx` (login transactions + browser binding + view), `password`, `mfa` (TOTP / recovery / Telegram codes), `complete` (next step, consent, session + code), `session` (cookie), `totp` (RFC 6238 via AWS-LC HMAC, sealed secret, replay-protected step), `recovery`, `rate_limit`, `ip` |
+| `authn` | Login JSON API + CSRF guard (`AuthnError`, `JsonBody`), `passkey` (passkey sign-in), `invite_passkey` (invitation accepted with a passkey), `cookie` (session, tx-binding and device cookies), `device` (known devices + new sign-in notice), `telegram` (sending sign-in codes), `reset` (password-reset request / completion), `email` (verify / invite link redemption), `federation` / `federation_login` / `federation_link` / `federation_pending` (upstream sign-in, linking callbacks, stage `link`), `device_code` (user-code entry → transaction, device approve / deny), `ctx`, `tx` (login transactions + browser binding + view), `password`, `mfa` (TOTP / recovery / Telegram codes), `complete` (next step, consent, session + code), `session` (cookie), `totp` (RFC 6238 via AWS-LC HMAC, sealed secret, replay-protected step), `recovery`, `rate_limit`, `ip` |
 | `consent` | Pure evaluation (granted / needs user / needs admin) + grant lookup / merge-upsert |
 | `tokens` | Issuance (`issue_delegated`, `issue_app_only`), `inspect` (access-token resolution incl. user-disabled check), `claims` (pure builders), `jwt` (sign with active key, verify against published keys + `typ`), `opaque`, `refresh` (family state machine, rotation, revocation), `code`, `principal` (groups, roles) |
 | `jobs` | `sweeper` (incl. audit retention), `rotation`, `outbox` (delivery per channel `Courier`: email, Telegram), leader lock helper |
@@ -163,7 +166,7 @@ migration transaction). Deleting a tenant cascades to everything it owns.
 | `user_totp` · `user_recovery_codes` | sealed TOTP secret + `confirmed_at`; SHA-256 code hashes + `used_at` |
 | `groups` · `group_members` | static groups; members are users; `display_name` unique per tenant case-insensitively (index on `(tenant_id, lower(display_name))`) |
 | `directory_role_assignments` | (user, role) unique; role GlobalAdmin\|ApplicationAdmin\|UserAdmin |
-| `applications` | `client_id` unique per tenant, `client_type` confidential\|public, `builtin`, `redirect_uris[]`, `post_logout_redirect_uris[]`, `web_origins[]` (explicit CORS origins, ≤ 32), `identifier_uri` (unique per tenant), `access_token_format` jwt\|opaque, `signing_alg` RS256\|ES256, `groups_claim_format` id\|name, access TTL 300–86400 s, refresh TTL |
+| `applications` | `client_id` unique per tenant, `client_type` confidential\|public, `builtin`, `redirect_uris[]`, `post_logout_redirect_uris[]`, `web_origins[]` (explicit CORS origins, ≤ 32), `identifier_uri` (unique per tenant), `access_token_format` jwt\|opaque, `signing_alg` RS256\|ES256, `groups_claim_format` id\|name, access TTL 300–86400 s, refresh TTL, `device_code_enabled` (RFC 8628 opt-in) |
 | `client_secrets` | SHA-256 hash, display `hint`, optional `expires_at`; many per app for rotation |
 | `app_scopes` · `app_roles` | delegated scopes (`admin_consent_required`) and app roles (`allowed_member_types` ⊆ {user, application}); `value` unique per app |
 | `app_required_permissions` | client app → resource app, exactly one of `scope_id` / `app_role_id` (FK’d through the resource app) |
@@ -171,8 +174,9 @@ migration transaction). Deleting a tenant cascades to everything it owns.
 | `consent_grants` | (client, resource, user) unique; `user_id` NULL = tenant-wide admin consent; `scopes[]` |
 | `signing_keys` | `kid` (JWK thumbprint) unique, `alg`, `status` next\|active\|retired (≤ 1 active and ≤ 1 next per tenant+alg), sealed private key (PKCS#8 DER, both algs), `public_jwk`, `activated_at` / `retired_at` / `expires_at` |
 | `sessions` | `token_hash` (cookie), `amr[]`, `auth_time`, ip, user agent, `expires_at` (`SESSION_TTL_HOURS`); `id` is the `sid` claim |
-| `login_transactions` | random UUIDv4 `id` (the `tx` handle), `binding_hash` (SHA-256 of the browser's tx-binding cookie), client app, `params` jsonb (validated `AuthRequest`), `stage` password\|link\|mfa\|change_password\|consent, user / amr / auth_time once known, `session_id` when an existing session only needs consent, `pending_identity` jsonb (stage `link`), `federated` jsonb (IdP + generation of an upstream sign-in); 15 min |
+| `login_transactions` | random UUIDv4 `id` (the `tx` handle), `binding_hash` (SHA-256 of the browser's tx-binding cookie), client app, `params` jsonb (validated `AuthRequest`), `stage` password\|link\|mfa\|change_password\|consent, user / amr / auth_time once known, `session_id` when an existing session only needs consent (a device sign-in names its `device_authorizations` row in `params.device`), `pending_identity` jsonb (stage `link`), `federated` jsonb (IdP + generation of an upstream sign-in); 15 min |
 | `identity_providers` · `user_identities` · `federation_states` | upstream OIDC providers (name unique per tenant, sealed secret, policy, MFA trust, email domains), linked (IdP, subject) per user (one per IdP), single-use 10-min round-trip state — [federation.md](federation.md#data) |
+| `device_authorizations` | `device_code_hash` (unique), `user_code_hash` (unique per tenant), client, scopes (OIDC + bare resource values), resource app, `status` pending\|approved\|denied, `user_id` (who decided) + `amr` / `auth_time` of the approving sign-in, `interval_secs` (5, +5 per `slow_down`, ≤ 60), `last_polled_at`, `decided_at`, `consumed_at` (single redemption); 15 min |
 | `authorization_codes` | `code_hash`, client, user, session, redirect URI, scopes (OIDC + bare resource values), resource app, nonce, S256 challenge, amr, auth_time; 60 s, `consumed_at` (single use) |
 | `refresh_tokens` | `token_hash`, `family_id`, client, user, session, originating code, scopes, resource, amr, auth_time, `expires_at` (fixed per family), `rotated_at`, `revoked_at` |
 | `opaque_access_tokens` | `token_hash`, client, resource, user, originating code / family, `claims` jsonb, `expires_at`, `revoked_at` |
@@ -260,8 +264,52 @@ need no consent (grants are keyed by a resource app).
   client app (only roles allowing `application` members; delegated tokens
   only get roles allowing `user`); no refresh / ID token. App-only tokens
   carry no `scp`, so resources must authorize them by `roles`.
+- `urn:ietf:params:oauth:grant-type:device_code`: see below.
 - Responses `Cache-Control: no-store`; errors RFC 6749 §5.2 JSON (401 +
   `WWW-Authenticate: Basic` for `invalid_client` after Basic auth).
+
+### Device authorization grant
+
+RFC 8628, for apps that opted in (`device_code_enabled`, set through the
+management API; for an app holding management-API grants only by a
+GlobalAdmin, like its redirect URIs; never on built-in apps). Others get
+`unauthorized_client` at both endpoints.
+
+- `POST /oauth2/devicecode` (client auth as at the token endpoint, `scope`
+  validated like `/authorize`'s, rate limited 30 / 5 min per IP) →
+  `device_code` (256-bit bearer), `user_code` (`XXXX-XXXX` over the 20
+  consonants `BCDFGHJKLMNPQRSTVWXZ`, ~34.5 bits, unique per tenant),
+  `verification_uri` `{issuer}/device`, `verification_uri_complete`
+  (`?user_code=`), `expires_in` 900, `interval` 5. Both codes are stored as
+  SHA-256 only.
+- The user enters the code on the SPA page `/device` → `POST
+  /api/authn/device` (CSRF-checked, 10 / 5 min per IP counted before the
+  lookup; every failure is the same `invalid_code`) starts an ordinary
+  login transaction whose `AuthRequest.device` names the row: sign-in (or the
+  browser's session), MFA, forced password change as usual, then the
+  consent step — always, even when everything was consented before, so a
+  phished code never approves silently; it lists every scope the device
+  gets. Admin-consent-only scopes deny the request. Approving records the
+  user and the browser session's `amr` / `auth_time` on the row (CAS on
+  `pending` + unexpired) in the completion's transaction; Deny records
+  `denied`. The browser ends on `/device?result=approved` or
+  `/device?error=…` ([api/authn.md](api/authn.md#device-code)).
+- Token endpoint, `grant_type=urn:ietf:params:oauth:grant-type:device_code`
+  + `device_code`: the row is taken `FOR UPDATE`, so polls, the decision's
+  CAS and redemption serialize. Unknown / another client's / redeemed →
+  `invalid_grant`; expired → `expired_token`; `denied` → `access_denied`;
+  `pending` → `authorization_pending`, or `slow_down` when the poll came
+  sooner than `interval_secs` after the previous one (1 s jitter allowed),
+  which adds 5 s for all later polls (capped at 60). `approved` → consumed
+  and tokens issued in the same transaction (single use): the device gets a
+  **session of its own** (no cookie; its id is the tokens' `sid`; `amr` /
+  `auth_time` of the approving sign-in; listed in My Account and revocable
+  there like any session, which also revokes its refresh tokens), an access
+  token as in the code flow, an ID token with `openid` (no `nonce`) and a
+  refresh token with `offline_access`.
+- Audited: `device_code.approve` / `device_code.deny` (the user, target the
+  client app; deny `reason` `declined` or `admin_consent_required`) and
+  `device_code.redeem` (the client, target the user, with the new session).
 
 ### Tokens
 
@@ -392,7 +440,9 @@ Refresh-token lifetimes are capped (90 days; public clients 7 days). Objects of 
 Every mutation writes its `audit_events` row in the same transaction; the
 login API records sign-ins (success with the new session, failures with a
 reason code; rate-limited attempts are not logged) and forced password
-changes; the token endpoint records refresh-token reuse and code replay.
+changes; the token endpoint records refresh-token reuse, code replay and
+device-code redemptions; device approvals / denials are recorded by the
+login step that decides them.
 Withdrawing a consent grant revokes the client's refresh families and
 opaque access tokens for the resource (one user, or everyone for an admin
 grant); deleting a scope revokes the families holding it, and refresh

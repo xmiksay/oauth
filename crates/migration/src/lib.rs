@@ -29,6 +29,7 @@ mod m20261014_000008_telegram;
 mod m20261018_000009_federation;
 mod m20261121_000010_web_origins;
 mod m20261121_000011_group_names;
+mod m20261121_000012_device_code;
 
 pub struct Migrator;
 
@@ -47,6 +48,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261018_000009_federation::Migration),
             Box::new(m20261121_000010_web_origins::Migration),
             Box::new(m20261121_000011_group_names::Migration),
+            Box::new(m20261121_000012_device_code::Migration),
         ]
     }
 }

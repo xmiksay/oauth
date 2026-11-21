@@ -20,7 +20,7 @@ use super::{
     AuthnError, AuthnResult, JsonBody, Outcome,
     cookie::{self, Kind},
     ctx::Ctx,
-    device,
+    device, device_code,
     ip::ClientIp,
     session::{self, NewSession},
     tx::{self, LoadedTx},
@@ -120,20 +120,31 @@ pub async fn proceed(
     let client = client_of(conn, &tx).await?;
     let force = force_consent(&tx.req) && !just_consented;
     let eval = evaluate_consent(conn, &client, &tx.req, user.id, force).await?;
+    // A device request is always confirmed explicitly (consent alone
+    // would let a phished user code through silently).
+    let confirm_device = tx.req.device.is_some() && !just_consented;
     match eval.decision {
         Decision::NeedsAdmin(values) => {
             tx::take(conn, tx.row.id, from).await?;
             let description = format!("admin approval required for: {}", values.join(" "));
-            ctx.error_redirect(&tx.req, ErrorCode::AccessDenied, &description)
+            let code = match tx.req.device {
+                Some(device_id) => {
+                    let (app, reason) = (tx.row.application_id, "admin_consent_required");
+                    device_code::deny(conn, ctx, device_id, app, user.id, reason).await?;
+                    ErrorCode::ConsentRequired
+                }
+                None => ErrorCode::AccessDenied,
+            };
+            ctx.error_redirect(&tx.req, code, &description)
         }
-        Decision::NeedsUser(_) => {
+        Decision::Granted if !confirm_device => finish(ctx, tx, from, user).await,
+        Decision::NeedsUser(_) | Decision::Granted => {
             if from != LoginStage::Consent {
                 tx::advance(conn, &tx.row, from, LoginStage::Consent).await?;
             }
             tx.row.stage = LoginStage::Consent;
             Ok(Outcome::Step(tx::view(ctx.state, ctx.tenant, &tx).await?))
         }
-        Decision::Granted => finish(ctx, tx, from, user).await,
     }
 }
 
@@ -211,14 +222,25 @@ async fn finish(
             created
         }
     };
-    let url = tokens::code::issue_redirect(
-        &txn,
-        &ctx.issuer(),
-        tx.row.application_id,
-        &tx.req,
-        &session,
-    )
-    .await?;
+    let url = match tx.req.device {
+        Some(device_id) => {
+            let app = tx.row.application_id;
+            match device_code::approve(&txn, ctx, device_id, app, &session).await? {
+                true => device_code::result_url(ctx, "result=approved"),
+                false => device_code::result_url(ctx, "error=expired_token"),
+            }
+        }
+        None => {
+            tokens::code::issue_redirect(
+                &txn,
+                &ctx.issuer(),
+                tx.row.application_id,
+                &tx.req,
+                &session,
+            )
+            .await?
+        }
+    };
     txn.commit().await?;
     if tx.row.session_id.is_none() {
         metrics::login("success");
@@ -248,7 +270,12 @@ pub async fn consent(
     let tx = tx::load_at(&ctx, &tx_id, LoginStage::Consent).await?;
     let user = tx::user_of(conn, &tx).await?;
     if !body.approve {
-        tx::take(conn, tx.row.id, LoginStage::Consent).await?;
+        if tx::take(conn, tx.row.id, LoginStage::Consent).await?
+            && let Some(device_id) = tx.req.device
+        {
+            let app = tx.row.application_id;
+            device_code::deny(conn, &ctx, device_id, app, user.id, "declined").await?;
+        }
         let msg = "the user declined to consent";
         return ctx.error_redirect(&tx.req, ErrorCode::AccessDenied, msg);
     }
