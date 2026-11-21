@@ -92,15 +92,19 @@ fn check_template(row: &Row<'_>) -> Result<bool, AppError> {
 }
 
 /// GitHub's endpoints are paths under the issuer (`github::metadata`), so
-/// it must be a bare web origin (one trailing `/` at most: an `https` URL's
-/// path is `/` for both `https://h` and `https://h/`).
+/// it must be a bare web origin, one trailing `/` at most. Canonical form
+/// only (lower-case host, no default port): `github::api_base` recognises
+/// github.com by comparing the string, so `https://GitHub.com` would
+/// otherwise be sent to a GHES API path that doesn't exist.
 fn is_origin(issuer: &str) -> bool {
+    let bare = issuer.strip_suffix('/').unwrap_or(issuer);
     url::Url::parse(issuer).is_ok_and(|u| {
         u.path() == "/"
             && u.query().is_none()
             && u.fragment().is_none()
             && u.username().is_empty()
             && u.password().is_none()
+            && u.origin().ascii_serialization() == bare
     })
 }
 
@@ -144,7 +148,9 @@ pub fn check(row: &Row<'_>) -> Result<(), AppError> {
     }
     if row.kind == IdpKind::Github {
         if !is_origin(row.issuer) {
-            return Err(bad("github issuer must be a web origin"));
+            return Err(bad(
+                "github issuer must be a web origin (lower-case host, no default port)",
+            ));
         }
         if row.discovery_url.is_some() {
             return Err(bad("github providers have no discovery_url"));
@@ -302,6 +308,9 @@ mod tests {
             "https://github.com/?x=1",
             "https://github.com/#x",
             "https://u@github.com",
+            "https://GitHub.com",
+            "https://github.com:443",
+            "https://ghe.example:443/",
         ] {
             assert!(
                 err(&row(IdpKind::Github, issuer)).contains("web origin"),
