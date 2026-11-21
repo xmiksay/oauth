@@ -287,7 +287,16 @@ pub async fn view(state: &AppState, tenant: &Tenant, tx: &LoadedTx) -> AuthnResu
     let consent = match (&user, tx.row.stage) {
         (Some(user), LoginStage::Consent) => {
             let force = complete::force_consent(&tx.req);
-            let eval = complete::evaluate_consent(conn, &client, &tx.req, user.id, force).await?;
+            let resource = complete::pending_resource(conn, &client, tx.req.resource_id).await?;
+            let eval = complete::evaluate_consent(
+                conn,
+                &client,
+                &tx.req,
+                resource.as_ref(),
+                user.id,
+                force,
+            )
+            .await?;
             let pending = match &eval.decision {
                 Decision::NeedsUser(values) => values.clone(),
                 Decision::Granted | Decision::NeedsAdmin(_) => Vec::new(),
@@ -300,7 +309,7 @@ pub async fn view(state: &AppState, tenant: &Tenant, tx: &LoadedTx) -> AuthnResu
                 .filter(|s| device || pending.contains(&s.value))
                 .map(|s| json!({ "value": s.value, "description": s.description }))
                 .collect();
-            eval.resource.map(|r| {
+            resource.map(|r| {
                 json!({
                     "resource": {
                         "display_name": r.display_name,

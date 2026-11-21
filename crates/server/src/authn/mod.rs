@@ -49,7 +49,7 @@ use crate::{
     oidc::error::no_store, tenancy::Tenant,
 };
 
-pub use complete::{evaluate_consent, force_consent};
+pub use complete::{evaluate_consent, force_consent, pending_resource};
 
 pub fn router(state: AppState) -> Router<AppState> {
     const TX: &str = "/api/authn/tx/{tx}";

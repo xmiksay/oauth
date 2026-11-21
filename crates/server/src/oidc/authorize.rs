@@ -118,7 +118,9 @@ async fn handle(env: &Env<'_>, query: &str) -> OAuthResult<Response> {
     };
 
     // Before consent: an unassigned user is never asked to consent.
-    if !assignment::user_may_use_by_id(conn, user.id, &client, req.resource_id).await? {
+    let resource = authn::pending_resource(conn, &client, req.resource_id).await?;
+    let resource = resource.as_ref();
+    if !assignment::user_may_use(conn, client.tenant_id, user.id, &client, resource).await? {
         return Ok(fail(ErrorCode::AccessDenied, NOT_ASSIGNED));
     }
     let none = req.prompt == Some(Prompt::None);
@@ -135,7 +137,7 @@ async fn handle(env: &Env<'_>, query: &str) -> OAuthResult<Response> {
         return to_login(env, &client, &req, stage, continued).await;
     }
     let force = authn::force_consent(&req);
-    let eval = authn::evaluate_consent(conn, &client, &req, user.id, force).await?;
+    let eval = authn::evaluate_consent(conn, &client, &req, resource, user.id, force).await?;
     match eval.decision {
         Decision::Granted => {
             let url =
