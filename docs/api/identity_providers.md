@@ -1,10 +1,21 @@
 # Management API — identity providers (`/api/v1/identity-providers`)
 
-Part of the [management API](management.md) (authentication, conventions,
-the `IdentityProvider` object and audit events there). Read: any directory
+Part of the [management API](management.md) (authentication, conventions
+and audit events there). Read: any directory
 role; write: GlobalAdmin (delegated) only; app-only tokens: none.
 
-Upstream OpenID providers users can sign in with ([../federation.md](../federation.md)).
+Upstream providers (OpenID, or GitHub over OAuth 2.0) users can sign in with ([../federation.md](../federation.md)).
+
+```jsonc
+// IdentityProvider (the client secret is write-only: only `has_secret`)
+{ "id", "name", "kind": "oidc|google|entra|github", "enabled": true, "visible": true, "issuer",
+  "discovery_url": null, "client_id", "has_secret": true, "client_auth": "post|basic",
+  "scopes": ["openid","email","profile"], "policy": "jit|link_only|deny",
+  "trust_upstream_mfa": false, "mfa_acr": null, "email_domains": [],
+  "hosted_domain": null, "allowed_tenants": [], "trust_upstream_email": false,
+  "redirect_uri": "{origin}/federation/callback", "created_at", "updated_at" }
+// … plus on create / GET / PATCH: { "users_only_via": 0, "linked_users": 0 }
+```
 
 | Method & path | Body | Response |
 |---|---|---|

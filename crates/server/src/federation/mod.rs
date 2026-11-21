@@ -89,6 +89,22 @@ impl Upstream {
         bearer: Option<&str>,
         accept: &str,
     ) -> Result<T, Failure> {
+        self.get_json_unless(url, what, bearer, accept, &[])
+            .await?
+            .ok_or(Failure(what))
+    }
+
+    /// [`Self::get_json_as`], but a response with one of the `absent`
+    /// statuses is `Ok(None)` (the resource isn't granted) instead of a
+    /// failure; every other error stays one.
+    async fn get_json_unless<T: serde::de::DeserializeOwned>(
+        &self,
+        url: &str,
+        what: &'static str,
+        bearer: Option<&str>,
+        accept: &str,
+        absent: &[reqwest::StatusCode],
+    ) -> Result<Option<T>, Failure> {
         let parsed = urls::checked(url, self.allow_http_loopback).ok_or(Failure(what))?;
         let mut request = self
             .http
@@ -103,6 +119,9 @@ impl Upstream {
             tracing::warn!(what, timeout = err.is_timeout(), "upstream unreachable");
             Failure(what)
         })?;
+        if absent.contains(&response.status()) {
+            return Ok(None);
+        }
         if !response.status().is_success() {
             tracing::warn!(
                 what,
@@ -114,6 +133,8 @@ impl Upstream {
         let body = http::read_capped(response, MAX_RESPONSE_BYTES)
             .await
             .map_err(|_| Failure(what))?;
-        serde_json::from_slice(&body).map_err(|_| Failure(what))
+        serde_json::from_slice(&body)
+            .map(Some)
+            .map_err(|_| Failure(what))
     }
 }

@@ -124,15 +124,21 @@ impl Upstream {
         let user: User = self
             .get_json_as(&format!("{api}/user"), "github_user", Some(&token), ACCEPT)
             .await?;
-        // Without the `user:email` scope this is refused: no email then.
+        // Without the `user:email` scope GitHub answers 403 / 404: no
+        // email then. Anything else (outage, bad body) is a failure, not an
+        // account without one.
         let emails: Vec<Email> = self
-            .get_json_as(
+            .get_json_unless(
                 &format!("{api}/user/emails"),
                 "github_emails",
                 Some(&token),
                 ACCEPT,
+                &[
+                    reqwest::StatusCode::FORBIDDEN,
+                    reqwest::StatusCode::NOT_FOUND,
+                ],
             )
-            .await
+            .await?
             .unwrap_or_default();
         Ok(claims(user, &emails))
     }
