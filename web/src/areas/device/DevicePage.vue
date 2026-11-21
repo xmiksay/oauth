@@ -34,6 +34,7 @@ const OUTCOMES: Record<string, string> = {
     "An administrator must approve this app's permissions before you can sign in with it.",
   expired_token: 'The code expired before you finished. Start again on your device.',
   login_required: 'Your session ended before you finished. Enter the code again.',
+  not_assigned: "You aren't assigned to this app. Ask an administrator for access.",
 }
 const outcomeText = outcome
   ? (OUTCOMES[outcome] ?? "The device sign-in didn't complete. Start again on your device.")

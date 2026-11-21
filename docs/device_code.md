@@ -26,8 +26,10 @@ GlobalAdmin, like its redirect URIs; never on built-in apps). Others get
   phished code never approves silently; it lists every scope the device
   gets (resource scopes, and `profile` / `email` / `offline_access` from the
   view's `oidc_scopes`, so the user learns the device stays signed in).
-  Admin-consent-only scopes deny the request — with a browser session at
-  code entry already, before any transaction is made (like `/authorize`),
+  A user not assigned where the client or resource requires it
+  (`assignment_required`, `error=not_assigned`) and admin-consent-only
+  scopes (`error=consent_required`) deny the request — with a browser
+  session at code entry already, before any transaction is made (like `/authorize`),
   otherwise right after sign-in. Approving records the
   user and the browser session's `amr` / `auth_time` on the row (CAS on
   `pending` + unexpired) in the completion's transaction; Deny records
@@ -50,7 +52,7 @@ GlobalAdmin, like its redirect URIs; never on built-in apps). Others get
   token as in the code flow, an ID token with `openid` (no `nonce`) and a
   refresh token with `offline_access`.
 - Audited: `device_code.approve` / `device_code.deny` (the user, target the
-  client app; deny `reason` `declined`, `admin_consent_required`,
+  client app; deny `reason` `declined`, `not_assigned`, `admin_consent_required`,
   `session_ended`, `idp_repointed` or `idp_disabled`) and
   `device_code.redeem` (the client, target the user, with the new session).
   Every path that ends the device's login transaction without approving

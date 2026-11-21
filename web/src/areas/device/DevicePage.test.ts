@@ -86,6 +86,7 @@ describe('DevicePage', () => {
       ['consent_required', /administrator must approve/],
       ['expired_token', /code expired/],
       ['login_required', /session ended/],
+      ['not_assigned', /aren't assigned/],
       ['other', /didn't complete/],
     ]
     for (const [code, text] of cases) {

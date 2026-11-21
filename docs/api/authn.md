@@ -136,7 +136,7 @@ still waits for a click).
 
 | Call | Body | Response |
 |---|---|---|
-| `POST /api/authn/device` | `{ "user_code" }` | `200 { "redirect": "{origin}/login?tx={id}" }` and the tx-binding cookie: a login transaction for the device request, at `consent` when this browser has a session, else at `password`. With a session and a scope needing admin consent: no transaction, the request is denied and the answer is `200 { "redirect": "{origin}/device?error=consent_required" }`. Case, `-` and whitespace in the code are ignored. `401 invalid_code` for anything else — unknown, expired, already decided, another tenant's, or of a client that turned the grant off (never distinguished); `429` over 10 / 5 min per IP (counted before the lookup) or after 300 wrong codes / 5 min in the tenant ([why](../device_code.md#guessing-user-codes)) |
+| `POST /api/authn/device` | `{ "user_code" }` | `200 { "redirect": "{origin}/login?tx={id}" }` and the tx-binding cookie: a login transaction for the device request, at `consent` when this browser has a session, else at `password`. With a session and the user not assigned where required, or a scope needing admin consent: no transaction, the request is denied and the answer is `200 { "redirect": "{origin}/device?error=not_assigned" }` / `…?error=consent_required`. Case, `-` and whitespace in the code are ignored. `401 invalid_code` for anything else — unknown, expired, already decided, another tenant's, or of a client that turned the grant off (never distinguished); `429` over 10 / 5 min per IP (counted before the lookup) or after 300 wrong codes / 5 min in the tenant ([why](../device_code.md#guessing-user-codes)) |
 
 The transaction runs like any other (`password` → `mfa` → … → `consent`), but
 ends on `/device` instead of a client redirect URI:
@@ -145,6 +145,7 @@ ends on `/device` instead of a client redirect URI:
 |---|---|
 | `{origin}/device?result=approved` | Approved; the device's next poll gets tokens (a new session cookie is set when the browser signed in now) |
 | `{origin}/device?error=access_denied` | The user chose Deny; the device gets `access_denied` |
+| `{origin}/device?error=not_assigned` | The client or resource requires assignment and the user holds none of its roles; the request is denied (`access_denied` for the device) |
 | `{origin}/device?error=consent_required` | A requested scope needs admin consent; the request is denied (`access_denied` for the device) |
 | `{origin}/device?error=expired_token` | The request expired or was decided elsewhere before approval |
 | `{origin}/device?error=login_required` | The reused session ended while the confirmation was open |
