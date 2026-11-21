@@ -70,6 +70,8 @@ async fn migrate_reports_unreachable_database() {
     );
 }
 
+const GROUP_NAMES: &str = "m20261121_000011_group_names";
+
 /// The group-name uniqueness migration refuses existing duplicates (naming
 /// them) instead of renaming anything, and applies once they're fixed.
 #[tokio::test]
@@ -77,14 +79,20 @@ async fn duplicate_group_names_abort_the_migration() {
     let pg = common::start_postgres().await;
     let conn = db::connect(&pg.url).await.unwrap();
     db::migrate(&conn).await.unwrap();
-    Migrator::down(&conn, Some(1)).await.unwrap();
-    let pending_names: Vec<String> = Migrator::get_pending_migrations(&conn)
+    // Roll back to just before this migration, however many follow it.
+    let all = Migrator::migrations();
+    let pos = all
+        .iter()
+        .position(|m| m.name() == GROUP_NAMES)
+        .expect("the migration is registered");
+    let rolled_back = u32::try_from(all.len() - pos).unwrap();
+    Migrator::down(&conn, Some(rolled_back)).await.unwrap();
+    let first_pending = Migrator::get_pending_migrations(&conn)
         .await
         .unwrap()
-        .iter()
-        .map(|m| m.name().to_owned())
-        .collect();
-    assert_eq!(pending_names, ["m20261121_000011_group_names"]);
+        .first()
+        .map(|m| m.name().to_owned());
+    assert_eq!(first_pending.as_deref(), Some(GROUP_NAMES));
     let tenant = uuid::Uuid::now_v7();
     let (a, b, other) = (
         uuid::Uuid::now_v7(),
@@ -110,7 +118,11 @@ async fn duplicate_group_names_abort_the_migration() {
         msg.contains(&b.to_string()) && !msg.contains("Dev"),
         "{msg}"
     );
-    assert_eq!(pending(&conn).await, 1, "nothing applied, nothing renamed");
+    assert_eq!(
+        pending(&conn).await,
+        all.len() - pos,
+        "nothing applied, nothing renamed"
+    );
 
     conn.execute_unprepared(&format!(
         "UPDATE groups SET display_name = 'Ops 2' WHERE id = '{b}'"

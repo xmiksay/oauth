@@ -15,7 +15,13 @@ impl MigrationName for Migration {
     }
 }
 
+// The lock keeps a still-running older replica from creating a colliding
+// name between the check and the index build (which would then fail with a
+// bare unique violation instead of the list below). The index build takes
+// this lock anyway.
 const UP: &str = r"
+LOCK TABLE groups IN SHARE MODE;
+
 DO $$
 DECLARE
     dups text;

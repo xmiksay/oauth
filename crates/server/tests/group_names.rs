@@ -14,9 +14,9 @@ mod common;
 use axum::http::{Method, StatusCode};
 use common::{
     flow::Fixture,
-    mgmt::{app_admin_token, audited, call, mint_user_token, user_with_roles},
+    mgmt::{app_admin_token, app_by_client_id, audited, call, mint_user_token, user_with_roles},
 };
-use entity::enums::DirectoryRole::UserAdmin;
+use entity::enums::DirectoryRole::{GlobalAdmin, UserAdmin};
 use sea_orm::ConnectionTrait;
 use serde_json::{Value, json};
 
@@ -115,6 +115,20 @@ async fn groups_claim_format_is_validated_and_shown() {
     .await;
     assert_eq!(st, StatusCode::CREATED, "{app}");
     assert_eq!(app["groups_claim_format"], "name");
+
+    // Not editable on built-in apps, even for a GlobalAdmin; echoing the
+    // unchanged value is fine.
+    let ga = user_with_roles(&f.db, f.tenant.id, "ga@example.com", &[GlobalAdmin]).await;
+    let ga = mint_user_token(&f.db, &f.config, &f.tenant, &ga).await;
+    let api = app_by_client_id(&f.db, f.tenant.id, "management-api").await;
+    let path = format!("/api/v1/applications/{}", api.id);
+    let body = json!({ "groups_claim_format": "name" });
+    let (st, _) = call(&f.app, Method::PATCH, &path, Some(&ga), Some(&body)).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let body = json!({ "groups_claim_format": "id" });
+    let (st, body) = call(&f.app, Method::PATCH, &path, Some(&ga), Some(&body)).await;
+    assert_eq!(st, StatusCode::OK, "{body}");
+    assert_eq!(body["groups_claim_format"], "id");
 }
 
 #[tokio::test]
