@@ -117,7 +117,6 @@ pub async fn proceed(
     from: LoginStage,
     next: Option<LoginStage>,
     user: &users::Model,
-    just_consented: bool,
 ) -> AuthnResult<Outcome> {
     let conn = &ctx.state.db;
     if user.disabled {
@@ -151,12 +150,46 @@ pub async fn proceed(
     let client = client_of(conn, &tx).await?;
     let resource = pending_resource(conn, &client, tx.req.resource_id).await?;
     let resource = resource.as_ref();
-    if !assignment::user_may_use(conn, client.tenant_id, user.id, &client, resource).await? {
-        tx::take(conn, tx.row.id, from).await?;
-        return ctx.error_redirect(&tx.req, ErrorCode::AccessDenied, assignment::NOT_ASSIGNED);
+    if let Some(refused) = refuse_unassigned(ctx, &tx, from, user, &client, resource).await? {
+        return Ok(refused);
     }
+    decide(ctx, tx, from, user, &client, resource, false).await
+}
+
+/// The access_denied redirect (transaction burnt) when `user` holds no
+/// assignment the client or resource requires; `None` when they may go on.
+/// Runs before anything consent-related: an unassigned user is never asked
+/// to consent, nor is a grant stored for them.
+async fn refuse_unassigned(
+    ctx: &Ctx<'_>,
+    tx: &LoadedTx,
+    from: LoginStage,
+    user: &users::Model,
+    client: &applications::Model,
+    resource: Option<&applications::Model>,
+) -> AuthnResult<Option<Outcome>> {
+    let conn = &ctx.state.db;
+    if assignment::user_may_use(conn, client.tenant_id, user.id, client, resource).await? {
+        return Ok(None);
+    }
+    close(ctx, tx, from, user.id, "not_assigned").await?;
+    let refused = ctx.error_redirect(&tx.req, ErrorCode::AccessDenied, assignment::NOT_ASSIGNED)?;
+    Ok(Some(refused))
+}
+
+/// Consent decision for an assigned user: refuse, ask, or finish.
+async fn decide(
+    ctx: &Ctx<'_>,
+    mut tx: LoadedTx,
+    from: LoginStage,
+    user: &users::Model,
+    client: &applications::Model,
+    resource: Option<&applications::Model>,
+    just_consented: bool,
+) -> AuthnResult<Outcome> {
+    let conn = &ctx.state.db;
     let force = force_consent(&tx.req) && !just_consented;
-    let eval = evaluate_consent(conn, &client, &tx.req, resource, user.id, force).await?;
+    let eval = evaluate_consent(conn, client, &tx.req, resource, user.id, force).await?;
     // A device request is always confirmed explicitly (consent alone
     // would let a phished user code through silently).
     let confirm_device = tx.req.device.is_some() && !just_consented;
@@ -344,11 +377,21 @@ pub async fn consent(
         let msg = "the user declined to consent";
         return ctx.error_redirect(&tx.req, ErrorCode::AccessDenied, msg);
     }
+    if user.disabled {
+        return Err(AuthnError::AccountDisabled);
+    }
     let client = client_of(conn, &tx).await?;
     let resource = pending_resource(conn, &client, tx.req.resource_id).await?;
+    let resource = resource.as_ref();
+    // Before storing a grant: the assignment may have been removed while
+    // the consent screen was open.
+    let step = LoginStage::Consent;
+    if let Some(refused) = refuse_unassigned(&ctx, &tx, step, &user, &client, resource).await? {
+        return Ok(refused);
+    }
     let force = force_consent(&tx.req);
-    let eval = evaluate_consent(conn, &client, &tx.req, resource.as_ref(), user.id, force).await?;
-    if let (Decision::NeedsUser(pending), Some(resource)) = (&eval.decision, &resource) {
+    let eval = evaluate_consent(conn, &client, &tx.req, resource, user.id, force).await?;
+    if let (Decision::NeedsUser(pending), Some(resource)) = (&eval.decision, resource) {
         if !pending.iter().all(|p| body.scopes.contains(p)) {
             return Err(AuthnError::Invalid(
                 "approve every listed scope or decline".into(),
@@ -364,5 +407,5 @@ pub async fn consent(
         )
         .await?;
     }
-    proceed(&ctx, tx, LoginStage::Consent, None, &user, true).await
+    decide(&ctx, tx, step, &user, &client, resource, true).await
 }

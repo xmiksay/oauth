@@ -70,7 +70,7 @@ async fn second_factor(
     let next = user
         .must_change_password
         .then_some(LoginStage::ChangePassword);
-    proceed(&ctx, tx, LoginStage::Mfa, next, &user, false).await
+    proceed(&ctx, tx, LoginStage::Mfa, next, &user).await
 }
 
 pub async fn totp(
