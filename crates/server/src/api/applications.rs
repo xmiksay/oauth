@@ -34,6 +34,7 @@ use crate::{
     app::AppState,
     audit::{EventType, Target},
     authz::{Access, Area},
+    cors,
     directory::{self, display_name},
     error::{AppError, AppResult},
     oidc::scope,
@@ -49,6 +50,8 @@ pub fn view(a: &applications::Model) -> Value {
         "builtin": a.builtin,
         "redirect_uris": a.redirect_uris,
         "post_logout_redirect_uris": a.post_logout_redirect_uris,
+        "web_origins": a.web_origins,
+        "effective_web_origins": cors::effective_origins(a),
         "identifier_uri": a.identifier_uri,
         "audience": scope::audience(a),
         "access_token_format": a.access_token_format.to_value(),
@@ -123,6 +126,7 @@ pub struct AppBody {
     display_name: Option<String>,
     redirect_uris: Option<Vec<String>>,
     post_logout_redirect_uris: Option<Vec<String>>,
+    web_origins: Option<Vec<String>>,
     #[serde(default, deserialize_with = "nullable")]
     identifier_uri: Option<Option<String>>,
     access_token_format: Option<String>,
@@ -167,6 +171,13 @@ fn apply(
         mark(
             set_changed(&mut row.post_logout_redirect_uris, uris.clone()),
             "post_logout_redirect_uris",
+        );
+    }
+    if let Some(origins) = &body.web_origins {
+        validate::web_origins(origins)?;
+        mark(
+            set_changed(&mut row.web_origins, origins.clone()),
+            "web_origins",
         );
     }
     if let Some(uri) = &body.identifier_uri {
@@ -248,6 +259,7 @@ pub async fn create(
         builtin: Set(false),
         redirect_uris: Set(Vec::new()),
         post_logout_redirect_uris: Set(Vec::new()),
+        web_origins: Set(Vec::new()),
         identifier_uri: Set(None),
         access_token_format: Set(AccessTokenFormat::Jwt),
         signing_alg: Set(SigningAlg::Rs256),
@@ -308,10 +320,12 @@ pub async fn update(
             )));
         }
     }
-    if fields
-        .iter()
-        .any(|f| matches!(*f, "redirect_uris" | "post_logout_redirect_uris"))
-    {
+    if fields.iter().any(|f| {
+        matches!(
+            *f,
+            "redirect_uris" | "post_logout_redirect_uris" | "web_origins"
+        )
+    }) {
         ensure_may_manage_credentials(&txn, &caller, &app).await?;
     }
     row.updated_at = Set(chrono::Utc::now().fixed_offset());

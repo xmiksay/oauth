@@ -17,6 +17,7 @@ use super::{
 };
 use crate::{
     app::AppState,
+    cors,
     tenancy::Tenant,
     tokens::{opaque, refresh},
 };
@@ -27,10 +28,11 @@ pub async fn revoke(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    match handle(&state, &tenant, &headers, &body).await {
+    let response = match handle(&state, &tenant, &headers, &body).await {
         Ok(()) => no_store(StatusCode::OK.into_response()),
         Err(err) => err.into_response(),
-    }
+    };
+    cors::for_client(&state, &tenant, &headers, &body, response).await
 }
 
 async fn handle(

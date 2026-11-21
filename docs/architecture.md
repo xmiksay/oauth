@@ -64,7 +64,7 @@ proxy sits in front; the server ignores the forwarded host either way).
 | `GET /readyz` — migrations done + DB ping, else 503 (any host) | app | `health` |
 | `GET /` on the apex → 302 to the system admin portal | app | `tenancy` |
 | `POST /telegram/webhook` on the apex — bot updates, secret-token authenticated ([telegram.md](telegram.md)) | app | `telegram::webhook` |
-| `GET /.well-known/openid-configuration` | app | `oidc::discovery` |
+| `GET /.well-known/openid-configuration` (CORS: [CORS](#cors) for this and JWKS / token / userinfo / revoke, incl. `OPTIONS` preflights) | app | `oidc::discovery`, `cors` |
 | `GET /discovery/keys` — JWKS (next + active + unexpired retired), `max-age=300` | app | `oidc::discovery` |
 | `GET /oauth2/authorize` | app | `oidc::authorize` |
 | `POST /oauth2/token` | app | `oidc::token`, `oidc::refresh_grant` |
@@ -102,6 +102,7 @@ Implemented:
 | `headers` | `content_type_is`; app-wide `X-Frame-Options: DENY`, `CSP: frame-ancestors 'none'`, `Referrer-Policy: no-referrer` |
 | `tenancy` | `resolve_host` middleware (host → active tenant, apex redirect, else 404) and the `Tenant` extractor reading its result |
 | `secret` | Random bearer secrets (256-bit, base64url), random UUIDv4 handles, SHA-256 storage hash, constant-time compare |
+| `cors` | CORS on discovery / JWKS / userinfo / token / revoke only: `validate_origin`, `origin_of` (a redirect URI's origin), `effective_origins` (explicit ∪ a public client's redirect-URI origins), `tenant_allows`; `http` (preflight handlers, `tenant_wide` middleware, `for_client` for token / revoke) — see [CORS](#cors) |
 | `oidc` | Protocol endpoints; `params` (duplicate-rejecting form/query parsing, `AuthRequest`), `pkce`, `redirect` (matching + building), `scope` (parsing, resource resolution), `client_auth`, `error` (`OAuthError`, RFC 6749 JSON + `WWW-Authenticate`, `no-store`) |
 | `mail` | `Mailer` trait (`Email`, `MailError` transient/permanent) + `SmtpMailer` (lettre, rustls on AWS-LC, webpki roots, 15 s command timeout); `templates` (plain-text link messages and security notices); `outbox` (`enqueue` on the caller's transaction, body sealed, backoff schedule); `tokens` (email link tokens: issue voids the user's older ones of that purpose, atomic single-use `consume` scoped to the tenant); `links::send` (token + message + outbox row) |
 | `notify` | Security notices (`notify::event`, `email_changed` to the old address) honouring `notification_prefs` (no row = on); email only to a verified address, Telegram to a linked chat |
@@ -162,7 +163,7 @@ migration transaction). Deleting a tenant cascades to everything it owns.
 | `user_totp` · `user_recovery_codes` | sealed TOTP secret + `confirmed_at`; SHA-256 code hashes + `used_at` |
 | `groups` · `group_members` | static groups; members are users |
 | `directory_role_assignments` | (user, role) unique; role GlobalAdmin\|ApplicationAdmin\|UserAdmin |
-| `applications` | `client_id` unique per tenant, `client_type` confidential\|public, `builtin`, `redirect_uris[]`, `post_logout_redirect_uris[]`, `identifier_uri` (unique per tenant), `access_token_format` jwt\|opaque, `signing_alg` RS256\|ES256, access TTL 300–86400 s, refresh TTL |
+| `applications` | `client_id` unique per tenant, `client_type` confidential\|public, `builtin`, `redirect_uris[]`, `post_logout_redirect_uris[]`, `web_origins[]` (explicit CORS origins, ≤ 32), `identifier_uri` (unique per tenant), `access_token_format` jwt\|opaque, `signing_alg` RS256\|ES256, access TTL 300–86400 s, refresh TTL |
 | `client_secrets` | SHA-256 hash, display `hint`, optional `expires_at`; many per app for rotation |
 | `app_scopes` · `app_roles` | delegated scopes (`admin_consent_required`) and app roles (`allowed_member_types` ⊆ {user, application}); `value` unique per app |
 | `app_required_permissions` | client app → resource app, exactly one of `scope_id` / `app_role_id` (FK’d through the resource app) |
@@ -304,6 +305,39 @@ tokens.
   (JSON + `Origin`, see [api/authn.md](api/authn.md)) —
   a cross-site `<img>` can't log anyone out. Refresh tokens survive logout
   (offline access is independent of the browser session).
+
+### CORS
+
+Cross-origin SPAs (public client + PKCE on another host) need to read the
+protocol endpoints from the browser. CORS — preflight and actual responses —
+exists **only** on discovery, JWKS, `/oauth2/token`, `/oauth2/revoke` and
+`/oauth2/userinfo`; never on the login API, the management API, introspection
+(confidential clients only) or logout (the `POST` is the tenant's own SPA,
+CSRF-checked by `Origin`; `GET` is a navigation).
+
+- **Allowed origins of an app** = its explicit `web_origins` ∪, for a public
+  client only, the origins of its `redirect_uris` (computed per request, never
+  stored; post-logout URIs don't count). A confidential client's redirect URIs
+  are server-side callbacks, so they grant nothing.
+- **Origin format:** exactly what a browser sends — `https://host[:port]` or
+  `http://127.0.0.1|[::1][:port]`, lowercase, no default port, no path,
+  trailing slash, query, fragment, userinfo or wildcard (`cors::validate_origin`,
+  enforced on `web_origins` input). Matching is an exact string compare, so a
+  loopback redirect registered without a port yields the portless origin only.
+- **Who may read what:** discovery, JWKS, userinfo → any origin some app of
+  the tenant allows. Token / revoke → only an origin the client named in the
+  request allows (Basic user name, else the form's `client_id`), whether or
+  not its authentication succeeds, so an SPA can read `invalid_grant`. A
+  preflight carries no body or credentials, so token / revoke preflights pass
+  any origin of the tenant and the actual response is gated per client.
+  Another tenant's origins mean nothing here.
+- Responses always carry `Vary: Origin`; `Access-Control-Allow-Origin`
+  echoes the request's `Origin` only when allowed; never
+  `Access-Control-Allow-Credentials` (bearer tokens / client ids, no
+  cookies). Preflights answer `204` with `Allow-Methods` (the route's),
+  `Allow-Headers: authorization, content-type`, `Max-Age: 600`, or a bare
+  `204` when refused. Same-origin requests (the built-in SPAs) need no CORS
+  and get none. A failed origin lookup grants nothing (logged).
 
 ### Sessions & CSRF
 

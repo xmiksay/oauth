@@ -231,6 +231,10 @@ export interface Application {
   builtin: boolean
   redirect_uris: string[]
   post_logout_redirect_uris: string[]
+  /** Explicit CORS origins. */
+  web_origins: string[]
+  /** Read-only: web_origins plus, for public clients, the redirect URIs' origins. */
+  effective_web_origins: string[]
   identifier_uri: string | null
   audience: string
   access_token_format: TokenFormat
@@ -254,6 +258,7 @@ export type ApplicationPatch = Partial<
     | 'display_name'
     | 'redirect_uris'
     | 'post_logout_redirect_uris'
+    | 'web_origins'
     | 'identifier_uri'
     | 'access_token_format'
     | 'signing_alg'

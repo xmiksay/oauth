@@ -8,6 +8,7 @@ pub mod authz;
 pub mod bootstrap;
 pub mod config;
 pub mod consent;
+pub mod cors;
 pub mod db;
 pub mod directory;
 pub mod error;

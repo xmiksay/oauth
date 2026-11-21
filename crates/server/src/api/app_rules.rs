@@ -107,7 +107,8 @@ pub async fn writable_app(
 }
 
 /// Whoever controls a client's credentials (secrets) or where its codes go
-/// (redirect URIs) can act as it. An app holding management-API access — an
+/// (redirect URIs) can act as it; its web origins decide which pages may
+/// read its token responses. An app holding management-API access — an
 /// app role assignment or a consent grant on the built-in API — is
 /// therefore only reconfigurable by a GlobalAdmin; otherwise an
 /// ApplicationAdmin could borrow its `Directory.ReadWrite.All`.
@@ -140,7 +141,7 @@ pub async fn ensure_may_manage_credentials(
     if privileged {
         Err(AppError::Forbidden(
             "the app holds management API access; only a Global Admin can change its \
-             credentials or redirect URIs"
+             credentials, redirect URIs or web origins"
                 .into(),
         ))
     } else {

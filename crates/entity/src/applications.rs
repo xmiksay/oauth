@@ -17,6 +17,8 @@ pub struct Model {
     pub builtin: bool,
     pub redirect_uris: Vec<String>,
     pub post_logout_redirect_uris: Vec<String>,
+    /// Explicitly allowed CORS origins (`scheme://host[:port]`).
+    pub web_origins: Vec<String>,
     /// Audience / resource URI (e.g. `api://management-api`); unique per tenant.
     pub identifier_uri: Option<String>,
     pub access_token_format: AccessTokenFormat,

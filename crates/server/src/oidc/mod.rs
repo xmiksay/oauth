@@ -24,24 +24,40 @@ use axum::{
     routing::{get, post},
 };
 
-use crate::app::AppState;
+use crate::{app::AppState, cors};
 
 pub fn router(state: AppState) -> Router<AppState> {
-    let csrf = middleware::from_fn_with_state(state, crate::authn::csrf);
-    Router::new()
+    let csrf = middleware::from_fn_with_state(state.clone(), crate::authn::csrf);
+    // CORS only here (see `cors`); token / revoke decorate their own
+    // responses, since the allowed origins depend on the client in the body.
+    let tenant_wide_cors = Router::new()
         .route(
             "/.well-known/openid-configuration",
-            get(discovery::configuration),
+            get(discovery::configuration).options(cors::preflight_get),
         )
-        .route("/discovery/keys", get(discovery::jwks))
-        .route("/oauth2/authorize", get(authorize::authorize))
-        .route("/oauth2/token", post(token::token))
+        .route(
+            "/discovery/keys",
+            get(discovery::jwks).options(cors::preflight_get),
+        )
         .route(
             "/oauth2/userinfo",
-            get(userinfo::userinfo).post(userinfo::userinfo),
+            get(userinfo::userinfo)
+                .post(userinfo::userinfo)
+                .options(cors::preflight_get_post),
+        )
+        .route_layer(middleware::from_fn_with_state(state, cors::tenant_wide));
+    Router::new()
+        .merge(tenant_wide_cors)
+        .route("/oauth2/authorize", get(authorize::authorize))
+        .route(
+            "/oauth2/token",
+            post(token::token).options(cors::preflight_post),
         )
         .route("/oauth2/introspect", post(introspect::introspect))
-        .route("/oauth2/revoke", post(revoke::revoke))
+        .route(
+            "/oauth2/revoke",
+            post(revoke::revoke).options(cors::preflight_post),
+        )
         .route(
             "/oauth2/logout",
             get(logout::logout).post(logout::sign_out.layer(csrf)),
