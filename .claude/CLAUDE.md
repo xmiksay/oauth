@@ -19,7 +19,7 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
 | `crates/entity/` | SeaORM entities (one file per table) + `enums.rs` |
 | `crates/migration/` | `sea-orm-migration` Migrator (append-only, raw SQL) |
 | `web/` | Vite + Vue 3 + TS + Tailwind + Pinia SPA (`/` portal, `/login`, `/logout`, `/myaccount`, `/admin` on each tenant host); conventions below |
-| `docs/examples/k8s.yml` | Non-authoritative Kubernetes example (ConfigMap, Deployment, Service, PDB, Ingress for apex + `*.` wildcard); used by no real deployment (that lives outside this repo). Requirements every deployment must meet: [docs/deploy.md](../docs/deploy.md#deployment-requirements) |
+| `docs/examples/k8s.yml` | Non-authoritative Kubernetes example (ConfigMap, Deployment, Service, PDB, Ingress for apex + `*.` wildcard); used by no real deployment; the manifests live outside this repo (CI only swaps the test Deployment's image). Requirements every deployment must meet: [docs/deploy.md](../docs/deploy.md#deployment-requirements) |
 | `.github/workflows/ci.yml` | `gate` (`make lint` + `make test` + `make web-build`) and `docker` (build only) on PR, push to `main` and `v*` tags; `publish` pushes to GHCR (`:main` + `:sha-<short>` from `main`, `:X.Y.Z` from `vX.Y.Z`, which must equal the workspace version, be on `main` and not be in GHCR yet; releases build without cache); `deploy-test` rolls the digest out to test.oauth.cz (`services/deployment/oauth-test`) over WireGuard. Actions pinned by SHA. Environments, secrets, release procedure: [docs/deploy.md](../docs/deploy.md) |
 
 ## Commands (always via make; `CARGO_BUILD_JOBS=4` is exported)
