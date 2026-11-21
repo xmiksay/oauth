@@ -7,10 +7,14 @@ import type {
   PasskeyCreationOptions,
   PasskeyRegistration,
   PasskeyRequestOptions,
+  TotpEnrollment,
 } from './types'
 
-/** `link`: an upstream identity waits to be linked by signing in to an existing account. */
-export type LoginStep = 'password' | 'link' | 'mfa' | 'change_password' | 'consent'
+/**
+ * `link`: an upstream identity waits to be linked by signing in to an existing account.
+ * `mfa_enroll`: MFA is required and the user has no second factor yet — they set one up.
+ */
+export type LoginStep = 'password' | 'link' | 'mfa' | 'mfa_enroll' | 'change_password' | 'consent'
 
 export type LoginFactor = 'password' | 'passkey' | 'totp' | 'recovery' | 'telegram'
 
@@ -65,6 +69,9 @@ export interface Redirect {
 
 export type StepResult = TxView | Redirect
 
+/** Confirming a TOTP enrolment: the next step plus the new recovery codes (shown once). */
+export type EnrolledResult = StepResult & { recovery_codes: string[] }
+
 export function isRedirect(r: StepResult): r is Redirect {
   return typeof (r as Redirect).redirect === 'string'
 }
@@ -96,6 +103,14 @@ export const authn = {
   /** `idp` when the email's domain belongs to a provider. */
   discover: (tx: string, email: string) =>
     api.post<{ idp?: IdpRef }>(txPath(tx, 'discover'), { email }),
+  /** `mfa_enroll`: a new pending TOTP secret (replaces an unconfirmed one). */
+  enrollTotp: (tx: string) => api.post<TotpEnrollment>(txPath(tx, 'enroll/totp'), {}),
+  confirmEnrollTotp: (tx: string, code: string) =>
+    api.post<EnrolledResult>(txPath(tx, 'enroll/totp/confirm'), { code }),
+  enrollPasskeyOptions: (tx: string) =>
+    api.post<PasskeyCreationOptions>(txPath(tx, 'enroll/passkey/options'), {}),
+  enrollPasskey: (tx: string, credential: PasskeyRegistration) =>
+    api.post<StepResult>(txPath(tx, 'enroll/passkey'), { credential }),
   changePassword: (tx: string, newPassword: string) =>
     api.post<StepResult>(txPath(tx, 'change-password'), { new_password: newPassword }),
   consent: (tx: string, approve: boolean, scopes: string[] = []) =>

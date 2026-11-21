@@ -2,8 +2,8 @@
 import { onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useAuthStore } from '@/stores/auth'
-import { settings } from '@/api/access'
-import type { Tenant } from '@/api/types'
+import { settings, type SettingsPatch } from '@/api/access'
+import type { MfaPolicy, Tenant } from '@/api/types'
 import { useAction } from '@/composables/useAction'
 import PageHeader from '@/components/PageHeader.vue'
 import ErrorAlert from '@/components/ErrorAlert.vue'
@@ -13,6 +13,7 @@ const { isGlobalAdmin } = storeToRefs(useAuthStore())
 const tenant = ref<Tenant | null>(null)
 const name = ref('')
 const retention = ref(90)
+const mfa = ref<MfaPolicy>('optional')
 const saved = ref(false)
 const loader = useAction()
 const saver = useAction()
@@ -21,6 +22,7 @@ function fill(t: Tenant) {
   tenant.value = t
   name.value = t.display_name
   retention.value = t.audit_retention_days
+  mfa.value = t.mfa_policy
 }
 
 onMounted(async () => {
@@ -32,9 +34,10 @@ async function save() {
   const t = tenant.value
   if (!t) return
   saved.value = false
-  const body: { display_name?: string; audit_retention_days?: number } = {}
+  const body: SettingsPatch = {}
   if (name.value.trim() !== t.display_name) body.display_name = name.value.trim()
   if (retention.value !== t.audit_retention_days) body.audit_retention_days = retention.value
+  if (mfa.value !== t.mfa_policy) body.mfa_policy = mfa.value
   const updated = await saver.run(() => settings.update(body))
   if (updated) {
     fill(updated)
@@ -89,6 +92,34 @@ async function save() {
         >
         <p class="hint">
           30–3650 days.
+        </p>
+      </div>
+      <div>
+        <label
+          class="label"
+          for="ts-mfa"
+        >Multi-factor authentication</label>
+        <select
+          id="ts-mfa"
+          v-model="mfa"
+          class="input"
+          :disabled="!isGlobalAdmin"
+          aria-describedby="ts-mfa-hint"
+        >
+          <option value="optional">
+            Optional — users who set up a second factor use it
+          </option>
+          <option value="required">
+            Required for every sign-in
+          </option>
+        </select>
+        <p
+          id="ts-mfa-hint"
+          class="hint"
+        >
+          When required, users without a second factor must set up an authenticator app or a
+          passkey while signing in, and single-factor sessions are stepped up. Applications can
+          also require it on their own.
         </p>
       </div>
       <p class="mono muted">

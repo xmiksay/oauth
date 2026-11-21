@@ -30,6 +30,7 @@ function fakeApp(over: Partial<Application> = {}): Application {
     access_token_ttl_secs: 3600,
     refresh_token_ttl_secs: 86400,
     device_code_enabled: false,
+    mfa_policy: 'inherit',
     created_at: '',
     updated_at: '',
     ...over,
@@ -72,5 +73,18 @@ describe('AppTokenConfig', () => {
     const select = w.find('#tc-groups')
     expect((select.element as HTMLSelectElement).value).toBe('name')
     expect(select.attributes('disabled')).toBeDefined()
+  })
+
+  it('lets a GlobalAdmin require MFA on a built-in app', async () => {
+    const w = await mountForm(fakeApp({ builtin: true }), ['GlobalAdmin'])
+    const select = w.find('#tc-mfa')
+    expect((select.element as HTMLSelectElement).value).toBe('inherit')
+    expect(select.attributes('disabled')).toBeUndefined()
+
+    applications.update.mockResolvedValue(fakeApp({ builtin: true, mfa_policy: 'required' }))
+    await select.setValue('required')
+    await w.find('form').trigger('submit')
+    await flushPromises()
+    expect(applications.update).toHaveBeenCalledWith('a1', { mfa_policy: 'required' })
   })
 })

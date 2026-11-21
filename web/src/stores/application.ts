@@ -20,7 +20,7 @@ export const useApplicationStore = defineStore('application', () => {
   const error = ref<unknown>(null)
   const { canWriteApps, isGlobalAdmin } = storeToRefs(useAuthStore())
 
-  /** Built-in apps are GlobalAdmin-only and accept only name / TTL changes. */
+  /** Built-in apps are GlobalAdmin-only and accept only name / TTL / MFA policy changes. */
   const canEdit = computed(
     () => !!app.value && canWriteApps.value && (!app.value.builtin || isGlobalAdmin.value),
   )

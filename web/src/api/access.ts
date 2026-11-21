@@ -62,10 +62,13 @@ export const auditEvents = {
   list: (q: AuditQuery = {}) => t.get<Paged<AuditEvent>>(`audit-events${query({ ...q })}`),
 }
 
+export type SettingsPatch = Partial<
+  Pick<Tenant, 'display_name' | 'audit_retention_days' | 'mfa_policy'>
+>
+
 export const settings = {
   get: () => t.get<Tenant>('settings'),
-  update: (body: { display_name?: string; audit_retention_days?: number }) =>
-    t.patch<Tenant>('settings', body),
+  update: (body: SettingsPatch) => t.patch<Tenant>('settings', body),
 }
 
 export interface CreatedTenant {

@@ -24,6 +24,10 @@ export const ROLE_LABELS: Record<DirectoryRole, string> = {
   UserAdmin: 'User Administrator',
 }
 
+export type MfaPolicy = 'optional' | 'required'
+/** An app can only tighten the tenant's policy. */
+export type AppMfaPolicy = 'inherit' | 'required'
+
 export interface Tenant {
   id: string
   slug: string
@@ -31,6 +35,8 @@ export interface Tenant {
   is_system: boolean
   disabled: boolean
   audit_retention_days: number
+  /** `required`: every sign-in is multi-factor (users without a factor enrol one). */
+  mfa_policy: MfaPolicy
   created_at: string
   updated_at: string
 }
@@ -246,6 +252,8 @@ export interface Application {
   refresh_token_ttl_secs: number
   /** Opt-in to the device authorization grant (RFC 8628). */
   device_code_enabled: boolean
+  /** `required`: signing in to this app (as client or requested resource) needs MFA. */
+  mfa_policy: AppMfaPolicy
   created_at: string
   updated_at: string
 }
@@ -271,6 +279,7 @@ export type ApplicationPatch = Partial<
     | 'access_token_ttl_secs'
     | 'refresh_token_ttl_secs'
     | 'device_code_enabled'
+    | 'mfa_policy'
   >
 >
 

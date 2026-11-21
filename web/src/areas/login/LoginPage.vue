@@ -6,6 +6,7 @@ import { useTenantStore } from '@/stores/tenant'
 import AuthCard from '@/components/AuthCard.vue'
 import PasswordStep from './PasswordStep.vue'
 import MfaStep from './MfaStep.vue'
+import MfaEnrollStep from './MfaEnrollStep.vue'
 import ChangePasswordStep from './ChangePasswordStep.vue'
 import ConsentStep from './ConsentStep.vue'
 import ForgotPasswordForm from './ForgotPasswordForm.vue'
@@ -71,6 +72,8 @@ const title = computed(() => {
       return `Link your ${view.value.link?.idp?.name ?? 'identity provider'} account`
     case 'mfa':
       return 'Verify your identity'
+    case 'mfa_enroll':
+      return 'Set up a second factor'
     case 'change_password':
       return 'Update your password'
     case 'consent':
@@ -227,6 +230,15 @@ const subtitle = computed(() => {
         @telegram-send="flow.sendTelegram"
         @telegram="flow.telegram"
         @passkey="flow.passkey"
+      />
+      <MfaEnrollStep
+        v-else-if="view.step === 'mfa_enroll'"
+        :locked="locked"
+        :passkeys="canUsePasskeys"
+        :begin="flow.beginTotp"
+        :confirm="flow.confirmTotp"
+        @passkey="flow.enrollPasskey"
+        @done="flow.resume"
       />
       <ChangePasswordStep
         v-else-if="view.step === 'change_password'"
