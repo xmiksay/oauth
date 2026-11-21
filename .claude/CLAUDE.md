@@ -177,6 +177,12 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   the client's registration.
 - Background work goes in `jobs` behind `jobs::try_lock` (per-run
   `pg_try_advisory_xact_lock`) so replicas never double-run it.
+- Apps with `assignment_required` serve only principals holding one of
+  their roles (`oidc::assignment`): authorize (after sign-in, before
+  consent) → `access_denied`; every grant minting delegated tokens calls
+  `oidc::token::ensure_assigned` and `client_credentials` calls
+  `assignment::app_may_use` → `invalid_grant`. A new grant (device code)
+  must do the same.
 - Resource apps must not expose scope values named like OIDC scopes
   (`openid profile email offline_access`, any case) or `.default`: stored
   grants keep both in one list (`oidc::scope::split_stored`);

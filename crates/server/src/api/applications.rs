@@ -54,6 +54,7 @@ pub fn view(a: &applications::Model) -> Value {
         "access_token_format": a.access_token_format.to_value(),
         "signing_alg": a.signing_alg.to_value(),
         "groups_claim_format": a.groups_claim_format.to_value(),
+        "assignment_required": a.assignment_required,
         "access_token_ttl_secs": a.access_token_ttl_secs,
         "refresh_token_ttl_secs": a.refresh_token_ttl_secs,
         "device_code_enabled": a.device_code_enabled,

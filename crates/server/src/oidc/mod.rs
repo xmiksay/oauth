@@ -1,6 +1,7 @@
 //! OAuth 2.1 / OpenID Connect protocol endpoints on each tenant host.
 //! Issuer = the tenant origin `{scheme}://{tenant}.{PUBLIC_URL host}[:port]`.
 
+pub mod assignment;
 mod authorize;
 pub mod client_auth;
 mod device_authorization;

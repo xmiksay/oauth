@@ -17,7 +17,7 @@ use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, Transactio
 use uuid::Uuid;
 
 use super::{
-    client_auth, device_grant,
+    assignment, client_auth, device_grant,
     error::{ErrorCode, OAuthError, OAuthResult},
     form_params, pkce, refresh_grant, scope,
 };
@@ -106,6 +106,22 @@ pub(super) async fn active_user(
         .ok_or_else(|| OAuthError::invalid_grant("the user is disabled or no longer exists"))
 }
 
+/// `invalid_grant` unless the user is assigned where required
+/// ([`assignment`]).
+pub(super) async fn ensure_assigned(
+    conn: &impl ConnectionTrait,
+    tenant: &Tenant,
+    user: &users::Model,
+    client: &applications::Model,
+    resource: Option<&applications::Model>,
+) -> OAuthResult<()> {
+    if assignment::user_may_use(conn, tenant.id, user.id, client, resource).await? {
+        Ok(())
+    } else {
+        Err(OAuthError::invalid_grant(assignment::NOT_ASSIGNED))
+    }
+}
+
 pub(super) async fn load_app(
     conn: &impl ConnectionTrait,
     id: Option<Uuid>,
@@ -157,6 +173,8 @@ async fn authorization_code(
     }
     let user = active_user(conn, tenant.id, row.user_id).await?;
     let resource = load_app(conn, row.resource_application_id).await?;
+    // The assignment may have gone since authorize.
+    ensure_assigned(conn, tenant, &user, client, resource.as_ref()).await?;
     let (oidc, resource_scopes) = scope::split_stored(&row.scopes);
     let refresh = oidc.iter().any(|s| s == "offline_access").then(|| Refresh {
         family_id: Uuid::now_v7(),
@@ -250,6 +268,9 @@ async fn client_credentials(
     let resource = scope::find_resource(&state.db, tenant.id, prefix)
         .await?
         .ok_or_else(|| OAuthError::new(ErrorCode::InvalidScope, "unknown resource"))?;
+    if !assignment::app_may_use(&state.db, client, &resource).await? {
+        return Err(OAuthError::invalid_grant(assignment::NOT_ASSIGNED));
+    }
     let issuer = state.config.issuer(&tenant.slug);
     let master_key = &state.config.master_key;
     Ok(tokens::issue_app_only(&state.db, master_key, tenant, &issuer, client, &resource).await?)

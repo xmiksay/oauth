@@ -38,6 +38,7 @@ pub struct AppBody {
     access_token_format: Option<String>,
     signing_alg: Option<String>,
     groups_claim_format: Option<String>,
+    assignment_required: Option<bool>,
     access_token_ttl_secs: Option<i32>,
     refresh_token_ttl_secs: Option<i32>,
     device_code_enabled: Option<bool>,
@@ -118,6 +119,12 @@ pub(super) fn apply(
         mark(
             set_changed(&mut row.groups_claim_format, format),
             "groups_claim_format",
+        );
+    }
+    if let Some(required) = body.assignment_required {
+        mark(
+            set_changed(&mut row.assignment_required, required),
+            "assignment_required",
         );
     }
     if let Some(ttl) = body.access_token_ttl_secs {

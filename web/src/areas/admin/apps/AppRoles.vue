@@ -8,6 +8,7 @@ import { useAction } from '@/composables/useAction'
 import ErrorAlert from '@/components/ErrorAlert.vue'
 import ConfirmButton from '@/components/ConfirmButton.vue'
 import ModalDialog from '@/components/ModalDialog.vue'
+import AppAssignment from './AppAssignment.vue'
 
 const { app, canEditConfig } = storeToRefs(useApplicationStore())
 const items = ref<AppRole[]>([])
@@ -78,6 +79,7 @@ async function remove(roleId: string) {
     v-if="app"
     class="space-y-4"
   >
+    <AppAssignment />
     <div class="flex flex-wrap items-center justify-between gap-2">
       <p class="muted text-sm">
         App roles are assigned to users, groups or applications and appear in the

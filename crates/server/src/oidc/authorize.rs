@@ -13,6 +13,7 @@ use entity::{applications, enums::LoginStage, sessions};
 use sea_orm::ConnectionTrait;
 
 use super::{
+    assignment::{self, NOT_ASSIGNED},
     client_auth::find_client,
     error::{ErrorCode, OAuthError, OAuthResult},
     params::{self, AuthRequest, Prompt},
@@ -116,6 +117,10 @@ async fn handle(env: &Env<'_>, query: &str) -> OAuthResult<Response> {
         return to_login(env, &client, &req, LoginStage::Password, None).await;
     };
 
+    // Before consent: an unassigned user is never asked to consent.
+    if !assignment::user_may_use_by_id(conn, user.id, &client, req.resource_id).await? {
+        return Ok(fail(ErrorCode::AccessDenied, NOT_ASSIGNED));
+    }
     let none = req.prompt == Some(Prompt::None);
     // A single-factor session meeting an app that requires MFA: step up
     // (the user's second factor, or enrolment) instead of reusing it.

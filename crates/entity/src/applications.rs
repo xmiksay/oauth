@@ -25,6 +25,9 @@ pub struct Model {
     pub signing_alg: SigningAlg,
     /// What the `groups` claim of access tokens for this (resource) app carries.
     pub groups_claim_format: GroupsClaimFormat,
+    /// Only principals holding one of this app's roles (user: directly or
+    /// via a group; app: an application permission) get tokens to / for it.
+    pub assignment_required: bool,
     pub access_token_ttl_secs: i32,
     pub refresh_token_ttl_secs: i32,
     /// Opt-in to the device authorization grant (RFC 8628).
