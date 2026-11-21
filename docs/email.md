@@ -94,9 +94,9 @@ at-least-once: a send in flight when its run stalls past the lease can be
 repeated by the next holder, and so can a send that timed out after the
 server had already accepted the message (the job can't tell, so it retries).
 
-Pods get `terminationGracePeriodSeconds: 75` (`deploy/k8s/deploy.yml`): the
-5 s preStop sleep plus a send in flight (at most 60 s) finish before the
-kill.
+Deployments need a termination grace period of at least 75 s
+([deploy.md](deploy.md#deployment-requirements)): the 5 s pre-stop delay plus
+a send in flight (at most 60 s) finish before the kill.
 
 Dev: `make dev-db` also starts Mailpit (SMTP `127.0.0.1:1025`, inbox
 <http://localhost:8025>), which `.env.example`'s `SMTP_URL=smtp://localhost:1025`

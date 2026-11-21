@@ -373,13 +373,12 @@ See [frontend.md](frontend.md): one Vue 3 SPA (`/` portal, `/login`, `/logout`, 
 ## Deployment
 
 Multi-stage `Dockerfile` (node 22 → rust 1.99.0 → debian bookworm-slim, uid
-10001). `deploy/k8s/deploy.yml`: ConfigMap, Deployment (2 replicas, liveness
-`/healthz`, readiness `/readyz`, 5 s preStop sleep, 75 s grace period so an
-outbox send in flight can finish, no service-account token),
-Service (http 8080, metrics 9090), PodDisruptionBudget (`minAvailable: 1`),
-Ingress for the apex + `*.` wildcard host (TLS Secret `oauth-wildcard-tls`, a
-cert-manager DNS-01 wildcard certificate; the controller must keep `Host`, see the
-trust model under [HTTP surface](#http-surface-current)).
-Secrets come from a hand-made Secret `oauth-secrets`. CI builds the image on
+10001). The repository carries no real deployment (environments are deployed
+from elsewhere); the requirements any deployment must meet (apex + wildcard
+host and TLS, `Host` passed unchanged, probes, metrics port, Secret vs config
+env, one database, migrations on startup, replicas) are in
+[deploy.md](deploy.md#deployment-requirements), and
+[examples/k8s.yml](examples/k8s.yml) is a non-authoritative Kubernetes example.
+CI builds the image on
 every PR (no push), publishes it to GHCR from `main` and `v*` tags and rolls
 `main` out to test.oauth.cz — see [deploy.md](deploy.md).

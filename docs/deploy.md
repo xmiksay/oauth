@@ -1,9 +1,83 @@
 # Deployment and releases
 
 Images are built by `.github/workflows/ci.yml` and published to
-`ghcr.io/xmiksay/oauth`. `deploy/k8s/deploy.yml` is a generic example
-manifest; the real deployments (both environments) are managed by the
-ansible repo `Sourcelab/ansible`, role `oauth`.
+`ghcr.io/xmiksay/oauth`. This repository does not carry any real deployment:
+both environments are deployed from the ansible repo `Sourcelab/ansible`, role
+`oauth`. [`examples/k8s.yml`](examples/k8s.yml) is a non-authoritative example
+(ConfigMap, Deployment, Service, PodDisruptionBudget, Ingress) used by nothing
+and not tested; the requirements below are what any deployment must meet.
+
+## Deployment requirements
+
+The image runs `oauth serve` as uid 10001 (read-only root filesystem is fine;
+it writes nothing to disk). One-off commands use the same image:
+`oauth bootstrap --admin-email …` (first Global Admin, prints a one-time
+password) and `oauth telegram set-webhook` (with Telegram).
+
+**Hosts and TLS.** Tenant `t` lives at `t.<PUBLIC_URL host>` and the apex
+serves the system redirect and the Telegram webhook, so DNS and the ingress
+need both the apex and a one-label wildcard (`id.example.com`,
+`*.id.example.com`) routed to the app, and TLS needs a certificate covering
+both (a wildcard certificate can only be issued through ACME DNS-01). Nested
+hosts (`a.b.id.example.com`) are never tenants. `PUBLIC_URL` is the external
+https origin (no path); `COOKIE_SECURE=false` only with an `http://`
+`PUBLIC_URL` (local development).
+
+**Ingress / reverse proxy.** It must pass the client's `Host` (or HTTP/2
+`:authority`) through unchanged: the tenant is resolved from it. The server
+never reads `X-Forwarded-Host` / `Forwarded`, so a proxy that rewrites `Host`
+and relies on those headers to carry the original breaks tenancy (every
+request 404s). No shared cache or CDN in front may key responses on the path
+without the host. Set `TRUSTED_PROXY_HEADER` (e.g. `X-Forwarded-For`, its
+right-most entry is used: exactly one proxy hop) only when such a proxy sets
+it; otherwise leave it unset and the TCP peer address is the client IP
+(ingress-nginx: keep `use-forwarded-headers` off unless another trusted proxy
+sits in front of it). The trust model is in
+[architecture.md](architecture.md#http-surface-current).
+
+**Ports and probes.** `LISTEN_ADDR` (default `0.0.0.0:8080`) serves the app;
+`METRICS_ADDR` (default `0.0.0.0:9090`) serves only `GET /metrics`
+(Prometheus) and must not be exposed publicly. Probes on the app port, any
+host: liveness `GET /healthz` (process alive, no DB dependency) and readiness
+`GET /readyz` (503 until migrations are done, and whenever the DB is
+unreachable). No startup probe is needed: the listener opens before
+migrations run, so a replica waiting on the migration lock passes liveness
+and stays out of the Service. On SIGTERM both listeners drain gracefully;
+give the pod a short pre-stop delay (endpoints drop it before it stops
+accepting connections) and a termination grace period of at least 75 s
+(5 s pre-stop + an outbox send in flight, at most 60 s —
+[email.md](email.md#delivery)). The server never calls the Kubernetes API (no
+service-account token needed).
+
+**Configuration.** All configuration is environment variables, parsed at
+startup (an invalid value fails startup); `.env.example` is the authoritative,
+commented list.
+
+| Secret (credentials, keys) | Plain config |
+|---|---|
+| `DATABASE_URL` (required) | `PUBLIC_URL` (required) |
+| `OAUTH_MASTER_KEY` (required; 32 bytes base64) | `LISTEN_ADDR`, `METRICS_ADDR`, `LOG_FORMAT` (`json` in clusters), `RUST_LOG` |
+| `SMTP_URL` (with `SMTP_FROM`) | `KEY_ROTATION_DAYS`, `KEY_PREPUBLISH_HOURS`, `SESSION_TTL_HOURS` |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` (with `TELEGRAM_BOT_USERNAME`) | `COOKIE_SECURE`, `TRUSTED_PROXY_HEADER`, `WEB_DIST_DIR` |
+| | `SMTP_FROM`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_API_URL` |
+
+Email is on only with both `SMTP_URL` and `SMTP_FROM`, Telegram only with all
+three `TELEGRAM_*` above; a partial set fails startup. Back up
+`OAUTH_MASTER_KEY`: it seals the signing keys, TOTP secrets, upstream IdP
+client secrets and queued messages, and losing it makes them unreadable.
+
+**Database.** One PostgreSQL database shared by all replicas; it holds all
+state (sessions, codes, login transactions, rate limits), so the app is
+otherwise stateless and needs no sticky sessions or volumes. The
+`DATABASE_URL` role needs DDL rights on it: every replica runs pending migrations on
+startup, all in one transaction holding `pg_advisory_xact_lock`, so
+concurrent starts serialize and a failed migration rolls back and exits
+non-zero. There is no separate migration job.
+
+**Replicas.** Any number of replicas is safe, and two or more (with a
+disruption budget keeping one available) avoid downtime on rollouts and node
+drains. Background jobs (key rotation, cleanup, outbox delivery) take a
+per-run advisory lock, so only one replica does each run.
 
 ## CI jobs
 

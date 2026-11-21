@@ -21,13 +21,14 @@ Optional: without the bot settings every Telegram feature is hidden
    | Variable | Where | |
    |---|---|---|
    | `TELEGRAM_BOT_TOKEN` | Secret | `<id>:<key>` from BotFather; never logged (`Debug` redacts it) |
-   | `TELEGRAM_BOT_USERNAME` | ConfigMap | without `@`; deep links are `https://t.me/<username>?start=<code>` |
+   | `TELEGRAM_BOT_USERNAME` | config | without `@`; deep links are `https://t.me/<username>?start=<code>` |
    | `TELEGRAM_WEBHOOK_SECRET` | Secret | 1–256 of `A-Za-z0-9_-` (the Bot API's rule), e.g. `openssl rand -hex 32` |
-   | `TELEGRAM_API_URL` | ConfigMap | default `https://api.telegram.org`; `http://` only to a loopback host (tests, a local Bot API server) |
+   | `TELEGRAM_API_URL` | config | default `https://api.telegram.org`; `http://` only to a loopback host (tests, a local Bot API server) |
 
 3. Register the webhook once, and again whenever the secret or `PUBLIC_URL`
-   changes: `make telegram-webhook` locally, or
-   `kubectl exec deploy/oauth -- oauth telegram set-webhook`. It calls
+   changes: `make telegram-webhook` locally, or `oauth telegram set-webhook`
+   in the deployed image (e.g. `kubectl exec deploy/oauth -- oauth telegram
+   set-webhook`). It calls
    `setWebhook` with `url = {PUBLIC_URL}/telegram/webhook` (the apex origin,
    which belongs to no tenant), `secret_token` and
    `allowed_updates = ["message"]`. Telegram only calls https URLs on ports

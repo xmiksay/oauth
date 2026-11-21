@@ -19,7 +19,7 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
 | `crates/entity/` | SeaORM entities (one file per table) + `enums.rs` |
 | `crates/migration/` | `sea-orm-migration` Migrator (append-only, raw SQL) |
 | `web/` | Vite + Vue 3 + TS + Tailwind + Pinia SPA (`/` portal, `/login`, `/logout`, `/myaccount`, `/admin` on each tenant host); conventions below |
-| `deploy/k8s/deploy.yml` | ConfigMap, Deployment, Service, PodDisruptionBudget, Ingress for apex + `*.` wildcard (TLS Secret `oauth-wildcard-tls` via cert-manager DNS-01; Secret `oauth-secrets` created by hand) |
+| `docs/examples/k8s.yml` | Non-authoritative Kubernetes example (ConfigMap, Deployment, Service, PDB, Ingress for apex + `*.` wildcard); used by no real deployment (that lives outside this repo). Requirements every deployment must meet: [docs/deploy.md](../docs/deploy.md#deployment-requirements) |
 | `.github/workflows/ci.yml` | `gate` (`make lint` + `make test` + `make web-build`) and `docker` (build only) on PR, push to `main` and `v*` tags; `publish` pushes to GHCR (`:main` + `:sha-<short>` from `main`, `:X.Y.Z` from `vX.Y.Z`, which must equal the workspace version, be on `main` and not be in GHCR yet; releases build without cache); `deploy-test` rolls the digest out to test.oauth.cz (`services/deployment/oauth-test`) over WireGuard. Actions pinned by SHA. Environments, secrets, release procedure: [docs/deploy.md](../docs/deploy.md) |
 
 ## Commands (always via make; `CARGO_BUILD_JOBS=4` is exported)
@@ -52,15 +52,15 @@ See `.env.example` (authoritative, commented). Required: `DATABASE_URL`,
 `SESSION_TTL_HOURS` (24), `WEB_DIST_DIR` (web/dist), `COOKIE_SECURE` (true;
 `false` only with an `http://` `PUBLIC_URL`), `TRUSTED_PROXY_HEADER` (unset),
 `SMTP_URL` + `SMTP_FROM` (both or neither; unset hides every email feature —
-[docs/email.md](../docs/email.md)). `SMTP_URL` lives in the Secret, `SMTP_FROM`
-in the ConfigMap. `TELEGRAM_BOT_TOKEN` + `TELEGRAM_WEBHOOK_SECRET` (Secret) +
-`TELEGRAM_BOT_USERNAME` (ConfigMap): all three or none, unset hides every
+[docs/email.md](../docs/email.md)). `SMTP_URL` is a secret, `SMTP_FROM`
+plain config. `TELEGRAM_BOT_TOKEN` + `TELEGRAM_WEBHOOK_SECRET` (secret) +
+`TELEGRAM_BOT_USERNAME` (config): all three or none, unset hides every
 Telegram feature; `TELEGRAM_API_URL` (https://api.telegram.org; http only to
 loopback) — [docs/telegram.md](../docs/telegram.md).
 Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md); management API:
 [docs/api/management.md](../docs/api/management.md) (+ [me.md](../docs/api/me.md), [identity_providers.md](../docs/api/identity_providers.md)). Env vars are parsed and validated in
 `crates/server/src/config/` (`env.rs`, `smtp.rs`, `telegram.rs`, `public_url.rs`); adding a var means updating `.env.example`,
-`deploy/k8s/deploy.yml` and this list.
+the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.yml` and this list.
 
 ## Conventions
 
