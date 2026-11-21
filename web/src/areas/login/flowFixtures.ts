@@ -20,6 +20,7 @@ export function view(step: LoginStep, extra: Partial<TxView> = {}): TxView {
     idps: [],
     idp_hint: null,
     notice: null,
+    device: false,
     link:
       step === 'link'
         ? { idp: { id: 'idp-1', name: 'Entra' }, email: 'ann@contoso.com', name: 'Ann' }

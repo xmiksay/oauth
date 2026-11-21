@@ -61,6 +61,13 @@ const routes: RouteRecordRaw[] = [
     meta: { title: 'Confirm email address' },
   },
   {
+    // Device code verification (RFC 8628): public; the code starts a normal sign-in.
+    path: '/device',
+    name: 'device',
+    component: () => import('@/areas/device/DevicePage.vue'),
+    meta: { title: 'Sign in on a device' },
+  },
+  {
     path: '/logout',
     name: 'logout',
     component: () => import('@/areas/logout/LogoutPage.vue'),

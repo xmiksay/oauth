@@ -19,6 +19,7 @@ const app: Application = {
   groups_claim_format: 'id',
   access_token_ttl_secs: 3600,
   refresh_token_ttl_secs: 86400,
+  device_code_enabled: false,
   created_at: '',
   updated_at: '',
 }
@@ -31,13 +32,22 @@ describe('changedFields', () => {
         redirect_uris: ['https://shop/cb'],
         access_token_ttl_secs: 1800,
         identifier_uri: 'api://shop',
+        device_code_enabled: true,
       }),
-    ).toEqual({ access_token_ttl_secs: 1800, identifier_uri: 'api://shop' })
+    ).toEqual({
+      access_token_ttl_secs: 1800,
+      identifier_uri: 'api://shop',
+      device_code_enabled: true,
+    })
   })
 
   it('is empty when nothing changed', () => {
-    expect(changedFields(app, { access_token_format: 'jwt', post_logout_redirect_uris: [] })).toEqual(
-      {},
-    )
+    expect(
+      changedFields(app, {
+        access_token_format: 'jwt',
+        post_logout_redirect_uris: [],
+        device_code_enabled: false,
+      }),
+    ).toEqual({})
   })
 })

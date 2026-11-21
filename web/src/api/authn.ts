@@ -41,6 +41,11 @@ export interface TxView {
   link: { idp: IdpRef | null; email: string | null; name: string | null } | null
   /** At step `password`: a parked link was dropped (its provider was disabled or deleted). */
   notice: 'link_unavailable' | null
+  /**
+   * The sign-in approves a device (RFC 8628 device code): it always ends with a confirmation,
+   * whose `consent.scopes` then lists everything the device gets.
+   */
+  device: boolean
 }
 
 export interface EmailVerified {
@@ -94,6 +99,8 @@ export const authn = {
       approve ? { approve: true, scopes } : { approve: false },
     ),
   signOut: () => api.post<{ signed_out: boolean }>('/oauth2/logout', {}),
+  /** A device's user code (`/device`): the login transaction to continue with. */
+  deviceCode: (userCode: string) => api.post<Redirect>('/api/authn/device', { user_code: userCode }),
   // Email-link endpoints: not tied to a transaction; the link's token authorizes them.
   requestPasswordReset: (email: string) =>
     api.post<{ accepted: boolean }>('/api/authn/password-reset', { email }),

@@ -244,6 +244,8 @@ export interface Application {
   groups_claim_format: GroupsClaimFormat
   access_token_ttl_secs: number
   refresh_token_ttl_secs: number
+  /** Opt-in to the device authorization grant (RFC 8628). */
+  device_code_enabled: boolean
   created_at: string
   updated_at: string
 }
@@ -268,6 +270,7 @@ export type ApplicationPatch = Partial<
     | 'groups_claim_format'
     | 'access_token_ttl_secs'
     | 'refresh_token_ttl_secs'
+    | 'device_code_enabled'
   >
 >
 

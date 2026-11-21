@@ -12,7 +12,24 @@ onMounted(() => root.value?.focus())
 
 <template>
   <div class="space-y-4">
+    <template v-if="view.device">
+      <p
+        ref="root"
+        tabindex="-1"
+        class="text-sm focus:outline-none"
+      >
+        Sign in to <strong>{{ view.client.display_name }}</strong> on another device as
+        <strong>{{ view.user?.email }}</strong>?
+      </p>
+      <p
+        class="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950 dark:text-amber-200"
+      >
+        Only continue if you started this sign-in yourself on a device in front of you. Never
+        enter a code that someone sent or told you.
+      </p>
+    </template>
     <p
+      v-else
       ref="root"
       tabindex="-1"
       class="text-sm focus:outline-none"
@@ -20,15 +37,20 @@ onMounted(() => root.value?.focus())
       <strong>{{ view.client.display_name }}</strong> wants to access
       <strong>{{ view.consent?.resource.display_name }}</strong> on your behalf.
     </p>
-    <div>
+    <div v-if="view.consent">
       <h2 class="text-sm font-medium">
-        This app will be able to:
+        <template v-if="view.device">
+          The device will be able to access {{ view.consent.resource.display_name }} to:
+        </template>
+        <template v-else>
+          This app will be able to:
+        </template>
       </h2>
       <ul
         class="mt-2 divide-y divide-neutral-200 rounded-md border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800"
       >
         <li
-          v-for="scope in view.consent?.scopes ?? []"
+          v-for="scope in view.consent.scopes"
           :key="scope.value"
           class="px-3 py-2 text-sm"
         >
@@ -38,8 +60,13 @@ onMounted(() => root.value?.focus())
       </ul>
     </div>
     <p class="muted text-xs">
-      Accepting allows this app to use your data as described. You can withdraw this permission
-      later in My Account.
+      <template v-if="view.device">
+        You can sign the device out later in My Account under Devices &amp; sessions.
+      </template>
+      <template v-else>
+        Accepting allows this app to use your data as described. You can withdraw this permission
+        later in My Account.
+      </template>
     </p>
     <div class="flex gap-2">
       <button
@@ -48,7 +75,7 @@ onMounted(() => root.value?.focus())
         :disabled="locked"
         @click="emit('decide', false)"
       >
-        Cancel
+        {{ view.device ? 'Deny' : 'Cancel' }}
       </button>
       <button
         type="button"
@@ -56,7 +83,7 @@ onMounted(() => root.value?.focus())
         :disabled="locked"
         @click="emit('decide', true)"
       >
-        Accept
+        {{ view.device ? 'Allow' : 'Accept' }}
       </button>
     </div>
   </div>

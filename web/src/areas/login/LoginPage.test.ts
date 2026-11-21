@@ -35,6 +35,7 @@ const passwordView: TxView = {
   idp_hint: null,
   link: null,
   notice: null,
+  device: false,
 }
 
 async function mountPage() {
