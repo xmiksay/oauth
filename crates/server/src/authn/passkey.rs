@@ -167,7 +167,7 @@ pub async fn submit(
         (vec![kind, "user".to_owned(), "mfa".to_owned()], None)
     };
     tx.row.amr = amr;
-    proceed(&ctx, tx, stage, next, &user, false).await
+    proceed(&ctx, tx, stage, next, &user).await
 }
 
 /// The factors the step view offers (`factors`).

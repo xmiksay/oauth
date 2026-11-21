@@ -180,8 +180,11 @@ It sets the session cookie **only when
 a new session was created** (not when a consent-only transaction reused the
 existing session). Protocol errors that belong to the client are also a
 `redirect`, to the client's redirect URI with `error`, `error_description`,
-`state`, `iss`: `access_denied` (user declined, or an admin-only scope lacks
-admin consent — "admin approval required for: …"), `login_required` (a
+`state`, `iss`: `access_denied` (user declined, an admin-only scope lacks
+admin consent — "admin approval required for: …", or the user is not
+assigned to the client or resource app — see
+[Assignment required](../architecture.md#assignment-required); checked
+again when consent is approved, so no grant is stored), `login_required` (a
 reused or stepped-up session ended while the transaction was pending).
 
 ## Steps

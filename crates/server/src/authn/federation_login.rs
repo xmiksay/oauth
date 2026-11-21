@@ -239,7 +239,7 @@ async fn continue_as(
         generation: idp.generation,
     };
     tx.row.federated = Some(tx::set_federated(&ctx.state.db, tx.row.id, &via).await?);
-    let outcome = proceed(ctx, tx, LoginStage::Password, next, user, false).await?;
+    let outcome = proceed(ctx, tx, LoginStage::Password, next, user).await?;
     Ok(Resolved::Continue(outcome))
 }
 

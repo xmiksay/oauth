@@ -237,7 +237,8 @@ app one of its application permissions — exactly the roles that would
 become the `roles` claim. It applies to the app as **client** (users signing
 in to it) and as **resource** (delegated tokens for it need the user's
 assignment, app-only tokens the calling app's). Checked at authorize after
-sign-in and before consent (an unassigned user is never asked to consent) →
+sign-in and before consent, and again when consent is approved (an
+unassigned user is never asked to consent, nor stores a grant) →
 `access_denied` redirect (only after the redirect URI matched; also with
 `prompt=none`), on code redemption and on every refresh (only the resource
 actually minted for; a refresh narrowed to OIDC scopes skips it) and on

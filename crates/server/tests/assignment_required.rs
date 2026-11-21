@@ -14,13 +14,14 @@ mod common;
 
 use axum::http::{Method, StatusCode};
 use common::{
-    browser::{authorize_url, query_of},
-    flow::{Fixture, WEB_CB},
+    browser::{authorize_url, current_totp, query_of},
+    flow::{Fixture, PASSWORD, WEB_CB},
     mgmt::{app_admin_token, app_by_client_id, audited, call, mint_user_token, user_with_roles},
     seed::{add_role, assign_role, insert},
 };
 use entity::{
-    app_role_assignments, applications, enums::DirectoryRole::GlobalAdmin, group_members,
+    app_role_assignments, applications, consent_grants, enums::DirectoryRole::GlobalAdmin,
+    group_members,
 };
 use sea_orm::{ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, sea_query::Expr};
 use serde_json::{Value, json};
@@ -196,6 +197,38 @@ async fn the_resource_requires_the_users_assignment() {
     let tx = fresh.authorize(&web_url(ledger, &[])).await.unwrap();
     let back = fresh.complete_login(&tx, "ann@example.com").await;
     assert_eq!(error_of(&back), "access_denied");
+}
+
+#[tokio::test]
+async fn an_assignment_removed_on_the_consent_screen_stores_no_grant() {
+    let f = Fixture::new().await;
+    require(&f, &f.orders, true).await;
+    let mut browser = f.browser();
+    let tx = browser.authorize(&web_url(ORDERS, &[])).await.unwrap();
+    let password = json!({ "email": "ann@example.com", "password": PASSWORD });
+    let (mut st, mut resp) = browser.step(&tx, "password", password).await;
+    if resp["step"] == "mfa" {
+        let code = json!({ "code": current_totp() });
+        (st, resp) = browser.step(&tx, "totp", code).await;
+    }
+    assert_eq!(st, StatusCode::OK, "{resp}");
+    assert_eq!(resp["step"], "consent", "{resp}");
+
+    unassign_all(&f, &f.orders).await;
+    let approve = json!({ "approve": true, "scopes": ["Orders.Read"] });
+    let (st, resp) = browser.step(&tx, "consent", approve).await;
+    assert_eq!(st, StatusCode::OK, "{resp}");
+    assert_eq!(
+        error_of(resp["redirect"].as_str().unwrap()),
+        "access_denied"
+    );
+    assert!(!browser.has_session());
+    let grants = consent_grants::Entity::find()
+        .filter(consent_grants::Column::ResourceApplicationId.eq(f.orders.id))
+        .all(&f.db)
+        .await
+        .unwrap();
+    assert!(grants.is_empty(), "{grants:?}");
 }
 
 #[tokio::test]

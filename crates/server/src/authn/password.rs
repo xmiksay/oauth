@@ -142,7 +142,7 @@ pub async fn submit(
     tx.row.user_id = Some(user.id);
     tx.row.amr = vec!["pwd".to_owned()];
     tx.row.auth_time = Some(Utc::now().fixed_offset());
-    proceed(&ctx, tx, stage, next, &user, false).await
+    proceed(&ctx, tx, stage, next, &user).await
 }
 
 /// Whether the user has a second factor, so a first factor alone doesn't
@@ -215,5 +215,5 @@ pub async fn change(
     )
     .await?;
     txn.commit().await?;
-    proceed(&ctx, tx, LoginStage::ChangePassword, None, &user, false).await
+    proceed(&ctx, tx, LoginStage::ChangePassword, None, &user).await
 }
