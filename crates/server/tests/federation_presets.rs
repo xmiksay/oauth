@@ -294,7 +294,23 @@ async fn presets_have_defaults_and_rules() {
         }
         body
     };
-    let (status, gh) = post(base(json!({ "kind": "github" }))).await;
+    for (body, needle) in [
+        (json!({ "kind": "github" }), "client_secret"),
+        (
+            json!({ "kind": "github", "issuer": "https://github.com/foo", "client_secret": "s" }),
+            "github issuer must be a web origin",
+        ),
+    ] {
+        let (status, out) = post(base(body)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{out}");
+        assert!(out.to_string().contains(needle), "{out}");
+    }
+    let (status, off) = post(base(
+        json!({ "name": "Off", "kind": "github", "enabled": false }),
+    ))
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{off}");
+    let (status, gh) = post(base(json!({ "kind": "github", "client_secret": "s" }))).await;
     assert_eq!(status, StatusCode::CREATED, "{gh}");
     assert_eq!(gh["issuer"], "https://github.com");
     assert_eq!(gh["scopes"], json!(["read:user", "user:email"]));
@@ -313,6 +329,8 @@ async fn presets_have_defaults_and_rules() {
         (json!({ "kind": "oidc" }), "kind"),
         (json!({ "trust_upstream_email": true }), "github"),
         (json!({ "hosted_domain": "contoso.com" }), "hosted_domain"),
+        (json!({ "issuer": "https://github.com/x" }), "web origin"),
+        (json!({ "client_secret": null }), "client_secret"),
     ] {
         let (status, out) = fed.api(Method::PATCH, &path, Some(body)).await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{out}");

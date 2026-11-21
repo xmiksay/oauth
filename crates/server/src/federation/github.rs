@@ -14,7 +14,8 @@ use super::{
     urls,
 };
 
-const GITHUB_WEB: &str = "https://github.com";
+/// github.com's web origin (the preset's default issuer).
+pub const GITHUB_WEB: &str = "https://github.com";
 const GITHUB_API: &str = "https://api.github.com";
 const ACCEPT: &str = "application/vnd.github+json";
 /// Addresses looked at (GitHub caps an account's emails far below this).

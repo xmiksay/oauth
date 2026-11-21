@@ -186,6 +186,7 @@ pub async fn create(
     let mut secret = None;
     apply(&state, &mut row, &body, &mut secret)?;
     seal(&state, &mut row, tenant_id, id, secret)?;
+    idp_rules::check_secret(&row)?;
     let txn = state.db.begin().await?;
     if let Set(domains) = &row.email_domains {
         ensure_domains_free(&txn, tenant_id, id, domains).await?;
@@ -251,6 +252,7 @@ pub async fn update(
         return Ok(axum::Json(detailed(&state, &caller, &txn, &idp).await?));
     }
     seal(&state, &mut row, tenant_id, id, secret)?;
+    idp_rules::check_secret(&row)?;
     if fields.contains(&"email_domains") {
         let domains = row.email_domains.try_as_ref().cloned().unwrap_or_default();
         ensure_domains_free(&txn, tenant_id, id, &domains).await?;

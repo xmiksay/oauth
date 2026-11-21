@@ -11,7 +11,9 @@ use super::{Failure, id_token::Claims};
 /// Stands for the signing tenant in a multi-tenant Entra issuer, as
 /// Microsoft's `organizations` / `common` discovery documents write it.
 pub const TENANT_PLACEHOLDER: &str = "{tenantid}";
-const GOOGLE_ISSUER: &str = "https://accounts.google.com";
+/// Google's issuer (the preset's default; its ID tokens may also say it
+/// without the scheme).
+pub const GOOGLE_ISSUER: &str = "https://accounts.google.com";
 
 /// The kind-specific settings of one provider.
 #[derive(Clone, Copy, Debug)]

@@ -48,6 +48,12 @@ impl Reauth {
     }
 }
 
+/// GitHub has no `auth_time`: a demanded re-authentication can't be
+/// proven, so it is refused (fail closed).
+fn reauth_supported(kind: IdpKind, reauth: Reauth) -> bool {
+    kind != IdpKind::Github || reauth == Reauth::default()
+}
+
 fn upstream(state: &AppState) -> Result<&super::Upstream, Failure> {
     state
         .upstream
@@ -65,9 +71,7 @@ pub async fn begin(
     binding_hash: &[u8],
     reauth: Reauth,
 ) -> anyhow::Result<Result<String, Failure>> {
-    // GitHub has no `auth_time`: a demanded re-authentication can't be
-    // proven, so it isn't attempted.
-    if idp.kind == IdpKind::Github && reauth != Reauth::default() {
+    if !reauth_supported(idp.kind, reauth) {
         return Ok(Err(Failure("reauth_unsupported")));
     }
     let meta = match upstream(state) {
@@ -141,6 +145,11 @@ pub async fn finish(
     if params.contains_key("error") {
         return Err(Failure("upstream_error"));
     }
+    // As in `begin`: GitHub can't prove a demanded re-authentication, and
+    // its identity is returned before `min_auth_time` is ever looked at.
+    if !reauth_supported(idp.kind, reauth) {
+        return Err(Failure("reauth_unsupported"));
+    }
     let code = params.get("code").ok_or(Failure("no_code"))?;
     let rules = Rules::of(idp);
     if params
@@ -188,6 +197,24 @@ pub fn failure_details(reason: &str, idp_id: Uuid) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn github_supports_no_demanded_reauth() {
+        let login = Reauth {
+            prompt_login: true,
+            max_age: None,
+        };
+        let age = Reauth {
+            prompt_login: false,
+            max_age: Some(0),
+        };
+        assert!(reauth_supported(IdpKind::Github, Reauth::default()));
+        assert!(!reauth_supported(IdpKind::Github, login));
+        assert!(!reauth_supported(IdpKind::Github, age));
+        for kind in [IdpKind::Oidc, IdpKind::Google, IdpKind::Entra] {
+            assert!(reauth_supported(kind, login) && reauth_supported(kind, age));
+        }
+    }
 
     #[test]
     fn reauth_bounds() {

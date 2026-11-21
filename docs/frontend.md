@@ -186,7 +186,20 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   (`usePagedList`, no search) and detail pages over `identity-providers`; anyone with a directory
   role reads, only a Global Admin (`auth.isGlobalAdmin`) sees create / save / enable–disable /
   delete. `IdpForm` serves the create dialog and the detail page (`idpForm.ts` holds the field
-  ⇄ body mapping and `changedIdpFields`, so a PATCH carries only changed fields). The client
+  ⇄ body mapping and `changedIdpFields`, so a PATCH carries only changed fields). Creating starts
+  with a "Provider type" picker (`PRESETS` — OpenID Connect, Google, Microsoft Entra ID, GitHub;
+  `applyPreset` fills the suggested name, issuer and scopes, all still editable); on the detail
+  page the kind is a read-only label (the server fixes it at creation). For a new Entra provider a
+  directory-ID helper (`entraUrls`) fills the URLs: a GUID gives the single-tenant issuer
+  `…/{id}/v2.0` (default discovery), `organizations` / `common` give the multi-tenant
+  `…/{tenantid}/v2.0` issuer plus that discovery URL. Fields follow the kind: `hosted_domain` only
+  for `google`, `allowed_tenants` only for a multi-tenant (`isMultiTenant`) Entra issuer, and
+  `github` hides discovery URL, client authentication and both trust flags, and marks the client
+  secret required while the provider is enabled (the server refuses an enabled GitHub provider
+  without one; "Remove the secret" is disabled then). `toInput` sends those kind-specific values
+  only for their kind (`null` / `[]` / `false` otherwise). Ticking "Trust the provider's email addresses"
+  shows a risk note (new accounts get whatever address the provider reports; for a multi-tenant
+  Entra issuer, only with allowed tenants). The client
   secret is write-only: the server only reports `has_secret` ("Secret set" / "No secret"); a typed
   secret lives in the form's local ref and is gone once saved (the form re-mounts) — an empty
   field keeps the secret, "Remove the secret" sends `client_secret: null`. The detail page shows
