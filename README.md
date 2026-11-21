@@ -93,3 +93,16 @@ the tenant host without the port).
 - [Telegram](docs/telegram.md) — bot setup, webhook, sign-in codes, notices
 - [Roadmap](docs/roadmap.md)
 - [Deployment](docs/deploy.md) — images, environments, CI deploy secrets, release procedure; example manifest [`deploy/k8s/deploy.yml`](deploy/k8s/deploy.yml), `Dockerfile`
+
+## Security
+
+Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md)
+(GitHub security advisories; only the latest release is supported). No
+independent security review has been done yet
+([#43](https://github.com/xmiksay/oauth/issues/43)) — required before
+third-party production use.
+
+## License
+
+[MIT](LICENSE) © 2026 Martin Miksanik. The backend crates (`Cargo.toml`) and
+the SPA (`web/package.json`) declare the same licence.
