@@ -8,7 +8,10 @@ use entity::{
 };
 use sea_orm::ActiveValue;
 
-use crate::{error::AppError, federation::kinds};
+use crate::{
+    error::AppError,
+    federation::{github, kinds},
+};
 
 fn bad(msg: &str) -> AppError {
     AppError::BadRequest(msg.into())
@@ -17,8 +20,8 @@ fn bad(msg: &str) -> AppError {
 /// The issuer a new IdP of `kind` gets when the body names none.
 pub fn default_issuer(kind: IdpKind) -> Option<&'static str> {
     match kind {
-        IdpKind::Google => Some("https://accounts.google.com"),
-        IdpKind::Github => Some("https://github.com"),
+        IdpKind::Google => Some(kinds::GOOGLE_ISSUER),
+        IdpKind::Github => Some(github::GITHUB_WEB),
         IdpKind::Oidc | IdpKind::Entra => None,
     }
 }
@@ -88,6 +91,34 @@ fn check_template(row: &Row<'_>) -> Result<bool, AppError> {
     Ok(true)
 }
 
+/// GitHub's endpoints are paths under the issuer (`github::metadata`), so
+/// it must be a bare web origin (one trailing `/` at most: an `https` URL's
+/// path is `/` for both `https://h` and `https://h/`).
+fn is_origin(issuer: &str) -> bool {
+    url::Url::parse(issuer).is_ok_and(|u| {
+        u.path() == "/"
+            && u.query().is_none()
+            && u.fragment().is_none()
+            && u.username().is_empty()
+            && u.password().is_none()
+    })
+}
+
+/// GitHub's token endpoint always wants `client_secret`: an enabled GitHub
+/// provider without one could only fail every sign-in. Checked on the row
+/// as stored, after the secret was sealed (or dropped by a repoint).
+pub fn check_secret(row: &identity_providers::ActiveModel) -> Result<(), AppError> {
+    let github = row.kind.try_as_ref() == Some(&IdpKind::Github);
+    let enabled = row.enabled.try_as_ref().copied().unwrap_or(true);
+    let no_secret = matches!(row.client_secret_sealed.try_as_ref(), Some(None));
+    if github && enabled && no_secret {
+        return Err(bad(
+            "an enabled github provider needs a client_secret (GitHub requires one)",
+        ));
+    }
+    Ok(())
+}
+
 pub fn check(row: &Row<'_>) -> Result<(), AppError> {
     let templated = check_template(row)?;
     if row
@@ -112,6 +143,9 @@ pub fn check(row: &Row<'_>) -> Result<(), AppError> {
         ));
     }
     if row.kind == IdpKind::Github {
+        if !is_origin(row.issuer) {
+            return Err(bad("github issuer must be a web origin"));
+        }
         if row.discovery_url.is_some() {
             return Err(bad("github providers have no discovery_url"));
         }
@@ -250,5 +284,51 @@ mod tests {
         github.client_auth = IdpClientAuth::Post;
         github.discovery_url = Some("https://github.com/x");
         assert!(err(&github).contains("discovery_url"));
+    }
+
+    #[test]
+    fn github_issuer_is_a_web_origin() {
+        for ok in [
+            "https://github.com",
+            "https://github.com/",
+            "https://ghe.example:8443",
+        ] {
+            assert!(check(&row(IdpKind::Github, ok)).is_ok(), "{ok}");
+        }
+        for issuer in [
+            "https://github.com/foo",
+            "https://github.com/foo/",
+            "https://github.com//",
+            "https://github.com/?x=1",
+            "https://github.com/#x",
+            "https://u@github.com",
+        ] {
+            assert!(
+                err(&row(IdpKind::Github, issuer)).contains("web origin"),
+                "{issuer}"
+            );
+        }
+    }
+
+    #[test]
+    fn enabled_github_needs_a_secret() {
+        use sea_orm::Set;
+        let mut row = identity_providers::ActiveModel {
+            kind: Set(IdpKind::Github),
+            enabled: Set(true),
+            client_secret_sealed: Set(None),
+            ..Default::default()
+        };
+        assert!(
+            matches!(check_secret(&row), Err(AppError::BadRequest(m)) if m.contains("client_secret"))
+        );
+        row.enabled = Set(false);
+        assert!(check_secret(&row).is_ok());
+        row.enabled = Set(true);
+        row.client_secret_sealed = Set(Some(vec![1]));
+        assert!(check_secret(&row).is_ok());
+        row.kind = Set(IdpKind::Oidc);
+        row.client_secret_sealed = Set(None);
+        assert!(check_secret(&row).is_ok());
     }
 }

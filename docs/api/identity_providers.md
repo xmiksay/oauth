@@ -38,9 +38,12 @@ unknown fields rejected. Per kind ([../federation.md](../federation.md#presets))
 containing `{tenantid}` only for `entra`, once, in its path, and with a
 `discovery_url` (which can't contain it); `allowed_tenants` (GUIDs,
 lower-cased, at most 50) only with such a templated issuer, and required
-with it for `trust_upstream_email`; `github`: no
-`discovery_url`, `client_auth` `post`, `trust_upstream_mfa` and
-`trust_upstream_email` false. `hosted_domain`, `allowed_tenants` and
+with it for `trust_upstream_email`; `github`: the `issuer` a bare web
+origin (no path, query or credentials), no `discovery_url`, `client_auth`
+`post`, `trust_upstream_mfa` and `trust_upstream_email` false, and a stored
+`client_secret` whenever it is enabled (GitHub's token endpoint always
+requires one: create it with a secret or `enabled: false`; clearing the
+secret of, or repointing without a new secret, an enabled one is a 400). `hosted_domain`, `allowed_tenants` and
 `trust_upstream_email` are not a repoint: they are checked on every sign-in. Issuers and endpoints must resolve to public
 addresses ([../federation.md](../federation.md#security-model)).
 

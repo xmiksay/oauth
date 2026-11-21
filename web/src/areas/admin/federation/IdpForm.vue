@@ -28,6 +28,11 @@ const secret = ref('')
 const removeSecret = ref(false)
 const isGithub = computed(() => f.kind === 'github')
 const multiTenant = computed(() => isMultiTenant(f))
+// GitHub's token endpoint always wants the secret: the server refuses an enabled GitHub
+// provider without one.
+const githubNeedsSecret = computed(
+  () => isGithub.value && (props.initial ? props.initial.enabled : f.enabled),
+)
 
 function pickKind(event: Event) {
   applyPreset(f, (event.target as HTMLSelectElement).value as IdpKind)
@@ -180,9 +185,13 @@ function submit() {
           type="password"
           autocomplete="off"
           :placeholder="initial?.has_secret ? 'Leave empty to keep the current secret' : ''"
+          :required="githubNeedsSecret && !initial?.has_secret"
         >
         <p class="hint">
           Write-only: it is never shown again.
+          <template v-if="isGithub">
+            GitHub requires one: an enabled GitHub provider without a secret is refused.
+          </template>
         </p>
         <label
           v-if="initial?.has_secret"
@@ -191,7 +200,7 @@ function submit() {
           <input
             v-model="removeSecret"
             type="checkbox"
-            :disabled="!!secret"
+            :disabled="!!secret || githubNeedsSecret"
           >
           Remove the secret
         </label>

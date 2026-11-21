@@ -142,12 +142,16 @@ describe('IdentityProvidersList', () => {
     }
     expect((w.find('#idp-issuer').element as HTMLInputElement).value).toBe('https://github.com')
     await w.find('#idp-client-id').setValue('gh-client')
+    expect(w.find('#idp-secret').attributes('required')).toBeDefined()
+    expect(w.text()).toContain('GitHub requires one')
+    await w.find('#idp-secret').setValue('gh-secret')
     await w.find('#create-idp').trigger('submit')
     await flushPromises()
     expect(identityProviders.create).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: 'github',
         name: 'GitHub',
+        client_secret: 'gh-secret',
         scopes: ['read:user', 'user:email'],
         trust_upstream_mfa: false,
         trust_upstream_email: false,
