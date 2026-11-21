@@ -125,14 +125,10 @@ pub async fn proceed(
     let confirm_device = tx.req.device.is_some() && !just_consented;
     match eval.decision {
         Decision::NeedsAdmin(values) => {
-            tx::take(conn, tx.row.id, from).await?;
+            close(ctx, &tx, from, user.id, "admin_consent_required").await?;
             let description = format!("admin approval required for: {}", values.join(" "));
             let code = match tx.req.device {
-                Some(device_id) => {
-                    let (app, reason) = (tx.row.application_id, "admin_consent_required");
-                    device_code::deny(conn, ctx, device_id, app, user.id, reason).await?;
-                    ErrorCode::ConsentRequired
-                }
+                Some(_) => ErrorCode::ConsentRequired,
                 None => ErrorCode::AccessDenied,
             };
             ctx.error_redirect(&tx.req, code, &description)
@@ -146,6 +142,28 @@ pub async fn proceed(
             Ok(Outcome::Step(tx::view(ctx.state, ctx.tenant, &tx).await?))
         }
     }
+}
+
+/// Claims the transaction without issuing anything and, for a device
+/// request, denies the device code with its audit event — in one DB
+/// transaction, so a refused device never keeps polling
+/// `authorization_pending` after its login transaction is gone.
+async fn close(
+    ctx: &Ctx<'_>,
+    tx: &LoadedTx,
+    from: LoginStage,
+    user_id: Uuid,
+    reason: &'static str,
+) -> AuthnResult<()> {
+    let txn = ctx.state.db.begin().await?;
+    if tx::take(&txn, tx.row.id, from).await?
+        && let Some(device_id) = tx.req.device
+    {
+        let app = tx.row.application_id;
+        device_code::deny(&txn, ctx, device_id, app, user_id, reason).await?;
+    }
+    txn.commit().await?;
+    Ok(())
 }
 
 /// Claims the transaction, creates (or reuses) the session and issues the
@@ -271,12 +289,7 @@ pub async fn consent(
     let tx = tx::load_at(&ctx, &tx_id, LoginStage::Consent).await?;
     let user = tx::user_of(conn, &tx).await?;
     if !body.approve {
-        if tx::take(conn, tx.row.id, LoginStage::Consent).await?
-            && let Some(device_id) = tx.req.device
-        {
-            let app = tx.row.application_id;
-            device_code::deny(conn, &ctx, device_id, app, user.id, "declined").await?;
-        }
+        close(&ctx, &tx, LoginStage::Consent, user.id, "declined").await?;
         let msg = "the user declined to consent";
         return ctx.error_redirect(&tx.req, ErrorCode::AccessDenied, msg);
     }

@@ -147,13 +147,16 @@ async fn declined_request_answers_access_denied() {
     let (_, start) = start(&f, &f.web, Some(&f.web_secret), "openid").await;
     let url = approve_as(&f, start["user_code"].as_str().unwrap(), EMAIL, false).await;
     assert_eq!(url, format!("{ORIGIN}/device?error=access_denied"));
+    // Settled together with the decline, before the device polls again.
+    assert_eq!(rows(&f).await[0].status, DeviceStatus::Denied);
+    let denied = audited_any(&f.db, "device_code.deny").await;
+    assert_eq!(denied[0]["reason"], "declined");
+    let txs = login_transactions::Entity::find().all(&f.db).await.unwrap();
+    assert!(txs.is_empty(), "the login transaction is claimed");
     let device_code = start["device_code"].as_str().unwrap();
     let (status, body) = poll(&f, &f.web, Some(&f.web_secret), device_code).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(body["error"], "access_denied");
-    assert_eq!(rows(&f).await[0].status, DeviceStatus::Denied);
-    let denied = audited_any(&f.db, "device_code.deny").await;
-    assert_eq!(denied[0]["reason"], "declined");
 }
 
 #[tokio::test]
@@ -284,11 +287,14 @@ async fn admin_consent_scopes_deny_the_device() {
         body["redirect"],
         format!("{ORIGIN}/device?error=consent_required")
     );
+    assert_eq!(rows(&f).await[0].status, DeviceStatus::Denied);
+    let denied = audited_any(&f.db, "device_code.deny").await;
+    assert_eq!(denied[0]["reason"], "admin_consent_required");
+    let txs = login_transactions::Entity::find().all(&f.db).await.unwrap();
+    assert!(txs.is_empty(), "the login transaction is claimed");
     let device_code = start["device_code"].as_str().unwrap();
     let (_, body) = poll(&f, &f.spa, None, device_code).await;
     assert_eq!(body["error"], "access_denied");
-    let denied = audited_any(&f.db, "device_code.deny").await;
-    assert_eq!(denied[0]["reason"], "admin_consent_required");
 }
 
 #[tokio::test]
