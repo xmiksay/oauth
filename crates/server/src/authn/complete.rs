@@ -31,6 +31,7 @@ use crate::{
     consent::{self, Decision},
     metrics,
     oidc::{
+        assignment,
         error::ErrorCode,
         params::{AuthRequest, Prompt},
     },
@@ -139,6 +140,10 @@ pub async fn proceed(
         return Ok(Outcome::Step(tx::view(ctx.state, ctx.tenant, &tx).await?));
     }
     let client = client_of(conn, &tx).await?;
+    if !assignment::user_may_use_by_id(conn, user.id, &client, tx.req.resource_id).await? {
+        tx::take(conn, tx.row.id, from).await?;
+        return ctx.error_redirect(&tx.req, ErrorCode::AccessDenied, assignment::NOT_ASSIGNED);
+    }
     let force = force_consent(&tx.req) && !just_consented;
     let eval = evaluate_consent(conn, &client, &tx.req, user.id, force).await?;
     // A device request is always confirmed explicitly (consent alone

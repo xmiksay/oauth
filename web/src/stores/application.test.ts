@@ -17,6 +17,7 @@ const app: Application = {
   access_token_format: 'jwt',
   signing_alg: 'RS256',
   groups_claim_format: 'id',
+  assignment_required: false,
   access_token_ttl_secs: 3600,
   refresh_token_ttl_secs: 86400,
   device_code_enabled: false,

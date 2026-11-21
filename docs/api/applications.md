@@ -7,7 +7,7 @@ GlobalAdmin, ApplicationAdmin, `ReadWrite.All`.
 | Method & path | Body | Response |
 |---|---|---|
 | `GET applications` *paged* `?search=` (name, client_id) | – | `Application`s |
-| `POST applications` | `{ display_name, client_id?, client_type? (confidential), redirect_uris?, post_logout_redirect_uris?, web_origins?, identifier_uri?, access_token_format?, signing_alg?, groups_claim_format?, access_token_ttl_secs?, refresh_token_ttl_secs?, device_code_enabled? (false), mfa_policy? (inherit) }` | 201 `Application` |
+| `POST applications` | `{ display_name, client_id?, client_type? (confidential), redirect_uris?, post_logout_redirect_uris?, web_origins?, identifier_uri?, access_token_format?, signing_alg?, groups_claim_format?, assignment_required? (false), access_token_ttl_secs?, refresh_token_ttl_secs?, device_code_enabled? (false), mfa_policy? (inherit) }` | 201 `Application` |
 | `GET applications/{id}` | – | `Application` |
 | `PATCH applications/{id}` | same fields except `client_id`, `client_type` (immutable → 400); `identifier_uri: null` clears it | `Application` |
 | `DELETE applications/{id}` | – | 204 (everything of the app cascades) |
@@ -56,6 +56,15 @@ Validation:
   sign-in is refused (`invalid_grant`) when redeemed for the app as another
   resource (multi-resource refresh). There is no `optional`: an app can
   only tighten the tenant's `mfa_policy`.
+
+- `assignment_required` boolean (default `false`; not editable on built-in
+  apps): only users holding one of the app's user roles (directly or via a
+  group) can sign in to it or get delegated tokens for it, and only apps
+  holding one of its application permissions get app-only tokens for it.
+  Refusals: authorize → `access_denied`, token endpoint → `invalid_grant`;
+  re-checked on every code redemption and refresh, including a refresh
+  for another resource (multi-resource refresh). Rules in
+  [../architecture.md](../architecture.md#assignment-required).
 
 ## Secrets
 

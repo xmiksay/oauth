@@ -33,6 +33,7 @@ mod m20261121_000012_device_code;
 mod m20261122_000013_mfa_policy;
 mod m20261122_000014_idp_group_mappings;
 mod m20261122_000015_idp_presets;
+mod m20261122_000016_assignment_required;
 
 pub struct Migrator;
 
@@ -55,6 +56,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261122_000013_mfa_policy::Migration),
             Box::new(m20261122_000014_idp_group_mappings::Migration),
             Box::new(m20261122_000015_idp_presets::Migration),
+            Box::new(m20261122_000016_assignment_required::Migration),
         ]
     }
 }

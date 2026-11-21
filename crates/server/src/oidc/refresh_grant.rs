@@ -12,7 +12,7 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, TransactionTrait};
 use super::{
     error::{ErrorCode, OAuthError, OAuthResult},
     mrrt, scope,
-    token::{active_user, load_app},
+    token::{active_user, ensure_assigned, load_app},
 };
 use crate::{
     app::AppState,
@@ -125,6 +125,10 @@ pub async fn grant(
             }
         }
     };
+    // Re-checked on every refresh: assignments can be removed. Only the
+    // resource actually minted for counts — a narrowed request drops the
+    // grant's, a multi-resource refresh brings its own (`mrrt`).
+    ensure_assigned(&txn, tenant, &user, client, resource.as_ref()).await?;
     if !refresh::mark_rotated(&txn, row.id).await? {
         let err = reuse(state, tenant, &txn, &row, client, ip).await?;
         txn.commit().await?;

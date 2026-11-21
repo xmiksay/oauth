@@ -104,7 +104,7 @@ Implemented:
 | `tenancy` | `resolve_host` middleware (host → active tenant, apex redirect, else 404) and the `Tenant` extractor reading its result |
 | `secret` | Random bearer secrets (256-bit, base64url), random UUIDv4 handles, SHA-256 storage hash, constant-time compare |
 | `cors` | CORS on discovery / JWKS / userinfo / token / revoke only: `validate_origin`, `origin_of` (a redirect URI's origin), `effective_origins` (explicit ∪ a public client's redirect-URI origins), `tenant_allows`; `http` (preflight handlers, `tenant_wide` middleware, `for_client` for token / revoke) — see [CORS](#cors) |
-| `oidc` | Protocol endpoints; `params` (duplicate-rejecting form/query parsing, `AuthRequest`), `pkce`, `redirect` (matching + building), `scope` (parsing, resource resolution, `resolve_request` shared by authorize and device authorization), `mrrt` (refresh token redeemed for another consented resource), `client_auth`, `error` (`OAuthError`, RFC 6749 JSON + `WWW-Authenticate`, `no-store`), `device_authorization` / `device_grant` (RFC 8628) |
+| `oidc` | Protocol endpoints; `params` (duplicate-rejecting form/query parsing, `AuthRequest`), `pkce`, `redirect` (matching + building), `scope` (parsing, resource resolution, `resolve_request` shared by authorize and device authorization), `mrrt` (refresh token redeemed for another consented resource), `assignment` (assignment-required checks), `client_auth`, `error` (`OAuthError`, RFC 6749 JSON + `WWW-Authenticate`, `no-store`), `device_authorization` / `device_grant` (RFC 8628) |
 | `device_flow` | Device authorization state: `user_code` (alphabet, normalising, hashing), issue (code pair, user code unique per tenant), lookup by user code, the decision (CAS on `pending`), poll bookkeeping (`slow_down`), consumption |
 | `mail` | `Mailer` trait (`Email`, `MailError` transient/permanent) + `SmtpMailer` (lettre, rustls on AWS-LC, webpki roots, 15 s command timeout); `templates` (plain-text link messages and security notices); `outbox` (`enqueue` on the caller's transaction, body sealed, backoff schedule); `tokens` (email link tokens: issue voids the user's older ones of that purpose, atomic single-use `consume` scoped to the tenant); `links::send` (token + message + outbox row) |
 | `notify` | Security notices (`notify::event`, `email_changed` to the old address) honouring `notification_prefs` (no row = on); email only to a verified address, Telegram to a linked chat |
@@ -165,7 +165,7 @@ migration transaction). Deleting a tenant cascades to everything it owns.
 | `user_totp` · `user_recovery_codes` | sealed TOTP secret + `confirmed_at`; SHA-256 code hashes + `used_at` |
 | `groups` · `group_members` | static groups; members are users; `display_name` unique per tenant case-insensitively (index on `(tenant_id, lower(display_name))`); a membership is `manual` (an admin added it) and/or kept by an IdP's group mappings (`idp_id`) — [federation.md](federation.md#group-mappings) |
 | `directory_role_assignments` | (user, role) unique; role GlobalAdmin\|ApplicationAdmin\|UserAdmin |
-| `applications` | `client_id` unique per tenant, `client_type` confidential\|public, `builtin`, `redirect_uris[]`, `post_logout_redirect_uris[]`, `web_origins[]` (explicit CORS origins, ≤ 32), `identifier_uri` (unique per tenant), `access_token_format` jwt\|opaque, `signing_alg` RS256\|ES256, `groups_claim_format` id\|name, access TTL 300–86400 s, refresh TTL, `device_code_enabled` (RFC 8628 opt-in), `mfa_policy` inherit\|required |
+| `applications` | `client_id` unique per tenant, `client_type` confidential\|public, `builtin`, `redirect_uris[]`, `post_logout_redirect_uris[]`, `web_origins[]` (explicit CORS origins, ≤ 32), `identifier_uri` (unique per tenant), `access_token_format` jwt\|opaque, `signing_alg` RS256\|ES256, `groups_claim_format` id\|name, `assignment_required`, access TTL 300–86400 s, refresh TTL, `device_code_enabled` (RFC 8628 opt-in), `mfa_policy` inherit\|required |
 | `client_secrets` | SHA-256 hash, display `hint`, optional `expires_at`; many per app for rotation |
 | `app_scopes` · `app_roles` | delegated scopes (`admin_consent_required`) and app roles (`allowed_member_types` ⊆ {user, application}); `value` unique per app |
 | `app_required_permissions` | client app → resource app, exactly one of `scope_id` / `app_role_id` (FK’d through the resource app) |
@@ -227,6 +227,26 @@ with `admin_consent_required` → `access_denied` (interactive) /
 step; approval merges them into the user's grant. `prompt=consent` asks again
 for all user-consentable scopes. Built-in clients skip consent. OIDC scopes
 need no consent (grants are keyed by a resource app).
+
+### Assignment required
+
+An app with `assignment_required` (default off; not settable on built-in
+apps) only serves principals holding one of its roles (`oidc::assignment`):
+a user needs one of its user roles assigned directly or through a group, an
+app one of its application permissions — exactly the roles that would
+become the `roles` claim. It applies to the app as **client** (users signing
+in to it) and as **resource** (delegated tokens for it need the user's
+assignment, app-only tokens the calling app's). Checked at authorize after
+sign-in and before consent (an unassigned user is never asked to consent) →
+`access_denied` redirect (only after the redirect URI matched; also with
+`prompt=none`), on code redemption and on every refresh (only the resource
+actually minted for; a refresh narrowed to OIDC scopes skips it) and on
+`client_credentials` → `invalid_grant`. A refused refresh doesn't rotate
+the token, so a restored assignment works again. An app requiring
+assignment with no roles admits nobody. Access tokens already issued stay
+valid until they expire. Every grant issuing delegated tokens goes through
+`oidc::token::ensure_assigned` (a future device-code grant included). The portal lists no apps, so there is nothing to
+hide there yet; an app launcher must filter with `oidc::assignment`.
 
 ### Token endpoint
 

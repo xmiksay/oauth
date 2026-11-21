@@ -285,6 +285,8 @@ export interface Application {
   access_token_format: TokenFormat
   signing_alg: SigningAlg
   groups_claim_format: GroupsClaimFormat
+  /** Only principals holding one of the app's roles get tokens to / for it. */
+  assignment_required: boolean
   access_token_ttl_secs: number
   refresh_token_ttl_secs: number
   /** Opt-in to the device authorization grant (RFC 8628). */
@@ -313,6 +315,7 @@ export type ApplicationPatch = Partial<
     | 'access_token_format'
     | 'signing_alg'
     | 'groups_claim_format'
+    | 'assignment_required'
     | 'access_token_ttl_secs'
     | 'refresh_token_ttl_secs'
     | 'device_code_enabled'

@@ -131,6 +131,7 @@ mod tests {
             access_token_format: entity::enums::AccessTokenFormat::Opaque,
             signing_alg: entity::enums::SigningAlg::Rs256,
             groups_claim_format: entity::enums::GroupsClaimFormat::Id,
+            assignment_required: false,
             access_token_ttl_secs: 3600,
             refresh_token_ttl_secs: 3600,
             device_code_enabled: false,
