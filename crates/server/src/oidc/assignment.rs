@@ -9,9 +9,8 @@
 //! refresh, so removing an assignment stops new tokens; access tokens
 //! already issued stay valid until they expire.
 
-use anyhow::Context;
 use entity::applications;
-use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter};
+use sea_orm::ConnectionTrait;
 use uuid::Uuid;
 
 use crate::tokens::principal;
@@ -53,28 +52,6 @@ pub async fn user_may_use(
         }
     }
     Ok(true)
-}
-
-/// [`user_may_use`] with the resource given by id (a pending authorization
-/// request stores only that).
-pub async fn user_may_use_by_id(
-    conn: &impl ConnectionTrait,
-    user_id: Uuid,
-    client: &applications::Model,
-    resource_id: Option<Uuid>,
-) -> anyhow::Result<bool> {
-    let resource = match resource_id {
-        None => None,
-        Some(id) => Some(
-            applications::Entity::find_by_id(id)
-                .filter(applications::Column::TenantId.eq(client.tenant_id))
-                .one(conn)
-                .await
-                .context("loading resource app")?
-                .context("resource app of a pending request vanished")?,
-        ),
-    };
-    user_may_use(conn, client.tenant_id, user_id, client, resource.as_ref()).await
 }
 
 /// Whether `client` may get an app-only token for `resource`.

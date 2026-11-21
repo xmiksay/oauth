@@ -47,23 +47,17 @@ pub struct ConsentEval {
     pub decision: Decision,
     /// The requested scopes of the resource.
     pub scopes: Vec<app_scopes::Model>,
-    pub resource: Option<applications::Model>,
 }
 
-/// Consent state of `req` for `user_id`. Built-in clients are pre-consented.
-pub async fn evaluate_consent(
+/// The resource app a pending request names (`req.resource_id`), loaded
+/// once per step and shared by the assignment and consent checks.
+pub async fn pending_resource(
     conn: &impl ConnectionTrait,
     client: &applications::Model,
-    req: &AuthRequest,
-    user_id: Uuid,
-    force: bool,
-) -> anyhow::Result<ConsentEval> {
-    let Some(resource_id) = req.resource_id else {
-        return Ok(ConsentEval {
-            decision: Decision::Granted,
-            scopes: Vec::new(),
-            resource: None,
-        });
+    resource_id: Option<Uuid>,
+) -> anyhow::Result<Option<applications::Model>> {
+    let Some(resource_id) = resource_id else {
+        return Ok(None);
     };
     let resource = applications::Entity::find_by_id(resource_id)
         .filter(applications::Column::TenantId.eq(client.tenant_id))
@@ -71,8 +65,27 @@ pub async fn evaluate_consent(
         .await
         .context("loading resource app")?
         .context("resource app of a pending request vanished")?;
+    Ok(Some(resource))
+}
+
+/// Consent state of `req` (whose resource is `resource`, from
+/// [`pending_resource`]) for `user_id`. Built-in clients are pre-consented.
+pub async fn evaluate_consent(
+    conn: &impl ConnectionTrait,
+    client: &applications::Model,
+    req: &AuthRequest,
+    resource: Option<&applications::Model>,
+    user_id: Uuid,
+    force: bool,
+) -> anyhow::Result<ConsentEval> {
+    let Some(resource) = resource else {
+        return Ok(ConsentEval {
+            decision: Decision::Granted,
+            scopes: Vec::new(),
+        });
+    };
     let scopes = app_scopes::Entity::find()
-        .filter(app_scopes::Column::ApplicationId.eq(resource_id))
+        .filter(app_scopes::Column::ApplicationId.eq(resource.id))
         .filter(app_scopes::Column::Value.is_in(req.resource_scopes.clone()))
         .all(conn)
         .await
@@ -81,15 +94,11 @@ pub async fn evaluate_consent(
         Decision::Granted
     } else {
         let granted =
-            consent::granted_scopes(conn, client.tenant_id, client.id, resource_id, user_id)
+            consent::granted_scopes(conn, client.tenant_id, client.id, resource.id, user_id)
                 .await?;
         consent::evaluate(&scopes, &granted, force)
     };
-    Ok(ConsentEval {
-        decision,
-        scopes,
-        resource: Some(resource),
-    })
+    Ok(ConsentEval { decision, scopes })
 }
 
 async fn client_of(conn: &impl ConnectionTrait, tx: &LoadedTx) -> AuthnResult<applications::Model> {
@@ -140,12 +149,14 @@ pub async fn proceed(
         return Ok(Outcome::Step(tx::view(ctx.state, ctx.tenant, &tx).await?));
     }
     let client = client_of(conn, &tx).await?;
-    if !assignment::user_may_use_by_id(conn, user.id, &client, tx.req.resource_id).await? {
+    let resource = pending_resource(conn, &client, tx.req.resource_id).await?;
+    let resource = resource.as_ref();
+    if !assignment::user_may_use(conn, client.tenant_id, user.id, &client, resource).await? {
         tx::take(conn, tx.row.id, from).await?;
         return ctx.error_redirect(&tx.req, ErrorCode::AccessDenied, assignment::NOT_ASSIGNED);
     }
     let force = force_consent(&tx.req) && !just_consented;
-    let eval = evaluate_consent(conn, &client, &tx.req, user.id, force).await?;
+    let eval = evaluate_consent(conn, &client, &tx.req, resource, user.id, force).await?;
     // A device request is always confirmed explicitly (consent alone
     // would let a phished user code through silently).
     let confirm_device = tx.req.device.is_some() && !just_consented;
@@ -334,8 +345,10 @@ pub async fn consent(
         return ctx.error_redirect(&tx.req, ErrorCode::AccessDenied, msg);
     }
     let client = client_of(conn, &tx).await?;
-    let eval = evaluate_consent(conn, &client, &tx.req, user.id, force_consent(&tx.req)).await?;
-    if let (Decision::NeedsUser(pending), Some(resource)) = (&eval.decision, &eval.resource) {
+    let resource = pending_resource(conn, &client, tx.req.resource_id).await?;
+    let force = force_consent(&tx.req);
+    let eval = evaluate_consent(conn, &client, &tx.req, resource.as_ref(), user.id, force).await?;
+    if let (Decision::NeedsUser(pending), Some(resource)) = (&eval.decision, &resource) {
         if !pending.iter().all(|p| body.scopes.contains(p)) {
             return Err(AuthnError::Invalid(
                 "approve every listed scope or decline".into(),

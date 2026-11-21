@@ -212,6 +212,33 @@ async fn an_assignment_removed_before_redemption_fails_the_code() {
     assert_eq!(body["error"], "invalid_grant", "{body}");
 }
 
+#[tokio::test]
+async fn the_client_rechecks_its_assignment_on_redemption() {
+    let f = Fixture::new().await;
+    let role = add_role(&f.db, &f.web, "Web.User", "user").await;
+    assign_user(&f, &f.web, role).await;
+    require(&f, &f.web, true).await;
+    let code = f
+        .browser()
+        .login_for_code(&web_url(OPENID, &[]), "ann@example.com")
+        .await;
+    unassign_all(&f, &f.web).await;
+    let (st, body) = f.redeem(&f.web, Some(&f.web_secret), &code, WEB_CB).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"], "invalid_grant", "{body}");
+
+    // A code issued while the app was open fails once the flag goes on.
+    require(&f, &f.web, false).await;
+    let code = f
+        .browser()
+        .login_for_code(&web_url(OPENID, &[]), "ann@example.com")
+        .await;
+    require(&f, &f.web, true).await;
+    let (st, body) = f.redeem(&f.web, Some(&f.web_secret), &code, WEB_CB).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"], "invalid_grant", "{body}");
+}
+
 async fn leave_group(f: &Fixture) {
     group_members::Entity::delete_many()
         .filter(group_members::Column::GroupId.eq(f.group))
