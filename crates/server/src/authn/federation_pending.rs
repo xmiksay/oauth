@@ -60,15 +60,17 @@ pub async fn lock_first(
 }
 
 /// Ends a transaction whose upstream sign-in no longer holds (`lock_first`):
-/// it is deleted, the failure audited.
+/// it is deleted, its device request (if any) denied and the failure
+/// audited, in one DB transaction.
 pub async fn refuse_changed(
     ctx: &Ctx<'_>,
-    row: &login_transactions::Model,
+    tx: &tx::LoadedTx,
+    user_id: Uuid,
     idp_id: Uuid,
 ) -> AuthnResult<()> {
-    let conn = &ctx.state.db;
-    tx::take(conn, row.id, row.stage).await?;
-    let enabled = idps::find_enabled(conn, ctx.tenant.id, idp_id)
+    let txn = ctx.state.db.begin().await?;
+    let row = &tx.row;
+    let enabled = idps::find_enabled(&txn, ctx.tenant.id, idp_id)
         .await?
         .is_some();
     let reason = if enabled {
@@ -76,10 +78,14 @@ pub async fn refuse_changed(
     } else {
         "idp_disabled"
     };
-    crate::metrics::login("upstream_failed");
+    if tx::take(&txn, row.id, row.stage).await? {
+        super::device_code::deny_for(&txn, ctx, tx, user_id, reason).await?;
+    }
     let details = crate::federation::flow::failure_details(reason, idp_id);
-    ctx.audit_sign_in(conn, row.user_id, entity::enums::Outcome::Failure, details)
+    ctx.audit_sign_in(&txn, row.user_id, entity::enums::Outcome::Failure, details)
         .await?;
+    txn.commit().await?;
+    crate::metrics::login("upstream_failed");
     Ok(())
 }
 

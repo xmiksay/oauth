@@ -14,11 +14,11 @@ mod common;
 use axum::http::{Method, StatusCode, header};
 use common::{
     ORIGIN, at,
-    device::{approve_as, enable, enter, poll, rows, start},
+    device::{approve_as, decide, enable, enter, enter_tx, poll, rows, sign_in, start},
     flow::Fixture,
     mgmt::{app_admin_token, app_by_client_id, audited, audited_any, call},
 };
-use entity::{refresh_tokens, sessions};
+use entity::{enums::DeviceStatus, login_transactions, refresh_tokens, sessions};
 use oauth_server::{
     authn::rate_limit,
     directory::{self, NewTenant},
@@ -260,4 +260,35 @@ async fn management_api_toggles_the_flag() {
     let path = format!("/api/v1/applications/{}", builtin.id);
     let (status, err) = call(&f.app, Method::PATCH, &path, Some(&token), Some(&body)).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{err}");
+}
+
+#[tokio::test]
+async fn session_ended_at_the_confirmation_denies_the_device() {
+    let f = Fixture::new().await;
+    enable(&f, &f.spa).await;
+    let mut browser = f.browser();
+    let (_, first) = start(&f, &f.spa, None, "openid").await;
+    let tx = enter_tx(&mut browser, first["user_code"].as_str().unwrap()).await;
+    let view = sign_in(&mut browser, &tx, "ann@example.com").await;
+    decide(&mut browser, &tx, &view, true).await;
+
+    // Signed in: the second code goes straight to the confirmation.
+    let (_, second) = start(&f, &f.spa, None, "openid").await;
+    let tx = enter_tx(&mut browser, second["user_code"].as_str().unwrap()).await;
+    let (_, _, view) = browser.get(&format!("/api/authn/tx/{tx}")).await;
+    let view: serde_json::Value = serde_json::from_str(&view).unwrap();
+    sessions::Entity::delete_many().exec(&f.db).await.unwrap();
+    let url = decide(&mut browser, &tx, &view, true).await;
+    assert_eq!(url, format!("{ORIGIN}/device?error=login_required"));
+    // Settled with the claimed transaction, before the device polls.
+    let device = rows(&f).await;
+    let device = device.iter().find(|r| r.status != DeviceStatus::Approved);
+    assert_eq!(device.unwrap().status, DeviceStatus::Denied);
+    let denied = audited_any(&f.db, "device_code.deny").await;
+    assert_eq!(denied[0]["reason"], "session_ended");
+    let txs = login_transactions::Entity::find().all(&f.db).await.unwrap();
+    assert!(txs.is_empty(), "the login transaction is claimed");
+    let device_code = second["device_code"].as_str().unwrap();
+    let (_, body) = poll(&f, &f.spa, None, device_code).await;
+    assert_eq!(body["error"], "access_denied");
 }

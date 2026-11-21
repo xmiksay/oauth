@@ -11,7 +11,7 @@ use entity::{
     enums::{LoginStage, Outcome as AuditOutcome},
     sessions,
 };
-use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter};
+use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, TransactionTrait};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -91,7 +91,10 @@ pub async fn enter(
             let eval = evaluate_consent(conn, &client, &req, user.id, false).await?;
             if let ConsentDecision::NeedsAdmin(_) = eval.decision {
                 let reason = "admin_consent_required";
-                deny(conn, &ctx, row.id, client.id, user.id, reason).await?;
+                // Decision and audit event commit together.
+                let txn = conn.begin().await?;
+                deny(&txn, &ctx, row.id, client.id, user.id, reason).await?;
+                txn.commit().await?;
                 return Ok(Outcome::Redirect {
                     url: result_url(
                         &ctx,
@@ -204,6 +207,22 @@ pub async fn deny(
         .await?;
     }
     Ok(())
+}
+
+/// Denies the device request behind login transaction `tx`, if it has one
+/// — on the transaction that just claimed it (`tx::take`), so the device
+/// never keeps polling `authorization_pending` after the login is gone.
+pub async fn deny_for(
+    conn: &impl ConnectionTrait,
+    ctx: &Ctx<'_>,
+    tx: &tx::LoadedTx,
+    user_id: Uuid,
+    reason: &'static str,
+) -> anyhow::Result<()> {
+    match tx.req.device {
+        Some(device_id) => deny(conn, ctx, device_id, tx.row.application_id, user_id, reason).await,
+        None => Ok(()),
+    }
 }
 
 async fn record(

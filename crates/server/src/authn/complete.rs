@@ -156,11 +156,8 @@ async fn close(
     reason: &'static str,
 ) -> AuthnResult<()> {
     let txn = ctx.state.db.begin().await?;
-    if tx::take(&txn, tx.row.id, from).await?
-        && let Some(device_id) = tx.req.device
-    {
-        let app = tx.row.application_id;
-        device_code::deny(&txn, ctx, device_id, app, user_id, reason).await?;
+    if tx::take(&txn, tx.row.id, from).await? {
+        device_code::deny_for(&txn, ctx, tx, user_id, reason).await?;
     }
     txn.commit().await?;
     Ok(())
@@ -180,7 +177,7 @@ async fn finish(
     // Before the transaction row: IdP rows are always locked first.
     if let Some(idp_id) = super::federation_pending::lock_first(&txn, ctx, &tx.row).await? {
         drop(txn);
-        super::federation_pending::refuse_changed(ctx, &tx.row, idp_id).await?;
+        super::federation_pending::refuse_changed(ctx, &tx, user.id, idp_id).await?;
         return Err(AuthnError::Upstream);
     }
     // Claim the transaction first: a concurrent duplicate gets no second code.
@@ -192,6 +189,7 @@ async fn finish(
         Some(id) => match session::find_by_id(&txn, ctx.tenant.id, id).await? {
             Some(existing) => existing,
             None => {
+                device_code::deny_for(&txn, ctx, &tx, user.id, "session_ended").await?;
                 txn.commit().await?;
                 let msg = "the session ended while consent was pending";
                 return ctx.error_redirect(&tx.req, ErrorCode::LoginRequired, msg);
