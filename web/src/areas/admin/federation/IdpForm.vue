@@ -318,6 +318,9 @@ function submit() {
           Risk: new accounts get whatever address the provider reports. Only for a provider whose
           administrators control the addresses — never one where users type their own — and
           preferably limited to your email domains.
+          <template v-if="multiTenant">
+            A multi-tenant Entra provider must list its allowed tenants for this.
+          </template>
         </p>
       </div>
       <div v-if="!isGithub">

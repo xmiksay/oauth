@@ -1,5 +1,6 @@
-//! IdP presets against mock upstreams: Entra (multi-tenant `{tenantid}`
-//! issuer, `tid`, allowed tenants, `xms_edov`), the per-IdP
+//! IdP presets against mock upstreams: Entra (single-tenant, multi-tenant
+//! `{tenantid}` issuer incl. the callback's `iss`, `tid`, allowed tenants,
+//! `xms_edov`), the per-IdP
 //! `trust_upstream_email`, Google's hosted domain and the GitHub adapter.
 #![allow(
     clippy::unwrap_used,
@@ -105,14 +106,77 @@ async fn entra_tenant_must_match_the_issuer_and_be_allowed() {
 }
 
 #[tokio::test]
+async fn entra_single_tenant_needs_the_tid() {
+    let fed = Fed::new().await;
+    let issuer = format!("{}/{T1}/v2.0", fed.up.issuer);
+    let idp = fed
+        .idp(json!({
+            "kind": "entra",
+            "issuer": issuer,
+            "discovery_url": format!("{}/.well-known/openid-configuration", fed.up.issuer),
+        }))
+        .await;
+    fed.up.set_discovery_issuer(&issuer);
+    fed.up
+        .tweak(common::upstream::Tweak::Issuer(issuer.clone()));
+    fed.up.set_extra_claims(json!({ "xms_edov": true }));
+    let (_, location) = fed.sign_in(&mut fed.f.browser(), &idp).await;
+    assert_eq!(login_error(&location).as_deref(), Some("upstream_failed"));
+    assert_eq!(last_reason(&fed).await, "id_token_tid");
+    fed.up
+        .set_extra_claims(json!({ "tid": T1, "xms_edov": true }));
+    let (_, location) = fed.sign_in(&mut fed.f.browser(), &idp).await;
+    code_of(&location);
+    assert!(user_by_email(&fed, "pat@upstream.example").await.is_some());
+}
+
+/// RFC 9207 `iss` on the callback against a `{tenantid}` issuer.
+#[tokio::test]
+async fn entra_callback_iss_fills_the_template() {
+    let fed = Fed::new().await;
+    let idp = entra_idp(&fed, json!({})).await;
+    entra_tokens(&fed, T1, T1, json!(true));
+    let up = &fed.up.issuer;
+    let mut browser = fed.f.browser();
+    let tx = fed.authorize(&mut browser, &[]).await;
+    for bad in [
+        format!("{up}/organizations/v2.0"),
+        format!("https://evil.example/{T1}/v2.0"),
+    ] {
+        let url = fed.begin(&mut browser, &tx, &idp).await;
+        let callback = format!("{}&iss={}", fed.up.authorize(&url), enc(&bad));
+        let location = follow(&mut browser, &callback).await;
+        assert_eq!(login_error(&location).as_deref(), Some("upstream_failed"));
+        assert_eq!(last_reason(&fed).await, "iss_param");
+    }
+    let url = fed.begin(&mut browser, &tx, &idp).await;
+    let good = format!("{up}/{T1}/v2.0");
+    let callback = format!("{}&iss={}", fed.up.authorize(&url), enc(&good));
+    code_of(&follow(&mut browser, &callback).await);
+}
+
+fn enc(value: &str) -> String {
+    form_urlencoded::byte_serialize(value.as_bytes()).collect()
+}
+
+#[tokio::test]
 async fn unverified_entra_email_needs_the_trust_flag() {
     let fed = Fed::new().await;
     let idp = entra_idp(&fed, json!({})).await;
     entra_tokens(&fed, T1, T1, Value::Null);
     let (_, location) = fed.sign_in(&mut fed.f.browser(), &idp).await;
     assert_eq!(login_error(&location).as_deref(), Some("upstream_no_email"));
+    // Multi-tenant: only together with the tenants it trusts.
+    let path = format!("{IDPS}/{idp}");
+    let trust = json!({ "trust_upstream_email": true });
+    let (status, out) = fed.api(Method::PATCH, &path, Some(trust)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{out}");
+    assert!(out.to_string().contains("needs allowed_tenants"), "{out}");
     let out = fed
-        .patch_idp(&idp, json!({ "trust_upstream_email": true }))
+        .patch_idp(
+            &idp,
+            json!({ "trust_upstream_email": true, "allowed_tenants": [T1] }),
+        )
         .await;
     assert_eq!(out["trust_upstream_email"], true);
     // Not a repoint: nothing about the provider's identity changed.
@@ -279,6 +343,13 @@ async fn presets_have_defaults_and_rules() {
         (
             json!({ "kind": "entra", "issuer": "https://x.example/t", "allowed_tenants": [T1] }),
             "allowed_tenants",
+        ),
+        (
+            json!({
+                "kind": "entra", "issuer": multi, "trust_upstream_email": true,
+                "discovery_url": "https://x.example/d",
+            }),
+            "needs allowed_tenants",
         ),
     ] {
         let (status, out) = post(base(body.clone())).await;
