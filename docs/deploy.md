@@ -1,9 +1,10 @@
 # Deployment and releases
 
 Images are built by `.github/workflows/ci.yml` and published to
-`ghcr.io/xmiksay/oauth`. This repository does not carry any real deployment:
-both environments are deployed from the ansible repo `Sourcelab/ansible`, role
-`oauth`. [`examples/k8s.yml`](examples/k8s.yml) is a non-authoritative example
+`ghcr.io/xmiksay/oauth`. This repository carries no deployment manifests:
+both environments' Kubernetes objects are owned by the ansible repo
+`Sourcelab/ansible`, role `oauth`; CI's `deploy-test` job only swaps the image
+digest of the existing `oauth-test` Deployment. [`examples/k8s.yml`](examples/k8s.yml) is a non-authoritative example
 (ConfigMap, Deployment, Service, PodDisruptionBudget, Ingress) used by nothing
 and not tested; the requirements below are what any deployment must meet.
 

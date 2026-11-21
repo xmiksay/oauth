@@ -373,8 +373,9 @@ See [frontend.md](frontend.md): one Vue 3 SPA (`/` portal, `/login`, `/logout`, 
 ## Deployment
 
 Multi-stage `Dockerfile` (node 22 → rust 1.99.0 → debian bookworm-slim, uid
-10001). The repository carries no real deployment (environments are deployed
-from elsewhere); the requirements any deployment must meet (apex + wildcard
+10001). The repository carries no deployment manifests (both environments'
+Kubernetes objects live in the ansible repo; CI only updates the test
+Deployment's image); the requirements any deployment must meet (apex + wildcard
 host and TLS, `Host` passed unchanged, probes, metrics port, Secret vs config
 env, one database, migrations on startup, replicas) are in
 [deploy.md](deploy.md#deployment-requirements), and
