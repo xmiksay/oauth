@@ -18,7 +18,7 @@ use common::{
     flow::Fixture,
     mgmt::audited_any,
 };
-use entity::{enums::DeviceStatus, sessions};
+use entity::{enums::DeviceStatus, login_transactions, sessions};
 use oauth_server::jobs::sweeper;
 use sea_orm::{ConnectionTrait, EntityTrait};
 use serde_json::Value;
@@ -84,6 +84,11 @@ async fn approved_device_gets_tokens_once_with_its_own_session() {
     assert_eq!(view["client"]["client_id"], "spa-app");
     let view = sign_in(&mut browser, &tx, EMAIL).await;
     assert_eq!(view["consent"]["scopes"][0]["value"], "Orders.Read");
+    // The confirmation can say the device stays signed in.
+    assert_eq!(
+        view["oidc_scopes"],
+        Value::from(vec!["openid", "offline_access"])
+    );
     let url = decide(&mut browser, &tx, &view, true).await;
     assert_eq!(url, format!("{ORIGIN}/device?result=approved"));
     assert!(browser.has_session(), "the browser signed in for real");
@@ -214,6 +219,31 @@ async fn admin_consent_scopes_deny_the_device() {
     );
     let device_code = start["device_code"].as_str().unwrap();
     let (_, body) = poll(&f, &f.spa, None, device_code).await;
+    assert_eq!(body["error"], "access_denied");
+    let denied = audited_any(&f.db, "device_code.deny").await;
+    assert_eq!(denied[0]["reason"], "admin_consent_required");
+}
+
+#[tokio::test]
+async fn signed_in_browser_is_refused_admin_consent_scopes_up_front() {
+    let f = Fixture::new().await;
+    enable(&f, &f.web).await;
+    let (mut browser, _) = f.web_tokens("openid", EMAIL).await;
+    let scope = "openid api://orders/Orders.Manage";
+    let (_, start) = start(&f, &f.web, Some(&f.web_secret), scope).await;
+    let (status, body) =
+        common::device::enter(&mut browser, start["user_code"].as_str().unwrap()).await;
+    // No confirmation with an Allow that could never work.
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body["redirect"],
+        format!("{ORIGIN}/device?error=consent_required")
+    );
+    assert_eq!(rows(&f).await[0].status, DeviceStatus::Denied);
+    let txs = login_transactions::Entity::find().all(&f.db).await.unwrap();
+    assert!(txs.is_empty(), "no transaction is started");
+    let device_code = start["device_code"].as_str().unwrap();
+    let (_, body) = poll(&f, &f.web, Some(&f.web_secret), device_code).await;
     assert_eq!(body["error"], "access_denied");
     let denied = audited_any(&f.db, "device_code.deny").await;
     assert_eq!(denied[0]["reason"], "admin_consent_required");

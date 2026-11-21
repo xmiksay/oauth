@@ -1,13 +1,28 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import type { TxView } from '@/api/authn'
 
-defineProps<{ view: TxView; locked: boolean }>()
+const props = defineProps<{ view: TxView; locked: boolean }>()
 const emit = defineEmits<{ decide: [approve: boolean] }>()
 
 const root = ref<HTMLElement | null>(null)
 // Focus the request itself so it is read before the buttons.
 onMounted(() => root.value?.focus())
+
+// RFC 8628 §5.4: a phished user code is approved here, so spell out what the
+// device keeps beyond the resource scopes. `openid` alone adds nothing to say.
+const OIDC_LINES: Record<string, string> = {
+  profile: 'See your name and profile',
+  email: 'See your email address',
+  offline_access: 'Stay signed in until you sign it out',
+}
+const deviceLines = computed(() =>
+  props.view.device
+    ? props.view.oidc_scopes
+        .filter((s) => s !== 'openid')
+        .map((s) => ({ value: s, text: OIDC_LINES[s] ?? s }))
+    : [],
+)
 </script>
 
 <template>
@@ -37,6 +52,23 @@ onMounted(() => root.value?.focus())
       <strong>{{ view.client.display_name }}</strong> wants to access
       <strong>{{ view.consent?.resource.display_name }}</strong> on your behalf.
     </p>
+    <div v-if="deviceLines.length">
+      <h2 class="text-sm font-medium">
+        Signed in, the device will be able to:
+      </h2>
+      <ul
+        class="mt-2 divide-y divide-neutral-200 rounded-md border border-neutral-200 dark:divide-neutral-800 dark:border-neutral-800"
+      >
+        <li
+          v-for="line in deviceLines"
+          :key="line.value"
+          class="px-3 py-2 text-sm"
+        >
+          <span class="block">{{ line.text }}</span>
+          <span class="mono muted">{{ line.value }}</span>
+        </li>
+      </ul>
+    </div>
     <div v-if="view.consent">
       <h2 class="text-sm font-medium">
         <template v-if="view.device">

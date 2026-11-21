@@ -18,6 +18,7 @@ use uuid::Uuid;
 
 use super::{
     AuthnError, AuthnResult, JsonBody, Outcome,
+    complete::evaluate_consent,
     cookie::{self, Kind},
     ctx::Ctx,
     ip::ClientIp,
@@ -26,8 +27,9 @@ use super::{
 use crate::{
     app::AppState,
     audit,
+    consent::Decision as ConsentDecision,
     device_flow::{self, Decision, user_code},
-    oidc::{params::AuthRequest, scope},
+    oidc::{error::ErrorCode, params::AuthRequest, scope},
     tenancy::Tenant,
 };
 
@@ -66,7 +68,7 @@ pub async fn enter(
         .ok_or(AuthnError::InvalidCode)?;
     let (oidc, resource_scopes) = scope::split_stored(&row.scopes);
     let req = AuthRequest {
-        client_id: client.client_id,
+        client_id: client.client_id.clone(),
         redirect_uri: String::new(),
         state: None,
         nonce: None,
@@ -81,10 +83,26 @@ pub async fn enter(
         device: Some(row.id),
     };
     // Signed in already: straight to the confirmation, which a device
-    // request always gets (a phished code must not approve silently).
+    // request always gets (a phished code must not approve silently) —
+    // unless no user can consent to it, which is settled right here, as
+    // `oidc::authorize` does, instead of after a pointless Allow.
     let current = session::current(conn, &state.config, &tenant, &headers).await?;
     let (stage, session) = match &current {
-        Some((session, _)) => (LoginStage::Consent, Some(session)),
+        Some((session, user)) => {
+            let eval = evaluate_consent(conn, &client, &req, user.id, false).await?;
+            if let ConsentDecision::NeedsAdmin(_) = eval.decision {
+                let reason = "admin_consent_required";
+                deny(conn, &ctx, row.id, client.id, user.id, reason).await?;
+                return Ok(Outcome::Redirect {
+                    url: result_url(
+                        &ctx,
+                        &format!("error={}", ErrorCode::ConsentRequired.as_str()),
+                    ),
+                    cookies: Vec::new(),
+                });
+            }
+            (LoginStage::Consent, Some(session))
+        }
         None => (LoginStage::Password, None),
     };
     let binding = tx::browser_binding(&headers, &state.config)?;
