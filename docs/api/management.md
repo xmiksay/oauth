@@ -135,14 +135,7 @@ Additional rules:
 { "identities": [Identity] }
 // Identity (linked upstream identity; `subject` for admins only)
 { "id", "idp_id", "idp_name", "subject", "email": null, "linked_at", "last_used_at": null }
-// IdentityProvider (the client secret is write-only: only `has_secret`)
-{ "id", "name", "kind": "oidc|google|entra|github", "enabled": true, "visible": true, "issuer",
-  "discovery_url": null, "client_id", "has_secret": true, "client_auth": "post|basic",
-  "scopes": ["openid","email","profile"], "policy": "jit|link_only|deny",
-  "trust_upstream_mfa": false, "mfa_acr": null, "email_domains": [],
-  "hosted_domain": null, "allowed_tenants": [], "trust_upstream_email": false,
-  "redirect_uri": "{origin}/federation/callback", "created_at", "updated_at" }
-// … plus on create / GET / PATCH: { "users_only_via": 0, "linked_users": 0 }
+// IdentityProvider: shape in identity_providers.md
 // Session
 { "id", "amr": ["pwd"], "auth_time", "ip", "user_agent", "created_at", "expires_at",
   "current": false }   // `current`: the session the calling token came from (me only)

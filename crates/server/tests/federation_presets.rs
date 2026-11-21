@@ -179,6 +179,31 @@ async fn github_signs_in_by_numeric_id_with_the_verified_primary_email() {
 }
 
 #[tokio::test]
+async fn github_email_errors_are_failures_but_a_missing_scope_is_no_email() {
+    let fed = Fed::new().await;
+    let gh = FakeGithub::start().await;
+    let idp = fed
+        .idp(json!({ "kind": "github", "issuer": gh.base }))
+        .await;
+    // An outage is not "no email": the sign-in fails and the audit says why.
+    gh.set_emails_status(Some(StatusCode::INTERNAL_SERVER_ERROR));
+    let location = github_sign_in(&fed, &gh, &idp, &[]).await;
+    assert_eq!(login_error(&location).as_deref(), Some("upstream_failed"));
+    assert_eq!(last_reason(&fed).await, "github_emails");
+    // Without the `user:email` scope (403 / 404) there is just no email.
+    for status in [StatusCode::FORBIDDEN, StatusCode::NOT_FOUND] {
+        gh.set_emails_status(Some(status));
+        let location = github_sign_in(&fed, &gh, &idp, &[]).await;
+        assert_eq!(login_error(&location).as_deref(), Some("upstream_no_email"));
+    }
+    // A user linked earlier still signs in when the scope is missing.
+    gh.set_emails_status(None);
+    code_of(&github_sign_in(&fed, &gh, &idp, &[]).await);
+    gh.set_emails_status(Some(StatusCode::FORBIDDEN));
+    code_of(&github_sign_in(&fed, &gh, &idp, &[]).await);
+}
+
+#[tokio::test]
 async fn github_refuses_demanded_reauthentication() {
     let fed = Fed::new().await;
     let gh = FakeGithub::start().await;

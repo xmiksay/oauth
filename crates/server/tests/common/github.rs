@@ -32,6 +32,8 @@ struct Inner {
     codes: HashMap<String, (String, String)>,
     /// Whether every API call carried a `User-Agent`.
     user_agent_seen: bool,
+    /// What `/user/emails` answers with when it isn't 200 (`None` = 200).
+    emails_status: Option<StatusCode>,
 }
 
 #[derive(Clone)]
@@ -90,6 +92,9 @@ async fn emails(State(inner): Shared, headers: HeaderMap) -> (StatusCode, Json<V
     if !authorized(&mut inner, &headers) {
         return (StatusCode::UNAUTHORIZED, Json(json!({})));
     }
+    if let Some(status) = inner.emails_status {
+        return (status, Json(json!({ "message": "fake" })));
+    }
     (StatusCode::OK, Json(inner.emails.clone()))
 }
 
@@ -119,6 +124,11 @@ impl FakeGithub {
         let mut inner = self.inner.lock().unwrap();
         inner.user = user;
         inner.emails = emails;
+    }
+
+    /// Make `/user/emails` answer `status` (`None`: 200 with the emails).
+    pub fn set_emails_status(&self, status: Option<StatusCode>) {
+        self.inner.lock().unwrap().emails_status = status;
     }
 
     pub fn user_agent_seen(&self) -> bool {
