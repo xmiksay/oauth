@@ -113,8 +113,15 @@ async function create() {
             id="cg-name"
             v-model="name"
             class="input"
+            aria-describedby="cg-name-hint"
             required
           >
+          <p
+            id="cg-name-hint"
+            class="hint"
+          >
+            Unique in this tenant, ignoring letter case.
+          </p>
         </div>
         <div>
           <label

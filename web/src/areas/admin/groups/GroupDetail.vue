@@ -23,6 +23,8 @@ const name = ref('')
 const description = ref('')
 const loader = useAction()
 const saver = useAction()
+// Its own action so a rename error (e.g. the name is taken) shows in the form, not under Members.
+const propSaver = useAction()
 const members = usePagedList<User>((q) => groups.members(id, q))
 
 async function load() {
@@ -37,7 +39,7 @@ onMounted(load)
 
 async function save() {
   const body = { display_name: name.value.trim(), description: description.value.trim() }
-  if (await saver.run(() => groups.update(id, body))) await load()
+  if (await propSaver.run(() => groups.update(id, body))) await load()
 }
 
 async function addMember(p: Picked) {
@@ -100,8 +102,15 @@ function removeMember(userId: string) {
             v-model="name"
             class="input"
             :disabled="!canWriteUsers"
+            aria-describedby="gd-name-hint"
             required
           >
+          <p
+            id="gd-name-hint"
+            class="hint"
+          >
+            Unique in this tenant, ignoring letter case.
+          </p>
         </div>
         <div>
           <label
@@ -118,11 +127,12 @@ function removeMember(userId: string) {
         <p class="mono muted">
           Object ID {{ group.id }}
         </p>
+        <ErrorAlert :error="propSaver.error.value" />
         <button
           v-if="canWriteUsers"
           type="submit"
           class="btn btn-primary"
-          :disabled="saver.busy.value"
+          :disabled="propSaver.busy.value"
         >
           Save
         </button>

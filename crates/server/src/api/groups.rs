@@ -30,6 +30,10 @@ use crate::{
     error::{AppError, AppResult},
 };
 
+/// Names are unique per tenant case-insensitively (the only unique index a
+/// write can hit), since they can be the `groups` claim.
+const NAME_TAKEN: &str = "another group already has this name (letter case is ignored)";
+
 fn view(g: &groups::Model) -> Value {
     json!({
         "id": g.id,
@@ -119,7 +123,8 @@ pub async fn create(
     let txn = state.db.begin().await?;
     let group = groups::Entity::insert(row)
         .exec_with_returning(&txn)
-        .await?;
+        .await
+        .map_err(|err| conflict_on_unique(err, NAME_TAKEN))?;
     caller
         .audit(
             &txn,
@@ -161,7 +166,10 @@ pub async fn update(
         return Ok(axum::Json(view(&group)));
     }
     row.updated_at = Set(chrono::Utc::now().fixed_offset());
-    let updated = row.update(&txn).await?;
+    let updated = row
+        .update(&txn)
+        .await
+        .map_err(|err| conflict_on_unique(err, NAME_TAKEN))?;
     caller
         .audit(
             &txn,

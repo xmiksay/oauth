@@ -130,6 +130,7 @@ mod tests {
             identifier_uri: None,
             access_token_format: entity::enums::AccessTokenFormat::Opaque,
             signing_alg: entity::enums::SigningAlg::Rs256,
+            groups_claim_format: entity::enums::GroupsClaimFormat::Id,
             access_token_ttl_secs: 3600,
             refresh_token_ttl_secs: 3600,
             created_at: now,

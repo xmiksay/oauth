@@ -222,6 +222,8 @@ export interface DirectoryRoleAssignment {
 export type ClientType = 'confidential' | 'public'
 export type TokenFormat = 'jwt' | 'opaque'
 export type SigningAlg = 'RS256' | 'ES256'
+/** What the `groups` claim of tokens for an app (as a resource) carries. */
+export type GroupsClaimFormat = 'id' | 'name'
 
 export interface Application {
   id: string
@@ -239,6 +241,7 @@ export interface Application {
   audience: string
   access_token_format: TokenFormat
   signing_alg: SigningAlg
+  groups_claim_format: GroupsClaimFormat
   access_token_ttl_secs: number
   refresh_token_ttl_secs: number
   created_at: string
@@ -262,6 +265,7 @@ export type ApplicationPatch = Partial<
     | 'identifier_uri'
     | 'access_token_format'
     | 'signing_alg'
+    | 'groups_claim_format'
     | 'access_token_ttl_secs'
     | 'refresh_token_ttl_secs'
   >
