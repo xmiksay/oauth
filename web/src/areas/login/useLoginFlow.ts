@@ -1,9 +1,14 @@
 import { computed, ref, shallowRef } from 'vue'
 import { ApiError } from '@/api/client'
 import { authn, isRedirect, type StepResult, type TxView } from '@/api/authn'
-import type { IdpRef } from '@/api/types'
+import type { IdpRef, TotpEnrollment } from '@/api/types'
 import { isWebUrl, navigateTo } from '@/lib/navigate'
-import { PasskeyCancelled, conditionalMediationAvailable, getPasskey } from '@/webauthn'
+import {
+  PasskeyCancelled,
+  conditionalMediationAvailable,
+  createPasskey,
+  getPasskey,
+} from '@/webauthn'
 import {
   ALREADY_LINKED,
   LINK_UNAVAILABLE,
@@ -21,13 +26,17 @@ export type Phase = 'loading' | 'step' | 'redirecting' | 'expired' | 'missing' |
 export interface LoginDeps {
   api: typeof authn
   navigate: (url: string) => void
-  passkeys: { conditional: () => Promise<boolean>; get: typeof getPasskey }
+  passkeys: {
+    conditional: () => Promise<boolean>
+    get: typeof getPasskey
+    create: typeof createPasskey
+  }
 }
 
 const defaultDeps: LoginDeps = {
   api: authn,
   navigate: navigateTo,
-  passkeys: { conditional: conditionalMediationAvailable, get: getPasskey },
+  passkeys: { conditional: conditionalMediationAvailable, get: getPasskey, create: createPasskey },
 }
 
 export const PASSKEY_FAILED = "That passkey couldn't be verified. Try again or use another method."
@@ -290,6 +299,36 @@ export function useLoginFlow(
     )
   }
 
+  // A TOTP enrolment's next step, held while the step shows the recovery codes.
+  let held: StepResult | null = null
+
+  /** `mfa_enroll`: a pending TOTP secret, returned for the step to keep (secret-once). */
+  async function beginTotp(): Promise<TotpEnrollment | null> {
+    let out: TotpEnrollment | null = null
+    await guarded(async (id) => {
+      out = await a.enrollTotp(id)
+    })
+    return out
+  }
+
+  /** Activates the pending secret; returns the new recovery codes for the step to show once. */
+  async function confirmTotp(code: string): Promise<string[] | null> {
+    let codes: string[] | null = null
+    await guarded(async (id) => {
+      const { recovery_codes, ...next } = await a.confirmEnrollTotp(id, code.replace(/\s/g, ''))
+      held = next as StepResult
+      codes = recovery_codes
+    })
+    return codes
+  }
+
+  /** Continues once the recovery codes were dismissed. */
+  function resume() {
+    const next = held
+    held = null
+    if (next) apply(next)
+  }
+
   return {
     phase,
     view,
@@ -313,6 +352,13 @@ export function useLoginFlow(
     telegram: (code: string) =>
       run((id) => a.submitTelegram(id, code.replace(/\s/g, '')), TELEGRAM_FAILED),
     passkey,
+    beginTotp,
+    confirmTotp,
+    resume,
+    enrollPasskey: () =>
+      run(async (id) =>
+        a.enrollPasskey(id, await deps.passkeys.create(await a.enrollPasskeyOptions(id))),
+      ),
     startConditional,
     stopConditional,
     changePassword: (next: string) => run((id) => a.changePassword(id, next)),

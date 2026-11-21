@@ -371,6 +371,7 @@ describe('TenantsPage users link', () => {
     is_system: false,
     disabled: false,
     audit_retention_days: 90,
+    mfa_policy: 'optional',
     created_at: '',
     updated_at: '',
     ...over,

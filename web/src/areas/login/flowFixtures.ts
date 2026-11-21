@@ -34,6 +34,7 @@ const FACTORS: Record<LoginStep, TxView['factors']> = {
   password: ['password'],
   link: ['password', 'passkey'],
   mfa: ['totp', 'recovery'],
+  mfa_enroll: ['totp', 'passkey'],
   change_password: [],
   consent: [],
 }
@@ -57,8 +58,12 @@ export function deps() {
     passkey: vi.fn(),
     federation: vi.fn(),
     discover: vi.fn(),
+    enrollTotp: vi.fn(),
+    confirmEnrollTotp: vi.fn(),
+    enrollPasskeyOptions: vi.fn(),
+    enrollPasskey: vi.fn(),
   }
   const navigate = vi.fn()
-  const passkeys = { conditional: vi.fn(async () => false), get: vi.fn() }
+  const passkeys = { conditional: vi.fn(async () => false), get: vi.fn(), create: vi.fn() }
   return { api, navigate, passkeys, deps: { api, navigate, passkeys } as unknown as LoginDeps }
 }
