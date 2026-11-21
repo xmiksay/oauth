@@ -79,7 +79,7 @@ Additional rules:
 - **Privileged apps' credentials:** an app holding management-API access (an
   app role assignment of, or a consent grant on, the management API) can
   only have its secrets added / deleted and its `redirect_uris` /
-  `post_logout_redirect_uris` changed by a GlobalAdmin — otherwise an
+  `post_logout_redirect_uris` / `web_origins` changed by a GlobalAdmin — otherwise an
   ApplicationAdmin could take over its `Directory.ReadWrite.All` (403).
 - **Per-app caps:** 50 secrets, 200 scopes, 200 app roles, 200 required
   permissions (409 beyond). Creates lock the parent app row before
@@ -151,6 +151,8 @@ Additional rules:
 // Application
 { "id", "client_id", "display_name", "client_type": "confidential|public", "builtin": false,
   "redirect_uris": [], "post_logout_redirect_uris": [], "identifier_uri": null,
+  "web_origins": [],                        // explicit CORS origins
+  "effective_web_origins": [],              // read-only: web_origins ∪ (public clients) redirect-URI origins
   "audience": "api://<client_id>",          // identifier_uri, else api://{client_id}
   "access_token_format": "jwt|opaque", "signing_alg": "RS256|ES256",
   "access_token_ttl_secs": 3600, "refresh_token_ttl_secs": 1209600,
@@ -268,7 +270,7 @@ sessions and revoke refresh / opaque access tokens (JWTs expire).
 | Method & path | Body | Response |
 |---|---|---|
 | `GET applications` *paged* `?search=` (name, client_id) | – | `Application`s |
-| `POST applications` | `{ display_name, client_id?, client_type? (confidential), redirect_uris?, post_logout_redirect_uris?, identifier_uri?, access_token_format?, signing_alg?, access_token_ttl_secs?, refresh_token_ttl_secs? }` | 201 `Application` |
+| `POST applications` | `{ display_name, client_id?, client_type? (confidential), redirect_uris?, post_logout_redirect_uris?, web_origins?, identifier_uri?, access_token_format?, signing_alg?, access_token_ttl_secs?, refresh_token_ttl_secs? }` | 201 `Application` |
 | `GET applications/{id}` | – | `Application` |
 | `PATCH applications/{id}` | same fields except `client_id`, `client_type` (immutable → 400); `identifier_uri: null` clears it | `Application` |
 | `DELETE applications/{id}` | – | 204 (everything of the app cascades) |
@@ -282,6 +284,13 @@ Validation:
   `http://127.0.0.1…` / `http://[::1]…` (loopback; registered without a
   port, any port matches). No fragment, no userinfo, no whitespace,
   ≤ 2048 characters. `http://localhost` is rejected (may resolve off-host).
+- `web_origins` (≤ 32, no duplicates): browser origins allowed to read the
+  protocol endpoints cross-origin (CORS, [architecture](../architecture.md#cors)),
+  exactly as a browser serializes them: `https://host[:port]` (lowercase DNS
+  name or IPv4, punycode for IDNs) or `http://127.0.0.1[:port]` /
+  `http://[::1][:port]`; no path, trailing `/`, query, fragment, userinfo,
+  wildcard or default port (`:443` / `:80`). A public client's redirect-URI
+  origins are allowed anyway (`effective_web_origins`).
 - `identifier_uri`: `api://{own client_id}` (lowercase scheme, nothing
   else after `api://`), or an `https://` URI without query / fragment; scope
   token characters only, no trailing `/`, ≤ 256; unique per tenant (409).

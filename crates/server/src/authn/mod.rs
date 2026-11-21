@@ -3,7 +3,8 @@
 //! in `docs/api/authn.md`.
 //!
 //! CSRF model: every non-GET call must be `Content-Type: application/json`
-//! (not sendable cross-site without a CORS preflight, which we never grant)
+//! (not sendable cross-site without a CORS preflight, which this API never
+//! grants — `cors` covers only the protocol endpoints)
 //! AND carry an `Origin` equal to the tenant's own origin (so another
 //! tenant's pages, being a different origin, can't drive this one).
 

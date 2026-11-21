@@ -24,7 +24,7 @@ use crate::{
     app::AppState,
     audit,
     authn::ip::ClientIp,
-    metrics,
+    cors, metrics,
     tenancy::Tenant,
     tokens::{self, Delegated, Refresh, TokenSet},
 };
@@ -36,7 +36,7 @@ pub async fn token(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    match handle(&state, &tenant, ip, &headers, &body).await {
+    let response = match handle(&state, &tenant, ip, &headers, &body).await {
         Ok((set, grant)) => {
             metrics::token_issued(grant, tokens::format_label(set.format));
             set.into_response()
@@ -45,7 +45,8 @@ pub async fn token(
             metrics::token_error(err.code.as_str());
             err.into_response()
         }
-    }
+    };
+    cors::for_client(&state, &tenant, &headers, &body, response).await
 }
 
 async fn handle(

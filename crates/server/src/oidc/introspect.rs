@@ -126,6 +126,7 @@ mod tests {
             builtin: false,
             redirect_uris: vec![],
             post_logout_redirect_uris: vec![],
+            web_origins: vec![],
             identifier_uri: None,
             access_token_format: entity::enums::AccessTokenFormat::Opaque,
             signing_alg: entity::enums::SigningAlg::Rs256,

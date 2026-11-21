@@ -21,8 +21,8 @@ the API answers with a `redirect`, which the SPA follows
   just expires), so several sign-ins can run in parallel tabs.
 - **CSRF.** All `POST`s must send `Content-Type: application/json` **and**
   an `Origin` equal to the tenant's own `{origin}` — another tenant's host is
-  a different origin and is rejected (no CORS is ever granted, so cross-site
-  JSON posts can't be made). Violations: `400 invalid_request`
+  a different origin and is rejected (this API never grants CORS — only the
+  protocol endpoints do — so cross-site JSON posts can't be made). Violations: `400 invalid_request`
   (content type) / `403 csrf_rejected` (origin).
 - A transaction lives 15 minutes and is deleted when the flow completes or
   is declined. Unknown / expired / foreign ids → `404 not_found`.

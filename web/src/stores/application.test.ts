@@ -10,6 +10,8 @@ const app: Application = {
   builtin: false,
   redirect_uris: ['https://shop/cb'],
   post_logout_redirect_uris: [],
+  web_origins: [],
+  effective_web_origins: ['https://shop'],
   identifier_uri: null,
   audience: 'api://shop',
   access_token_format: 'jwt',

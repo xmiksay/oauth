@@ -215,6 +215,12 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   `__Host-oauth_tx`, `__Host-oauth_dev`, `Path=/`) — never add a `Domain` (it would share them
   across tenant hosts) or a narrower `Path`. The login API / logout POST
   CSRF check wants `Origin` = the tenant's origin.
+- CORS (`cors`, [architecture](../docs/architecture.md#cors)) only on discovery,
+  JWKS, token, revoke and userinfo — never on the login / management APIs.
+  An app's allowed origins = `web_origins` ∪ (public clients) its redirect
+  URIs' origins, computed per request; token / revoke echo only an origin of
+  the client named in the request; always `Vary: Origin`, never
+  `Allow-Credentials`.
 - Writes that must be atomic with token issuance (code consume, refresh
   rotation, login completion) run in one DB transaction; keep new service
   code generic over `ConnectionTrait` so it can join one.

@@ -159,6 +159,9 @@ async fn credentials_of_privileged_apps_need_a_global_admin() {
     let uris = json!({ "redirect_uris": ["https://attacker.example/cb"] });
     let (st, _) = call(&f.app, Method::PATCH, &svc_path, Some(&aa), Some(&uris)).await;
     assert_eq!(st, StatusCode::FORBIDDEN);
+    let origins = json!({ "web_origins": ["https://attacker.example"] });
+    let (st, _) = call(&f.app, Method::PATCH, &svc_path, Some(&aa), Some(&origins)).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
     let rename = json!({ "display_name": "Service" });
     let (st, _) = call(&f.app, Method::PATCH, &svc_path, Some(&aa), Some(&rename)).await;
     assert_eq!(st, StatusCode::OK, "non-credential fields stay editable");

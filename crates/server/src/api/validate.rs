@@ -3,6 +3,7 @@
 //! whose message is safe to echo.
 
 use crate::{
+    cors,
     directory::reject_control_chars,
     error::{AppError, AppResult},
     oidc::scope::{DEFAULT, OIDC_SCOPES},
@@ -92,6 +93,23 @@ pub fn redirect_uris(uris: &[String], what: &str) -> AppResult<()> {
         redirect_uri(uri).map_err(bad)?;
         if uris.iter().skip(i + 1).any(|other| other == uri) {
             return Err(bad(format!("duplicate {what} entry `{uri}`")));
+        }
+    }
+    Ok(())
+}
+
+/// Allowed web (CORS) origins: each [`cors::validate_origin`], no
+/// duplicates, at most [`MAX_REDIRECT_URIS`] (also a DB CHECK).
+pub fn web_origins(origins: &[String]) -> AppResult<()> {
+    if origins.len() > MAX_REDIRECT_URIS {
+        return Err(bad(format!(
+            "at most {MAX_REDIRECT_URIS} web_origins are allowed"
+        )));
+    }
+    for (i, origin) in origins.iter().enumerate() {
+        cors::validate_origin(origin).map_err(bad)?;
+        if origins.iter().skip(i + 1).any(|other| other == origin) {
+            return Err(bad(format!("duplicate web_origins entry `{origin}`")));
         }
     }
     Ok(())
@@ -232,6 +250,19 @@ mod tests {
             .map(|i| format!("https://a.example/{i}"))
             .collect();
         assert!(redirect_uris(&many, "redirect_uris").is_err());
+    }
+
+    #[test]
+    fn web_origin_lists() {
+        let a = "https://a.example".to_owned();
+        assert!(web_origins(std::slice::from_ref(&a)).is_ok());
+        assert!(web_origins(&[]).is_ok());
+        assert!(web_origins(&[a.clone(), a.clone()]).is_err());
+        assert!(web_origins(&["https://a.example/".to_owned()]).is_err());
+        let many: Vec<String> = (0..=MAX_REDIRECT_URIS)
+            .map(|i| format!("https://a{i}.example"))
+            .collect();
+        assert!(web_origins(&many).is_err());
     }
 
     #[test]

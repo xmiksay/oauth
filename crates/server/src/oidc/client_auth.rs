@@ -50,6 +50,16 @@ fn invalid_client(basic: bool, description: &str) -> OAuthError {
     err
 }
 
+/// The client a request names, without authenticating it: the Basic user
+/// name, else the form's `client_id` (used to pick CORS origins).
+pub fn claimed_client_id(headers: &HeaderMap, params: &HashMap<String, String>) -> Option<String> {
+    match parse_basic(headers) {
+        Ok(Some((id, _))) => Some(id),
+        Ok(None) => params.get("client_id").cloned(),
+        Err(()) => None,
+    }
+}
+
 pub async fn find_client(
     conn: &impl ConnectionTrait,
     tenant_id: Uuid,
@@ -158,5 +168,20 @@ mod tests {
             HeaderValue::from_static("Bearer abc"),
         );
         assert_eq!(parse_basic(&h).unwrap(), None);
+    }
+
+    #[test]
+    fn claimed_client_prefers_basic() {
+        let form = HashMap::from([("client_id".to_owned(), "posted".to_owned())]);
+        assert_eq!(
+            claimed_client_id(&basic("basic-id:s"), &form).as_deref(),
+            Some("basic-id")
+        );
+        assert_eq!(
+            claimed_client_id(&HeaderMap::new(), &form).as_deref(),
+            Some("posted")
+        );
+        assert_eq!(claimed_client_id(&basic("no-colon"), &form), None);
+        assert_eq!(claimed_client_id(&HeaderMap::new(), &HashMap::new()), None);
     }
 }
