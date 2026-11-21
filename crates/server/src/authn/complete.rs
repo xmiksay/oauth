@@ -201,6 +201,7 @@ async fn finish(
                     auth_time,
                     ip: ctx.ip,
                     user_agent: ctx.user_agent,
+                    min_expires_at: None,
                 },
             )
             .await?;

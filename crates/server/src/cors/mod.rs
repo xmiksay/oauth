@@ -240,6 +240,7 @@ mod tests {
             groups_claim_format: GroupsClaimFormat::Id,
             access_token_ttl_secs: 3600,
             refresh_token_ttl_secs: 3600,
+            device_code_enabled: false,
             created_at: now,
             updated_at: now,
         }

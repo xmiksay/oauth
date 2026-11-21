@@ -89,6 +89,7 @@ pub async fn mint_user_token_with(
             auth_time: chrono::Utc::now().fixed_offset(),
             ip: None,
             user_agent: None,
+            min_expires_at: None,
         },
     )
     .await

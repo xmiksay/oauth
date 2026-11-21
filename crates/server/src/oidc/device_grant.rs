@@ -90,7 +90,8 @@ pub async fn grant(
 
 /// Consumes the approved request and issues its tokens on the caller's
 /// transaction. The device gets a session of its own (no cookie; its id is
-/// the tokens' `sid`), carrying the approving sign-in's `amr` / `auth_time`.
+/// the tokens' `sid`), carrying the approving sign-in's `amr` / `auth_time`
+/// and lasting at least as long as its refresh tokens.
 async fn redeem(
     state: &AppState,
     txn: &impl ConnectionTrait,
@@ -107,6 +108,16 @@ async fn redeem(
     let resource = load_app(txn, row.resource_application_id).await?;
     let (oidc, resource_scopes) = scope::split_stored(&row.scopes);
     device_flow::consume(txn, row.id).await?;
+    let now = chrono::Utc::now().fixed_offset();
+    let refresh = oidc.iter().any(|s| s == "offline_access").then(|| Refresh {
+        family_id: Uuid::now_v7(),
+        expires_at: now + Duration::seconds(i64::from(client.refresh_token_ttl_secs)),
+        scopes: row.scopes.clone(),
+        resource_app_id: row.resource_application_id,
+    });
+    // The session is how the user finds and signs out the device (My
+    // Account), so it lives as long as the refresh family (whose expiry
+    // rotation keeps); refresh never checks the session itself.
     let (session, _unused_cookie) = session::create(
         txn,
         &state.config,
@@ -117,16 +128,10 @@ async fn redeem(
             auth_time,
             ip,
             user_agent,
+            min_expires_at: refresh.as_ref().map(|r| r.expires_at),
         },
     )
     .await?;
-    let now = chrono::Utc::now().fixed_offset();
-    let refresh = oidc.iter().any(|s| s == "offline_access").then(|| Refresh {
-        family_id: Uuid::now_v7(),
-        expires_at: now + Duration::seconds(i64::from(client.refresh_token_ttl_secs)),
-        scopes: row.scopes.clone(),
-        resource_app_id: row.resource_application_id,
-    });
     let issuer = state.config.issuer(&tenant.slug);
     let set = tokens::issue_delegated(
         txn,
