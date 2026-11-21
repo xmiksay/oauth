@@ -4,6 +4,7 @@
 
 pub mod authenticator;
 pub mod browser;
+pub mod cors;
 pub mod federation;
 pub mod flow;
 pub mod mail;

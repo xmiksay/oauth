@@ -121,14 +121,26 @@ pub async fn tenant_allows(
     if validate_origin(origin).is_err() {
         return Ok(false);
     }
-    // Only rows that can possibly allow it: an explicit entry, or a public
-    // client (whose redirect URIs are checked below).
+    // Unauthenticated callers choose `origin`, so let SQL return only rows
+    // that can allow it: an explicit entry, or a public client with a
+    // redirect URI starting with it (`starts_with`: a literal prefix, no
+    // pattern). `origin_of` only lowercases the authority and drops a
+    // default port, so every URI whose origin matches has it as a
+    // case-insensitive prefix; `allows` below stays the exact check.
     let apps = applications::Entity::find()
         .filter(applications::Column::TenantId.eq(tenant_id))
         .filter(
             Condition::any()
-                .add(applications::Column::ClientType.eq(ClientType::Public))
-                .add(Expr::cust_with_values("$1 = ANY(web_origins)", [origin])),
+                .add(Expr::cust_with_values("$1 = ANY(web_origins)", [origin]))
+                .add(
+                    Condition::all()
+                        .add(applications::Column::ClientType.eq(ClientType::Public))
+                        .add(Expr::cust_with_values(
+                            "EXISTS (SELECT 1 FROM unnest(redirect_uris) AS r(uri) \
+                             WHERE starts_with(lower(r.uri), $1))",
+                            [origin],
+                        )),
+                ),
         )
         .all(conn)
         .await

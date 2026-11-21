@@ -12,16 +12,11 @@
 //! management APIs.
 mod common;
 
-use axum::{
-    body::Body,
-    http::{HeaderMap, Method, Request, StatusCode, header},
-};
+use axum::http::{Method, StatusCode, header};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use common::{
     ORIGIN, at,
-    browser::send,
-    flow::Fixture,
-    mgmt::{app_admin_token, call},
+    cors::{FOREIGN, SPA_ORIGIN, WEB_ORIGIN, acao, assert_cors, fixture, preflight, request},
     seed::add_app,
 };
 use entity::{
@@ -30,73 +25,6 @@ use entity::{
 };
 use oauth_server::directory::{self, NewTenant};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set};
-use serde_json::json;
-
-/// `spa-app` (public) gets this from its `https://web.example/cb` redirect.
-const SPA_ORIGIN: &str = "https://web.example";
-/// Explicitly allowed on the confidential `web-app` only.
-const WEB_ORIGIN: &str = "https://portal.example";
-const FOREIGN: &str = "https://evil.example";
-const ACAO: header::HeaderName = header::ACCESS_CONTROL_ALLOW_ORIGIN;
-
-async fn request(
-    f: &Fixture,
-    method: Method,
-    uri: &str,
-    headers: &[(header::HeaderName, &str)],
-    form: Option<&[(&str, &str)]>,
-) -> (StatusCode, HeaderMap) {
-    let mut req = Request::builder().method(method).uri(uri);
-    for (name, value) in headers {
-        req = req.header(name, *value);
-    }
-    let body = match form {
-        Some(form) => {
-            req = req.header(header::CONTENT_TYPE, "application/x-www-form-urlencoded");
-            Body::from(
-                form_urlencoded::Serializer::new(String::new())
-                    .extend_pairs(form)
-                    .finish(),
-            )
-        }
-        None => Body::empty(),
-    };
-    let (status, headers, _) = send(&f.app, req.body(body).unwrap()).await;
-    (status, headers)
-}
-
-fn acao(headers: &HeaderMap) -> Option<&str> {
-    headers.get(ACAO).map(|v| v.to_str().unwrap())
-}
-
-fn assert_cors(headers: &HeaderMap, allowed: Option<&str>, what: &str) {
-    assert_eq!(acao(headers), allowed, "{what}");
-    let vary: Vec<_> = headers.get_all(header::VARY).iter().collect();
-    assert!(vary.iter().any(|v| *v == "Origin"), "{what}: Vary {vary:?}");
-    assert!(
-        !headers.contains_key(header::ACCESS_CONTROL_ALLOW_CREDENTIALS),
-        "{what}"
-    );
-}
-
-async fn fixture() -> Fixture {
-    let f = Fixture::new().await;
-    let mut web: applications::ActiveModel = f.web.clone().into();
-    web.web_origins = Set(vec![WEB_ORIGIN.into()]);
-    web.update(&f.db).await.unwrap();
-    f
-}
-
-async fn preflight(f: &Fixture, uri: &str, origin: &str, method: &str) -> HeaderMap {
-    let headers = [
-        (header::ORIGIN, origin),
-        (header::ACCESS_CONTROL_REQUEST_METHOD, method),
-        (header::ACCESS_CONTROL_REQUEST_HEADERS, "authorization"),
-    ];
-    let (status, out) = request(f, Method::OPTIONS, uri, &headers, None).await;
-    assert_eq!(status, StatusCode::NO_CONTENT, "{uri}");
-    out
-}
 
 #[tokio::test]
 async fn discovery_jwks_userinfo_allow_any_origin_of_the_tenant() {
@@ -111,6 +39,10 @@ async fn discovery_jwks_userinfo_allow_any_origin_of_the_tenant() {
             (WEB_ORIGIN, Some(WEB_ORIGIN)),
             ("http://127.0.0.1", Some("http://127.0.0.1")),
             (FOREIGN, None),
+            // The SQL prefilter matches redirect URIs by prefix; the exact
+            // check must still refuse a longer host or another port.
+            ("https://web.example.evil", None),
+            ("https://web.example:8443", None),
             ("null", None),
             // Same-origin needs (and gets) no CORS.
             (ORIGIN, None),
@@ -122,6 +54,37 @@ async fn discovery_jwks_userinfo_allow_any_origin_of_the_tenant() {
         let (_, headers) = request(&f, Method::GET, path, &[], None).await;
         assert_cors(&headers, None, &format!("{path} without Origin"));
     }
+    // A redirect URI's origin is lowercased and loses its default port, and
+    // the SQL prefilter still finds it.
+    let mixed = add_app(
+        &f.db,
+        f.tenant.id,
+        "mixed-spa",
+        ClientType::Public,
+        None,
+        AccessTokenFormat::Jwt,
+        SigningAlg::Rs256,
+    )
+    .await;
+    let mut row: applications::ActiveModel = mixed.into();
+    row.redirect_uris = Set(vec!["https://Mixed.Example:443/cb".into()]);
+    row.update(&f.db).await.unwrap();
+    for (origin, allowed) in [
+        ("https://mixed.example", Some("https://mixed.example")),
+        ("https://mixed.example:443", None),
+        ("https://mixed.example.evil", None),
+    ] {
+        let (_, headers) = request(
+            &f,
+            Method::GET,
+            "/discovery/keys",
+            &[(header::ORIGIN, origin)],
+            None,
+        )
+        .await;
+        assert_cors(&headers, allowed, origin);
+    }
+
     // The real payload is readable, e.g. a 401 from userinfo.
     let (status, headers) = request(
         &f,
@@ -289,57 +252,4 @@ async fn login_and_management_apis_never_grant_cors() {
             request(&f, Method::GET, path, &[(header::ORIGIN, SPA_ORIGIN)], None).await;
         assert_eq!(acao(&headers), None, "{path}");
     }
-}
-
-#[tokio::test]
-async fn web_origins_through_the_management_api() {
-    let f = fixture().await;
-    let token = app_admin_token(&f).await;
-    let path = format!("/api/v1/applications/{}", f.spa.id);
-    let patch = |body| {
-        let (app, path, token) = (f.app.clone(), path.clone(), token.clone());
-        async move { call(&app, Method::PATCH, &path, Some(&token), Some(&body)).await }
-    };
-    let (st, app) = patch(json!({ "web_origins": ["https://spa2.example:8443"] })).await;
-    assert_eq!(st, StatusCode::OK, "{app}");
-    assert_eq!(app["web_origins"], json!(["https://spa2.example:8443"]));
-    assert_eq!(
-        app["effective_web_origins"],
-        json!(["https://spa2.example:8443", SPA_ORIGIN, "http://127.0.0.1"])
-    );
-    let audit = common::mgmt::audited(&f.db, "application.update", f.spa.id).await;
-    assert_eq!(audit.last().unwrap()["fields"], json!(["web_origins"]));
-    let (_, headers) = request(
-        &f,
-        Method::GET,
-        "/discovery/keys",
-        &[(header::ORIGIN, "https://spa2.example:8443")],
-        None,
-    )
-    .await;
-    assert_cors(&headers, Some("https://spa2.example:8443"), "new origin");
-
-    for bad in [
-        json!({ "web_origins": ["https://a.example/"] }),
-        json!({ "web_origins": ["https://*.example"] }),
-        json!({ "web_origins": ["http://a.example"] }),
-        json!({ "web_origins": ["https://A.example"] }),
-        json!({ "web_origins": ["https://a.example:443"] }),
-        json!({ "web_origins": ["https://a.example", "https://a.example"] }),
-    ] {
-        let (st, body) = patch(bad.clone()).await;
-        assert_eq!(st, StatusCode::BAD_REQUEST, "{bad}: {body}");
-    }
-
-    // Built-in apps keep theirs fixed.
-    let builtin = common::mgmt::app_by_client_id(&f.db, f.tenant.id, "admin-portal").await;
-    let (st, _) = call(
-        &f.app,
-        Method::PATCH,
-        &format!("/api/v1/applications/{}", builtin.id),
-        Some(&token),
-        Some(&json!({ "web_origins": [SPA_ORIGIN] })),
-    )
-    .await;
-    assert_eq!(st, StatusCode::FORBIDDEN);
 }
