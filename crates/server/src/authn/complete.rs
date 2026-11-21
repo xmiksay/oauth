@@ -173,7 +173,14 @@ async fn refuse_unassigned(
         return Ok(None);
     }
     close(ctx, tx, from, user.id, "not_assigned").await?;
-    let refused = ctx.error_redirect(&tx.req, ErrorCode::AccessDenied, assignment::NOT_ASSIGNED)?;
+    let refused = match tx.req.device {
+        // The device still gets `access_denied`; the page says why.
+        Some(_) => Outcome::Redirect {
+            url: device_code::result_url(ctx, device_code::NOT_ASSIGNED),
+            cookies: Vec::new(),
+        },
+        None => ctx.error_redirect(&tx.req, ErrorCode::AccessDenied, assignment::NOT_ASSIGNED)?,
+    };
     Ok(Some(refused))
 }
 

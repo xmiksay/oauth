@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use super::{
     AuthnError, AuthnResult, JsonBody, Outcome,
-    complete::evaluate_consent,
+    complete::{evaluate_consent, pending_resource},
     cookie::{self, Kind},
     ctx::Ctx,
     ip::ClientIp,
@@ -29,9 +29,13 @@ use crate::{
     audit,
     consent::Decision as ConsentDecision,
     device_flow::{self, Decision, user_code},
-    oidc::{error::ErrorCode, params::AuthRequest, scope},
+    oidc::{assignment, error::ErrorCode, params::AuthRequest, scope},
     tenancy::Tenant,
 };
+
+/// `/device` query for a user not assigned where the client or resource
+/// requires it (not an OAuth error code: only the page reads it).
+pub const NOT_ASSIGNED: &str = "error=not_assigned";
 
 #[derive(Deserialize)]
 pub struct EnterBody {
@@ -83,23 +87,32 @@ pub async fn enter(
     };
     // Signed in already: straight to the confirmation, which a device
     // request always gets (a phished code must not approve silently) —
-    // unless no user can consent to it, which is settled right here, as
-    // `oidc::authorize` does, instead of after a pointless Allow.
+    // unless the user isn't assigned or no user can consent to it, which is
+    // settled right here, as `oidc::authorize` does, instead of after a
+    // pointless Allow.
     let current = session::current(conn, &state.config, &tenant, &headers).await?;
     let (stage, session) = match &current {
         Some((session, user)) => {
-            let eval = evaluate_consent(conn, &client, &req, user.id, false).await?;
-            if let ConsentDecision::NeedsAdmin(_) = eval.decision {
-                let reason = "admin_consent_required";
+            let resource = pending_resource(conn, &client, req.resource_id).await?;
+            let resource = resource.as_ref();
+            let refusal = if !assignment::user_may_use(conn, tenant.id, user.id, &client, resource)
+                .await?
+            {
+                Some(("not_assigned", NOT_ASSIGNED.to_owned()))
+            } else {
+                let eval = evaluate_consent(conn, &client, &req, resource, user.id, false).await?;
+                matches!(eval.decision, ConsentDecision::NeedsAdmin(_)).then(|| {
+                    let error = ErrorCode::ConsentRequired.as_str();
+                    ("admin_consent_required", format!("error={error}"))
+                })
+            };
+            if let Some((reason, query)) = refusal {
                 // Decision and audit event commit together.
                 let txn = conn.begin().await?;
                 deny(&txn, &ctx, row.id, client.id, user.id, reason).await?;
                 txn.commit().await?;
                 return Ok(Outcome::Redirect {
-                    url: result_url(
-                        &ctx,
-                        &format!("error={}", ErrorCode::ConsentRequired.as_str()),
-                    ),
+                    url: result_url(&ctx, &query),
                     cookies: Vec::new(),
                 });
             }

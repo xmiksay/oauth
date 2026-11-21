@@ -246,7 +246,9 @@ actually minted for; a refresh narrowed to OIDC scopes skips it) and on
 the token, so a restored assignment works again. An app requiring
 assignment with no roles admits nobody. Access tokens already issued stay
 valid until they expire. Every grant issuing delegated tokens goes through
-`oidc::token::ensure_assigned` (a future device-code grant included). The
+`oidc::token::ensure_assigned` (the device-code grant included; its
+browser side refuses at code entry or after sign-in like authorize and
+denies the device request, `reason` `not_assigned`). The
 portal and `AppLauncher` list only built-in areas (which can't require
 assignment), so there is nothing to hide; a future list of registered apps
 must filter with `oidc::assignment::user_may_use`.

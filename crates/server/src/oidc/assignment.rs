@@ -89,6 +89,7 @@ mod tests {
             access_token_format: AccessTokenFormat::Jwt,
             signing_alg: SigningAlg::Rs256,
             groups_claim_format: GroupsClaimFormat::Id,
+            device_code_enabled: false,
             assignment_required: required,
             access_token_ttl_secs: 3600,
             refresh_token_ttl_secs: 3600,

@@ -28,6 +28,7 @@ function fakeApp(over: Partial<Application> = {}): Application {
     signing_alg: 'RS256',
     groups_claim_format: 'id',
     assignment_required: false,
+    device_code_enabled: false,
     access_token_ttl_secs: 3600,
     refresh_token_ttl_secs: 86400,
     created_at: '',

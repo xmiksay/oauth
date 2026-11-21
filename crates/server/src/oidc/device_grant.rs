@@ -15,7 +15,7 @@ use uuid::Uuid;
 use super::{
     error::{ErrorCode, OAuthError, OAuthResult},
     scope,
-    token::{active_user, load_app},
+    token::{active_user, ensure_assigned, load_app},
 };
 use crate::{
     app::AppState,
@@ -106,6 +106,8 @@ async fn redeem(
     };
     let user = active_user(txn, tenant.id, user_id).await?;
     let resource = load_app(txn, row.resource_application_id).await?;
+    // The assignment may have gone since the user approved.
+    ensure_assigned(txn, tenant, &user, client, resource.as_ref()).await?;
     let (oidc, resource_scopes) = scope::split_stored(&row.scopes);
     device_flow::consume(txn, row.id).await?;
     let now = chrono::Utc::now().fixed_offset();
