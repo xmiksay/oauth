@@ -36,6 +36,7 @@ const passwordView: TxView = {
   link: null,
   notice: null,
   device: false,
+  oidc_scopes: ['openid'],
 }
 
 async function mountPage() {

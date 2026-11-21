@@ -53,6 +53,7 @@ the API answers with a `redirect`, which the SPA follows
   "link": null,
   "notice": null,
   "device": false,
+  "oidc_scopes": ["openid", "offline_access"],
   "features": { "password_reset": true, "federation": true }
 }
 ```
@@ -78,7 +79,9 @@ was disabled, deleted or no longer `link_only`, else `null`. `features.federatio
 tenant has an enabled provider (offer email-domain discovery). `device`: the transaction
 signs a device in ([Device code](#device-code)); its `consent` step is then always shown
 (also when nothing awaits consent — `consent` is `null` without a resource) and lists
-every requested scope of the resource, granted before or not.
+every requested scope of the resource, granted before or not. `oidc_scopes`: the
+request's OpenID Connect scopes; the device confirmation names `profile`, `email` and
+above all `offline_access` (the device gets a refresh token and stays signed in).
 
 ## Federation
 
@@ -122,14 +125,14 @@ session that started the link has ended.
 ## Device code
 
 The browser side of the device authorization grant (RFC 8628; protocol in
-[../architecture.md](../architecture.md#device-authorization-grant)). A device
+[../device_code.md](../device_code.md)). A device
 shows `verification_uri` = `{origin}/device` and a user code like `BDFG-KLMN`
 (`verification_uri_complete` adds `?user_code=…`; the page prefills it but
 still waits for a click).
 
 | Call | Body | Response |
 |---|---|---|
-| `POST /api/authn/device` | `{ "user_code" }` | `200 { "redirect": "{origin}/login?tx={id}" }` and the tx-binding cookie: a login transaction for the device request, at `consent` when this browser has a session, else at `password`. Case, `-` and whitespace in the code are ignored. `401 invalid_code` for anything else — unknown, expired, already decided, another tenant's, or of a client that turned the grant off (never distinguished); `429` over 10 / 5 min per IP (counted before the lookup) |
+| `POST /api/authn/device` | `{ "user_code" }` | `200 { "redirect": "{origin}/login?tx={id}" }` and the tx-binding cookie: a login transaction for the device request, at `consent` when this browser has a session, else at `password`. With a session and a scope needing admin consent: no transaction, the request is denied and the answer is `200 { "redirect": "{origin}/device?error=consent_required" }`. Case, `-` and whitespace in the code are ignored. `401 invalid_code` for anything else — unknown, expired, already decided, another tenant's, or of a client that turned the grant off (never distinguished); `429` over 10 / 5 min per IP (counted before the lookup) |
 
 The transaction runs like any other (`password` → `mfa` → … → `consent`), but
 ends on `/device` instead of a client redirect URI:

@@ -21,6 +21,7 @@ export function view(step: LoginStep, extra: Partial<TxView> = {}): TxView {
     idp_hint: null,
     notice: null,
     device: false,
+    oidc_scopes: ['openid'],
     link:
       step === 'link'
         ? { idp: { id: 'idp-1', name: 'Entra' }, email: 'ann@contoso.com', name: 'Ann' }

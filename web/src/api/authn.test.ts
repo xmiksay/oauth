@@ -112,6 +112,7 @@ describe('login API client', () => {
         link: null,
         notice: null,
         device: false,
+        oidc_scopes: ['openid'],
       }),
     ).toBe(false)
   })

@@ -143,6 +143,7 @@ describe('ConsentStep', () => {
     link: null,
     notice: null,
     device: false,
+    oidc_scopes: ['openid'],
   }
 
   it('names the client, the resource and every requested scope', () => {
@@ -178,6 +179,7 @@ describe('ConsentStep for a device', () => {
     link: null,
     notice: null,
     device: true,
+    oidc_scopes: ['openid'],
   }
 
   it('asks to confirm the device sign-in with a phishing warning', async () => {
@@ -199,5 +201,24 @@ describe('ConsentStep for a device', () => {
     const w = mount(ConsentStep, { props: { view: { ...view, consent }, locked: false } })
     expect(w.text()).toContain('The device will be able to access Orders API to:')
     expect(w.find('li').text()).toContain('Read your orders')
+  })
+
+  it('names the OIDC scopes the device gets, staying signed in above all', () => {
+    const oidc_scopes = ['openid', 'email', 'offline_access']
+    const w = mount(ConsentStep, { props: { view: { ...view, oidc_scopes }, locked: false } })
+    expect(w.text()).toContain('Signed in, the device will be able to:')
+    const items = w.findAll('li').map((li) => li.text())
+    expect(items).toHaveLength(2)
+    expect(items[0]).toContain('See your email address')
+    expect(items[1]).toContain('Stay signed in until you sign it out')
+    expect(items[1]).toContain('offline_access')
+  })
+
+  it('lists no OIDC scopes outside a device sign-in', () => {
+    const oidc_scopes = ['openid', 'offline_access']
+    const w = mount(ConsentStep, {
+      props: { view: { ...view, device: false, oidc_scopes, consent: null }, locked: false },
+    })
+    expect(w.text()).not.toContain('Stay signed in')
   })
 })

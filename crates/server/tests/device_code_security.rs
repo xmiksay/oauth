@@ -11,10 +11,10 @@
 //! (CSRF, rate limit, tenant isolation) and the management API flag.
 mod common;
 
-use axum::http::{Method, StatusCode};
+use axum::http::{Method, StatusCode, header};
 use common::{
     ORIGIN, at,
-    device::{approve_as, enable, enter, poll, start},
+    device::{approve_as, enable, enter, poll, rows, start},
     flow::Fixture,
     mgmt::{app_admin_token, app_by_client_id, audited, call},
 };
@@ -119,6 +119,29 @@ async fn code_entry_is_csrf_checked_and_rate_limited() {
     let (_, start) = start(&f, &f.spa, None, "openid").await;
     let (status, body) = enter(&mut browser, start["user_code"].as_str().unwrap()).await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+}
+
+#[tokio::test]
+async fn device_code_requests_are_rate_limited() {
+    let f = Fixture::new().await;
+    enable(&f, &f.spa).await;
+    let max = rate_limit::DEVICE_AUTHORIZE_PER_IP.max;
+    for _ in 0..max {
+        let (status, body) = start(&f, &f.spa, None, "openid").await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+    }
+    let form = [("client_id", "spa-app"), ("scope", "openid")];
+    let (status, headers, body) = f.post_form("/oauth2/devicecode", &form, None).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    assert_eq!(body["error"], "rate_limited");
+    let retry_after: u64 = headers[header::RETRY_AFTER]
+        .to_str()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(retry_after > 0);
+    // Refused before anything is stored.
+    assert_eq!(rows(&f).await.len(), usize::try_from(max).unwrap());
 }
 
 #[tokio::test]

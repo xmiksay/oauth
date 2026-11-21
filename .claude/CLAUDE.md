@@ -7,7 +7,7 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
 
 - Architecture: [docs/architecture.md](../docs/architecture.md), SPA: [docs/frontend.md](../docs/frontend.md),
   sign-in: [docs/authn.md](../docs/authn.md), passkeys: [docs/passkeys.md](../docs/passkeys.md),
-  federation: [docs/federation.md](../docs/federation.md)
+  federation: [docs/federation.md](../docs/federation.md), device code: [docs/device_code.md](../docs/device_code.md)
 - Roadmap / milestones: [docs/roadmap.md](../docs/roadmap.md)
 - Deployment / release: [docs/deploy.md](../docs/deploy.md)
 
@@ -146,7 +146,7 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   The last-sign-in-method rule is `federation::identities::Methods` —
   anything removing a password, passkey or identity goes through it.
 - Device code grant (`device_flow`, `oidc::device_authorization` /
-  `device_grant`, `authn::device_code`; [docs/architecture.md](../docs/architecture.md#device-authorization-grant)):
+  `device_grant`, `authn::device_code`; [docs/device_code.md](../docs/device_code.md)):
   the browser side is an ordinary login transaction whose `AuthRequest.device`
   names the row; it always stops at the consent step (a phished user code
   must never approve silently) and ends on `/device`, never at a client

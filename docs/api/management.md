@@ -316,7 +316,7 @@ Validation:
   groups → no `groups`, `hasgroups: true`.
 - `device_code_enabled` (boolean): the app may use the device authorization
   grant (`/oauth2/devicecode` + the `device_code` token grant, see
-  [../architecture.md](../architecture.md#device-authorization-grant)).
+  [../device_code.md](../device_code.md)).
   Not settable on built-in apps (403).
 
 ### Secrets

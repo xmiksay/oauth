@@ -46,6 +46,11 @@ export interface TxView {
    * whose `consent.scopes` then lists everything the device gets.
    */
   device: boolean
+  /**
+   * The OpenID Connect scopes of the request (`openid`, `profile`, `email`, `offline_access`);
+   * a device confirmation names them, `offline_access` above all (a long-lived refresh token).
+   */
+  oidc_scopes: string[]
 }
 
 export interface EmailVerified {

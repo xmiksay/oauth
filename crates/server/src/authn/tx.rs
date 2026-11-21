@@ -328,6 +328,7 @@ pub async fn view(state: &AppState, tenant: &Tenant, tx: &LoadedTx) -> AuthnResu
         "link": link,
         "notice": notice,
         "device": tx.req.device.is_some(),
+        "oidc_scopes": tx.req.oidc_scopes,
         "features": {
             "password_reset": state.config.email_enabled(),
             "federation": !idps.is_empty(),
