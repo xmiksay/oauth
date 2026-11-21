@@ -73,7 +73,10 @@ otherwise stateless and needs no sticky sessions or volumes. The
 `DATABASE_URL` role needs DDL rights on it: every replica runs pending migrations on
 startup, all in one transaction holding `pg_advisory_xact_lock`, so
 concurrent starts serialize and a failed migration rolls back and exits
-non-zero. There is no separate migration job.
+non-zero. There is no separate migration job. A migration that can refuse
+existing data is listed under [Upgrade notes](#upgrade-notes): run its
+pre-check before rolling out, or the new pods crash-loop until the data is
+fixed (the old ones keep serving).
 
 **Replicas.** Any number of replicas is safe, and two or more (with a
 disruption budget keeping one available) avoid downtime on rollouts and node
@@ -252,3 +255,32 @@ pinned in the workflow and checked before install.
    pushing: fix it and release the next version rather than moving the tag.
 4. In `Sourcelab/ansible`, bump `oauth_version` to `X.Y.Z` in the `oauth`
    role and run `make services SERVICE=oauth`.
+
+## Upgrade notes
+
+### Case-insensitively unique group names (migration `m20261121_000011_group_names`)
+
+This release adds a unique index on group names per tenant, ignoring letter
+case, so names can go in the `groups` claim. Duplicates are never renamed
+for you: if two groups of one tenant differ only in case (`Ops` / `ops`), the
+migration aborts, lists the colliding groups (tenant slug, name, id) in its
+error and every new pod exits non-zero. Before upgrading, find them with:
+
+```sql
+SELECT t.slug, lower(g.display_name) AS name, array_agg(g.id ORDER BY g.id) AS ids
+FROM groups g JOIN tenants t ON t.id = g.tenant_id
+GROUP BY t.slug, g.tenant_id, lower(g.display_name)
+HAVING count(*) > 1;
+```
+
+and rename all but one group of each row, through the admin UI /
+`PATCH /api/v1/groups/{id}` or directly:
+
+```sql
+UPDATE groups SET display_name = '<new name>', updated_at = now() WHERE id = '<id>';
+```
+
+An empty result means the upgrade is safe. The older version keeps accepting
+colliding names until the new one runs, so check again right before the
+rollout; if it still fails, rename the groups it lists and let the pods
+restart.
