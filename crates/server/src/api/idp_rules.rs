@@ -104,6 +104,13 @@ pub fn check(row: &Row<'_>) -> Result<(), AppError> {
             "allowed_tenants needs an entra issuer with `{tenantid}` (multi-tenant)",
         ));
     }
+    // Anyone can create an Entra tenant and put any address in a user's
+    // unverified `email`: trusting it is only sound for named tenants.
+    if templated && row.trust_upstream_email && row.allowed_tenants.is_empty() {
+        return Err(bad(
+            "trust_upstream_email on a multi-tenant entra provider needs allowed_tenants",
+        ));
+    }
     if row.kind == IdpKind::Github {
         if row.discovery_url.is_some() {
             return Err(bad("github providers have no discovery_url"));
@@ -204,6 +211,25 @@ mod tests {
             ..entra
         };
         assert!(err(&bad_discovery).contains("discovery_url"));
+    }
+
+    #[test]
+    fn trusting_multi_tenant_email_needs_allowed_tenants() {
+        let scopes = default_scopes(IdpKind::Entra);
+        let mut entra = row(IdpKind::Entra, MULTI);
+        entra.scopes = &scopes;
+        entra.discovery_url = Some(DISCOVERY);
+        entra.trust_upstream_email = true;
+        assert!(err(&entra).contains("needs allowed_tenants"));
+        let tenants = ["9188040d-6c67-4c5b-b112-36a304b66dad".to_owned()];
+        entra.allowed_tenants = &tenants;
+        assert!(check(&entra).is_ok());
+        let single = Row {
+            issuer: "https://login.example/9188040d-6c67-4c5b-b112-36a304b66dad/v2.0",
+            allowed_tenants: &[],
+            ..entra
+        };
+        assert!(check(&single).is_ok());
     }
 
     #[test]

@@ -54,8 +54,10 @@ treats the ID token's `email` as verified even without `email_verified`
 address the provider reports. Enable it only for a provider whose
 administrators control the addresses (an organisation's own directory),
 ideally together with `email_domains` so JIT accepts only your domains —
-never for a provider where users type their own email (Entra
-multi-tenant, consumer accounts). It never links an existing account by
+never for a provider where users type their own email (consumer
+accounts). On a multi-tenant Entra provider (anyone can create a tenant
+and set any unverified `email`) it is refused (400) unless
+`allowed_tenants` names the tenants to trust. It never links an existing account by
 email: an address that belongs to a local user is still `account_exists`.
 
 Issuers and discovery URLs must be `https://`. Plain `http://` is accepted

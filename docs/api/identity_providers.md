@@ -37,7 +37,8 @@ unknown fields rejected. Per kind ([../federation.md](../federation.md#presets))
 `hosted_domain` (a DNS name, lower-cased) only for `google`; an `issuer`
 containing `{tenantid}` only for `entra`, once, in its path, and with a
 `discovery_url` (which can't contain it); `allowed_tenants` (GUIDs,
-lower-cased, at most 50) only with such a templated issuer; `github`: no
+lower-cased, at most 50) only with such a templated issuer, and required
+with it for `trust_upstream_email`; `github`: no
 `discovery_url`, `client_auth` `post`, `trust_upstream_mfa` and
 `trust_upstream_email` false. `hosted_domain`, `allowed_tenants` and
 `trust_upstream_email` are not a repoint: they are checked on every sign-in. Issuers and endpoints must resolve to public
