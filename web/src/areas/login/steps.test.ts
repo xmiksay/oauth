@@ -142,6 +142,7 @@ describe('ConsentStep', () => {
     idp_hint: null,
     link: null,
     notice: null,
+    device: false,
   }
 
   it('names the client, the resource and every requested scope', () => {
@@ -159,5 +160,44 @@ describe('ConsentStep', () => {
     await accept?.trigger('click')
     await cancel?.trigger('click')
     expect(w.emitted('decide')).toEqual([[true], [false]])
+  })
+})
+
+describe('ConsentStep for a device', () => {
+  const view: TxView = {
+    tx: 't',
+    step: 'consent',
+    factors: [],
+    tenant: { slug: 'c', display_name: 'Contoso' },
+    client: { client_id: 'tv', display_name: 'Living room TV' },
+    user: { email: 'ann@example.com', display_name: 'Ann' },
+    consent: null,
+    features: { password_reset: false, federation: false },
+    idps: [],
+    idp_hint: null,
+    link: null,
+    notice: null,
+    device: true,
+  }
+
+  it('asks to confirm the device sign-in with a phishing warning', async () => {
+    const w = mount(ConsentStep, { props: { view, locked: false } })
+    expect(w.text()).toContain('Sign in to Living room TV on another device as ann@example.com?')
+    expect(w.text()).toContain('Never enter a code that someone sent or told you.')
+    expect(w.find('ul').exists()).toBe(false)
+    const [deny, allow] = w.findAll('button')
+    expect([deny?.text(), allow?.text()]).toEqual(['Deny', 'Allow'])
+    await deny?.trigger('click')
+    expect(w.emitted('decide')).toEqual([[false]])
+  })
+
+  it('lists what the device gets from a resource', () => {
+    const consent = {
+      resource: { display_name: 'Orders API', audience: 'api://orders' },
+      scopes: [{ value: 'Orders.Read', description: 'Read your orders' }],
+    }
+    const w = mount(ConsentStep, { props: { view: { ...view, consent }, locked: false } })
+    expect(w.text()).toContain('The device will be able to access Orders API to:')
+    expect(w.find('li').text()).toContain('Read your orders')
   })
 })

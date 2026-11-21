@@ -74,7 +74,7 @@ const title = computed(() => {
     case 'change_password':
       return 'Update your password'
     case 'consent':
-      return 'Permissions requested'
+      return view.value.device ? 'Confirm device sign-in' : 'Permissions requested'
     default:
       return 'Sign in'
   }

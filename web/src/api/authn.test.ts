@@ -111,6 +111,7 @@ describe('login API client', () => {
         idp_hint: null,
         link: null,
         notice: null,
+        device: false,
       }),
     ).toBe(false)
   })

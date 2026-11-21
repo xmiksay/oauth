@@ -16,6 +16,7 @@ const origins = ref('')
 const derivedOrigins = computed(() =>
   (app.value?.effective_web_origins ?? []).filter((o) => !app.value?.web_origins.includes(o)),
 )
+const deviceCode = ref(false)
 const saved = ref(false)
 const { busy, error, run } = useAction()
 
@@ -23,6 +24,7 @@ watchEffect(() => {
   redirects.value = (app.value?.redirect_uris ?? []).join('\n')
   postLogout.value = (app.value?.post_logout_redirect_uris ?? []).join('\n')
   origins.value = (app.value?.web_origins ?? []).join('\n')
+  deviceCode.value = app.value?.device_code_enabled ?? false
 })
 
 async function save() {
@@ -32,6 +34,7 @@ async function save() {
       redirect_uris: parseLines(redirects.value),
       post_logout_redirect_uris: parseLines(postLogout.value),
       web_origins: parseLines(origins.value),
+      device_code_enabled: deviceCode.value,
     }),
   )
   saved.value = !!ok
@@ -113,6 +116,20 @@ async function save() {
         <span class="font-mono">{{ derivedOrigins.join(', ') }}</span>
       </p>
     </div>
+    <label class="flex items-start gap-2 text-sm">
+      <input
+        v-model="deviceCode"
+        type="checkbox"
+        class="mt-1"
+        :disabled="!canEditConfig"
+      >
+      <span>
+        <span class="font-medium">Allow the device code flow</span>
+        <span class="muted block">For devices without a usable browser (TVs, command-line tools):
+          the device shows a code that the user enters at /device on this tenant's sign-in host
+          (RFC 8628). Needs no redirect URI.</span>
+      </span>
+    </label>
     <ErrorAlert :error="error" />
     <StatusNote :message="saved ? 'Saved.' : null" />
     <button
