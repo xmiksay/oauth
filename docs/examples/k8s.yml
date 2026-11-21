@@ -1,4 +1,11 @@
-# oauth IdP — Kubernetes manifests.
+# oauth IdP — EXAMPLE Kubernetes manifests.
+#
+# NOT AUTHORITATIVE: this file is an illustration only. It is not used for any
+# real deployment (those live outside this repository), is not tested by CI and
+# may lag behind the application. The authoritative deployment requirements are
+# in docs/deploy.md ("Deployment requirements"); adapt this to your cluster
+# (names, hosts, image tag, resources, ingress class, secret source) rather than
+# applying it as-is.
 #
 # Prerequisite (not created here, holds secrets): a Secret named `oauth-secrets`
 #   kubectl create secret generic oauth-secrets \

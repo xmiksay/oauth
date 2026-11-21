@@ -6,5 +6,4 @@ web/dist
 .claude
 .env
 *.log
-deploy
 docs

@@ -4,7 +4,8 @@
 
 1. **`feat/m1a-scaffold`** — Cargo workspace, toolchain pins, Makefile, CI,
    compose, config, error type, health/metrics, migration runner + advisory
-   lock, SPA serving, Vue skeleton, Dockerfile, k8s manifests, docs.
+   lock, SPA serving, Vue skeleton, Dockerfile, k8s manifests (now the
+   non-authoritative example `docs/examples/k8s.yml`), docs.
 2. **`feat/m1a-directory`** (done) — tenants / users / groups / directory roles
    entities + migrations, `keys` module, `oauth bootstrap` CLI, built-in apps
    (`management-api`, `admin-portal`, `my-account`) on tenant creation.
