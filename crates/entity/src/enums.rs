@@ -248,8 +248,20 @@ pub enum WebauthnPurpose {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter, DeriveActiveEnum)]
 #[sea_orm(rs_type = "String", db_type = "Text")]
 pub enum IdpKind {
+    /// Any OpenID provider, configured by hand.
     #[sea_orm(string_value = "oidc")]
     Oidc,
+    /// OpenID with Google's checks: `hd` (hosted domain) when configured.
+    #[sea_orm(string_value = "google")]
+    Google,
+    /// OpenID with Entra ID's checks: `tid`, a `{tenantid}`-templated issuer
+    /// for multi-tenant, `xms_edov` as email verification.
+    #[sea_orm(string_value = "entra")]
+    Entra,
+    /// GitHub OAuth 2.0 (no OpenID): profile and verified primary email
+    /// from its REST API.
+    #[sea_orm(string_value = "github")]
+    Github,
 }
 
 /// How we authenticate to an upstream token endpoint (RFC 6749 §2.3.1).

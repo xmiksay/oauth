@@ -9,9 +9,9 @@ Upstream OpenID providers users can sign in with ([../federation.md](../federati
 | Method & path | Body | Response |
 |---|---|---|
 | `GET identity-providers` *paged* | – | `IdentityProvider`s |
-| `POST identity-providers` | `{ name, issuer, client_id, client_secret?, client_auth? ("post"), discovery_url?, scopes? (openid email profile), policy? ("link_only"), trust_upstream_mfa? (false), mfa_acr?, email_domains? ([]), enabled? (true), visible? (true) }` | 201 `IdentityProvider` + `users_only_via` + `linked_users` (both 0) |
+| `POST identity-providers` | `{ kind? ("oidc"), name, issuer, client_id, client_secret?, client_auth? ("post"), discovery_url?, scopes? (openid email profile), policy? ("link_only"), trust_upstream_mfa? (false), mfa_acr?, email_domains? ([]), hosted_domain?, allowed_tenants? ([]), trust_upstream_email? (false), enabled? (true), visible? (true) }` — `issuer` defaults to `https://accounts.google.com` for `google` and `https://github.com` for `github`; `scopes` to `read:user user:email` for `github` | 201 `IdentityProvider` + `users_only_via` + `linked_users` (both 0) |
 | `GET identity-providers/{id}` | – | `IdentityProvider` + `users_only_via`: users who can sign in only through it (no password, passkey or identity at another enabled provider) — disabling or deleting it locks them out — + `linked_users`: identities linked through it |
-| `PATCH identity-providers/{id}` | any create field; `client_secret: "…"` replaces the secret, `null` removes it; `discovery_url` / `mfa_acr`: `null` clears. Changing `issuer`, `client_id` or `discovery_url` is a **repoint**: all its identities are unlinked (`linked_users` before the change says how many), its round trips in flight dropped and logins parked on it released; changing `issuer` or `discovery_url` also removes the stored secret unless this PATCH sets a new one (`has_secret` shows it) | `IdentityProvider` + `users_only_via` + `linked_users` |
+| `PATCH identity-providers/{id}` | any create field (`kind` can't change: 400 unless it is the current one); `client_secret: "…"` replaces the secret, `null` removes it; `discovery_url` / `mfa_acr` / `hosted_domain`: `null` clears. Changing `issuer`, `client_id` or `discovery_url` is a **repoint**: all its identities are unlinked (`linked_users` before the change says how many), its round trips in flight dropped and logins parked on it released; changing `issuer` or `discovery_url` also removes the stored secret unless this PATCH sets a new one (`has_secret` shows it) | `IdentityProvider` + `users_only_via` + `linked_users` |
 | `DELETE identity-providers/{id}` | – | 204 (its linked identities and group mappings go with it, and so do the memberships only its mappings kept) |
 | `GET identity-providers/{id}/group-mappings` *paged* | – | `IdpGroupMapping`s `{ id, idp_id, claim, value, group_id, group_display_name, created_at }` |
 | `POST identity-providers/{id}/group-mappings` | `{ claim, value, group_id }` | 201 `IdpGroupMapping` |
@@ -19,10 +19,17 @@ Upstream OpenID providers users can sign in with ([../federation.md](../federati
 
 Validation (400): `name` 1–64 characters (409 if taken in the tenant);
 `issuer` / `discovery_url` `https://` without query or fragment (`http://`
-loopback only with an `http://` `PUBLIC_URL`); `scopes` RFC 6749 tokens
-including `openid`; `email_domains` DNS names, lower-cased, each claimed by
+loopback only with an `http://` `PUBLIC_URL`); `scopes` RFC 6749 tokens,
+including `openid` unless `kind` is `github`; `email_domains` DNS names, lower-cased, each claimed by
 at most one provider of the tenant (409; writes serialize per tenant);
-unknown fields rejected. Issuers and endpoints must resolve to public
+unknown fields rejected. Per kind ([../federation.md](../federation.md#presets)):
+`hosted_domain` (a DNS name, lower-cased) only for `google`; an `issuer`
+containing `{tenantid}` only for `entra`, once, in its path, and with a
+`discovery_url` (which can't contain it); `allowed_tenants` (GUIDs,
+lower-cased, at most 50) only with such a templated issuer; `github`: no
+`discovery_url`, `client_auth` `post`, `trust_upstream_mfa` and
+`trust_upstream_email` false. `hosted_domain`, `allowed_tenants` and
+`trust_upstream_email` are not a repoint: they are checked on every sign-in. Issuers and endpoints must resolve to public
 addresses ([../federation.md](../federation.md#security-model)).
 
 Group mappings ([../federation.md](../federation.md#group-mappings)):
@@ -35,7 +42,7 @@ add. A new mapping applies from each user's next sign-in.
 Every write locks the provider row; a repoint bumps its internal
 generation, so a sign-in or link verified against the old configuration
 fails (`upstream_failed`, audit reason `idp_repointed`) instead of landing.
-Audit: `identity_provider.create` / `update` (`fields`, `identities_removed`,
+Audit: `identity_provider.create` (`name`, `kind`, `issuer`, `policy`) / `update` (`fields`, `identities_removed`,
 `memberships_removed`) / `delete` (`users_only_via`, `memberships_removed`)
 / `group_mapping_add` (`mapping_id`, `claim`, `value`, `group_id`,
 `group_display_name`) / `group_mapping_remove` (`mapping_id`, `claim`,

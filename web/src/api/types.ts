@@ -153,12 +153,13 @@ export type MyIdentity = MyIdentities['items'][number]
 
 export type IdpPolicy = 'jit' | 'link_only' | 'deny'
 export type IdpClientAuth = 'post' | 'basic'
+export type IdpKind = 'oidc' | 'google' | 'entra' | 'github'
 
 /** An upstream OIDC provider; the client secret is write-only (`has_secret` only). */
 export interface IdentityProvider {
   id: string
   name: string
-  kind: 'oidc'
+  kind: IdpKind
   enabled: boolean
   visible: boolean
   issuer: string
@@ -171,6 +172,12 @@ export interface IdentityProvider {
   trust_upstream_mfa: boolean
   mfa_acr: string | null
   email_domains: string[]
+  /** Google only: the Workspace domain the ID token's `hd` must name. */
+  hosted_domain: string | null
+  /** Entra multi-tenant (`{tenantid}` issuer) only: allowed directory ids; empty = any. */
+  allowed_tenants: string[]
+  /** The upstream email counts as verified without `email_verified` (JIT risk). */
+  trust_upstream_email: boolean
   /** Register this at the provider. */
   redirect_uri: string
   created_at: string
@@ -190,6 +197,8 @@ export interface IdentityProviderDetail extends IdentityProvider {
  * the secret, `null` removes it, omitted keeps it.
  */
 export interface IdentityProviderInput {
+  /** Create only; fixed afterwards. */
+  kind?: IdpKind
   name: string
   issuer: string
   client_id: string
@@ -201,6 +210,9 @@ export interface IdentityProviderInput {
   trust_upstream_mfa?: boolean
   mfa_acr?: string | null
   email_domains?: string[]
+  hosted_domain?: string | null
+  allowed_tenants?: string[]
+  trust_upstream_email?: boolean
   enabled?: boolean
   visible?: boolean
 }

@@ -10,10 +10,12 @@
 pub mod discovery;
 pub mod exchange;
 pub mod flow;
+pub mod github;
 pub mod group_map;
 pub mod id_token;
 pub mod identities;
 pub mod idps;
+pub mod kinds;
 pub mod policy;
 pub mod profile;
 pub mod resolve;
@@ -37,6 +39,7 @@ const TIMEOUTS: http::Timeouts = http::Timeouts {
 /// Discovery documents, JWKS and token responses are small; anything bigger
 /// is refused instead of buffered.
 pub const MAX_RESPONSE_BYTES: usize = 256 * 1024;
+const USER_AGENT: &str = concat!("oauth/", env!("CARGO_PKG_VERSION"));
 
 /// The outbound side shared by all requests: one HTTP client plus the
 /// discovery / JWKS caches (per process; replicas each keep their own).
@@ -74,17 +77,32 @@ impl Upstream {
         url: &str,
         what: &'static str,
     ) -> Result<T, Failure> {
+        self.get_json_as(url, what, None, "application/json").await
+    }
+
+    /// [`Self::get_json`] with an optional bearer token and `Accept` value
+    /// (APIs that aren't OpenID, e.g. GitHub's, want their own).
+    async fn get_json_as<T: serde::de::DeserializeOwned>(
+        &self,
+        url: &str,
+        what: &'static str,
+        bearer: Option<&str>,
+        accept: &str,
+    ) -> Result<T, Failure> {
         let parsed = urls::checked(url, self.allow_http_loopback).ok_or(Failure(what))?;
-        let response = self
+        let mut request = self
             .http
             .get(parsed)
-            .header(reqwest::header::ACCEPT, "application/json")
-            .send()
-            .await
-            .map_err(|err| {
-                tracing::warn!(what, timeout = err.is_timeout(), "upstream unreachable");
-                Failure(what)
-            })?;
+            .header(reqwest::header::ACCEPT, accept)
+            // GitHub's API refuses requests without one.
+            .header(reqwest::header::USER_AGENT, USER_AGENT);
+        if let Some(token) = bearer {
+            request = request.bearer_auth(token);
+        }
+        let response = request.send().await.map_err(|err| {
+            tracing::warn!(what, timeout = err.is_timeout(), "upstream unreachable");
+            Failure(what)
+        })?;
         if !response.status().is_success() {
             tracing::warn!(
                 what,

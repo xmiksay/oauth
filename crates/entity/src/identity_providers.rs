@@ -30,6 +30,13 @@ pub struct Model {
     pub mfa_acr: Option<String>,
     /// Lower-case DNS names for home-realm discovery.
     pub email_domains: Vec<String>,
+    /// Google only: the Workspace domain the ID token's `hd` must name.
+    pub hosted_domain: Option<String>,
+    /// Entra only, with a `{tenantid}` issuer: the directory (tenant) ids
+    /// allowed to sign in (empty = any).
+    pub allowed_tenants: Vec<String>,
+    /// The upstream email counts as verified even without `email_verified`.
+    pub trust_upstream_email: bool,
     /// Bumped on every repoint (issuer, client id, discovery URL).
     pub generation: i64,
     pub created_at: DateTimeWithTimeZone,

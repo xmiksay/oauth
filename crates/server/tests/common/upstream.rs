@@ -115,6 +115,10 @@ struct Inner {
     /// Query of the last authorization request.
     last_authorize: HashMap<String, String>,
     on_token: Option<Hook>,
+    /// Merged into every ID token (`null` removes a claim).
+    extra: serde_json::Map<String, Value>,
+    /// The discovery document's `issuer`, if not the base URL.
+    discovery_issuer: Option<String>,
 }
 
 #[derive(Clone)]
@@ -137,7 +141,10 @@ async fn discovery(State(inner): State<Arc<Mutex<Inner>>>) -> Json<Value> {
     let issuer = if inner.tweak == Tweak::DiscoveryIssuer {
         format!("{}/other", inner.issuer)
     } else {
-        inner.issuer.clone()
+        inner
+            .discovery_issuer
+            .clone()
+            .unwrap_or(inner.issuer.clone())
     };
     let base = &inner.issuer;
     Json(json!({
@@ -196,6 +203,12 @@ fn id_token(inner: &Inner, grant: &Grant) -> String {
         Tweak::ExpOffset(secs) => claims["exp"] = json!(now + secs),
         Tweak::IatOffset(secs) => claims["iat"] = json!(now + secs),
         _ => {}
+    }
+    for (k, v) in &inner.extra {
+        match v {
+            Value::Null => claims.as_object_mut().unwrap().remove(k),
+            v => claims.as_object_mut().unwrap().insert(k.clone(), v.clone()),
+        };
     }
     let sign = |key: &Key, kid: &str| {
         let mut header = Header::new(jsonwebtoken::Algorithm::ES256);
@@ -299,6 +312,8 @@ impl FakeIdp {
             jwks_fetches: 0,
             last_authorize: HashMap::new(),
             on_token: None,
+            extra: serde_json::Map::new(),
+            discovery_issuer: None,
         }));
         let app = Router::new()
             .route("/.well-known/openid-configuration", get(discovery))
@@ -311,6 +326,15 @@ impl FakeIdp {
 
     pub fn set_account(&self, account: Account) {
         self.inner.lock().unwrap().account = account;
+    }
+
+    /// Claims merged into every ID token from now on (`null` removes one).
+    pub fn set_extra_claims(&self, extra: Value) {
+        self.inner.lock().unwrap().extra = extra.as_object().unwrap().clone();
+    }
+
+    pub fn set_discovery_issuer(&self, issuer: &str) {
+        self.inner.lock().unwrap().discovery_issuer = Some(issuer.to_owned());
     }
 
     pub fn tweak(&self, tweak: Tweak) {

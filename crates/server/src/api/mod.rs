@@ -22,6 +22,7 @@ mod guard;
 mod identity_providers;
 mod idp_body;
 mod idp_group_mappings;
+mod idp_rules;
 mod idp_validate;
 mod me;
 mod me_email;

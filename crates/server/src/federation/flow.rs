@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use entity::identity_providers;
+use entity::{enums::IdpKind, identity_providers};
 use url::Url;
 use uuid::Uuid;
 
@@ -14,6 +14,7 @@ use super::{
     exchange::Exchange,
     id_token::{Claims, Expected},
     idps,
+    kinds::{self, Rules},
     state::{self, Consumed, NewState, Owner},
     urls,
 };
@@ -64,6 +65,11 @@ pub async fn begin(
     binding_hash: &[u8],
     reauth: Reauth,
 ) -> anyhow::Result<Result<String, Failure>> {
+    // GitHub has no `auth_time`: a demanded re-authentication can't be
+    // proven, so it isn't attempted.
+    if idp.kind == IdpKind::Github && reauth != Reauth::default() {
+        return Ok(Err(Failure("reauth_unsupported")));
+    }
     let meta = match upstream(state) {
         Ok(upstream) => upstream.metadata(idp).await,
         Err(failure) => Err(failure),
@@ -103,6 +109,15 @@ pub async fn begin(
     if reauth.prompt_login {
         url.query_pairs_mut().append_pair("prompt", "login");
     }
+    if let Some(hd) = idp
+        .hosted_domain
+        .as_deref()
+        .filter(|_| idp.kind == IdpKind::Google)
+    {
+        // Only narrows Google's account chooser; the ID token's `hd` is
+        // what is enforced.
+        url.query_pairs_mut().append_pair("hd", hd);
+    }
     if let Some(age) = reauth.max_age {
         url.query_pairs_mut()
             .append_pair("max_age", &age.to_string());
@@ -127,7 +142,11 @@ pub async fn finish(
         return Err(Failure("upstream_error"));
     }
     let code = params.get("code").ok_or(Failure("no_code"))?;
-    if params.get("iss").is_some_and(|iss| *iss != idp.issuer) {
+    let rules = Rules::of(idp);
+    if params
+        .get("iss")
+        .is_some_and(|iss| !kinds::issuer_matches(&rules, iss))
+    {
         return Err(Failure("iss_param"));
     }
     let upstream = upstream(state)?;
@@ -137,22 +156,21 @@ pub async fn finish(
         Failure("secret_unsealable")
     })?;
     let redirect_uri = urls::callback_url(&state.config, tenant_slug);
-    let id_token = upstream
-        .exchange_code(
-            &meta,
-            Exchange {
-                code,
-                redirect_uri: &redirect_uri,
-                verifier: &consumed.verifier,
-                client_id: &idp.client_id,
-                client_secret: secret.as_deref().map(String::as_str),
-                auth: idp.client_auth,
-            },
-        )
-        .await?;
+    let exchange = Exchange {
+        code,
+        redirect_uri: &redirect_uri,
+        verifier: &consumed.verifier,
+        client_id: &idp.client_id,
+        client_secret: secret.as_deref().map(String::as_str),
+        auth: idp.client_auth,
+    };
+    if idp.kind == IdpKind::Github {
+        return upstream.github_identity(idp, &meta, exchange).await;
+    }
+    let id_token = upstream.exchange_code(&meta, exchange).await?;
     let now = chrono::Utc::now().timestamp();
     let expected = Expected {
-        issuer: &idp.issuer,
+        rules,
         client_id: &idp.client_id,
         nonce: &consumed.row.nonce,
         now,

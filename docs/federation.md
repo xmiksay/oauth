@@ -1,10 +1,11 @@
 # Upstream identity providers (federation)
 
 A tenant can let its users sign in through upstream OpenID Connect
-providers. We are the relying party there: authorization code flow with
-PKCE S256, `state`, `nonce` and `response_mode=query`; client auth
-`client_secret_post` or `client_secret_basic`. Code: `federation/`
-(protocol), `authn::federation*` (login flow), `api::identity_providers`,
+providers (and GitHub, which speaks plain OAuth 2.0). We are the relying
+party there: authorization code flow with PKCE S256, `state`, `nonce` and
+`response_mode=query`; client auth `client_secret_post` or
+`client_secret_basic`. Code: `federation/` (protocol; `kinds` = the
+Google / Entra rules, `github` = the GitHub adapter), `authn::federation*` (login flow), `api::identity_providers`,
 `api::me_identities`, `api::user_identities`. API contracts:
 [api/authn.md](api/authn.md#federation), [api/identity_providers.md](api/identity_providers.md),
 [api/me.md](api/me.md#linked-identities).
@@ -26,6 +27,37 @@ PKCE S256, `state`, `nonce` and `response_mode=query`; client auth
    `domain_hint=contoso.com`, or `idp={idp id}` (the SPA then goes straight
    to the provider, except right after a failed attempt).
 
+## Presets
+
+`kind` picks the provider type at creation (it can't change later: it
+decides what a subject is). The admin UI's preset picker fills in the
+well-known URLs; every URL stays editable (sovereign clouds, GitHub
+Enterprise Server) and passes the same URL policy.
+
+| `kind` | Configuration | Extra checks |
+|---|---|---|
+| `oidc` | as above | — |
+| `google` | issuer `https://accounts.google.com` (default), optional `hosted_domain` (Google Workspace domain) | With `hosted_domain`: the authorization request carries `hd=` (it only narrows Google's account chooser) and the ID token's `hd` claim must equal it (case-insensitive), else `id_token_hd`. Google's documented scheme-less `iss` `accounts.google.com` is accepted for that issuer. |
+| `entra` | single-tenant: issuer `https://login.microsoftonline.com/{tid}/v2.0`; multi-tenant: issuer `https://login.microsoftonline.com/{tenantid}/v2.0` (the literal placeholder, as Microsoft's discovery document writes it) + `discovery_url` `…/organizations/v2.0/.well-known/openid-configuration` (or `common`), optional `allowed_tenants` | The token's `tid` must be a GUID, else `id_token_tid`. Multi-tenant: `iss` must be the template with a GUID in place of `{tenantid}`, and that GUID must be the token's `tid` (`id_token_tid`) — a tenant can't sign tokens for another; with `allowed_tenants`, `tid` must be listed (`tenant_not_allowed`). `xms_edov: true` (Entra's optional claim: the email domain is verified by its owner tenant) counts as `email_verified`. |
+| `github` | issuer = web origin (`https://github.com`, default, or a GHES origin); scopes `read:user user:email` | No OpenID: authorize `{issuer}/login/oauth/authorize`, token `{issuer}/login/oauth/access_token`, API `https://api.github.com` (GHES: `{issuer}/api/v3`). The access token reads `GET /user` (subject = the numeric `id`, name = `name` or `login`) and `GET /user/emails`: only the **verified primary** address is used. No ID token, so no `amr` (upstream MFA is never trusted) and no `auth_time`: an authorization request with `prompt=login` / `max_age` can't use GitHub (`reauth_unsupported`, refused before leaving). |
+
+Entra sends no `email_verified`, so without `xms_edov` (configure it as an
+optional claim of the app registration) a JIT provider would refuse every
+user with `upstream_no_email`. Entra's `sub` is pairwise per application and
+assigned by Microsoft; it is the subject as for any OIDC provider.
+
+### Trusting the upstream email
+
+`trust_upstream_email` (default `false`, GlobalAdmin; not for `github`)
+treats the ID token's `email` as verified even without `email_verified`
+(or `xms_edov`). **Risk:** JIT then provisions an account under whatever
+address the provider reports. Enable it only for a provider whose
+administrators control the addresses (an organisation's own directory),
+ideally together with `email_domains` so JIT accepts only your domains —
+never for a provider where users type their own email (Entra
+multi-tenant, consumer accounts). It never links an existing account by
+email: an address that belongs to a local user is still `account_exists`.
+
 Issuers and discovery URLs must be `https://`. Plain `http://` is accepted
 only for loopback hosts (`localhost`, `*.localhost`, `127.0.0.0/8`, `::1`)
 and only when `PUBLIC_URL` is itself `http://` (local development).
@@ -35,7 +67,7 @@ and only when `PUBLIC_URL` is itself `http://` (local development).
 | Policy | Unknown `(issuer, sub)` |
 |---|---|
 | `link_only` (default) | The login page asks the user to sign in with their existing account (password or passkey, then MFA as usual); completing that sign-in links the identity. |
-| `jit` | A user is created with the upstream **verified** email (`email_verified`), `email_verified = true`, no password, the upstream name. Refused without a verified email (`upstream_no_email`), when the IdP lists `email_domains` and the address is of another domain (`email_domain_not_allowed`), and when a local user already has that email (`account_exists`). |
+| `jit` | A user is created with the upstream **verified** email (`email_verified`; for Entra `xms_edov`; any email with `trust_upstream_email`; GitHub's verified primary), `email_verified = true`, no password, the upstream name. Refused without a verified email (`upstream_no_email`), when the IdP lists `email_domains` and the address is of another domain (`email_domain_not_allowed`), and when a local user already has that email (`account_exists`). |
 | `deny` | Refused (`not_linked`); only identities linked beforehand sign in. |
 
 Accounts are **never linked by email** — linking always needs the local
@@ -132,13 +164,14 @@ or its `acr` equals the configured `mfa_acr`; `amr` is then
   `/login?error=upstream_failed`.
 - **PKCE** S256 always; the verifier is sealed (AES-256-GCM, AAD
   `"fedpkce"` ‖ tenant ‖ state id). **Nonce** random, checked in constant time.
-- **ID token**: signature with a key from the provider's JWKS; the algorithm
+- **ID token** (all kinds but `github`): signature with a key from the provider's JWKS; the algorithm
   comes from the key (RSA → RS256, P-256 → ES256, Ed25519 → EdDSA; a key
   announcing another `alg` or `use: enc` verifies nothing), so `none` / HS*
-  tokens can't pass. Claims: `iss` exact, `aud` contains our client id,
+  tokens can't pass. Claims: `iss` exact (Entra multi-tenant: the
+  template filled with the token's own `tid`, see [Presets](#presets)), `aud` contains our client id,
   `azp` = our client id when present and required with several audiences,
   `exp` / `iat` / `nbf` with 60 s skew, `nonce`, `sub` 1–255 characters.
-  RFC 9207: an `iss` callback parameter must equal the issuer.
+  RFC 9207: an `iss` callback parameter must match the issuer the same way.
 - **Discovery** cached 1 h per provider; its `issuer` must equal the
   configured one and its endpoints pass the same URL policy; a failed
   discovery is remembered for 30 s. **JWKS** cached 1 h; an unknown `kid`
@@ -147,7 +180,8 @@ or its `acr` equals the configured `mfa_acr`; `amr` is then
 - **Outbound HTTP** (shared `http` client): rustls on AWS-LC, webpki roots,
   no redirects, no proxy, 10 s / 5 s timeouts, responses capped at 256 KiB.
   The provider is contacted only by our server (discovery, JWKS, token
-  endpoint); the authorization request is a browser redirect.
+  endpoint; GitHub's `/user` and `/user/emails` with the access token,
+  which is then dropped); the authorization request is a browser redirect.
 - **Errors**: the user only sees `upstream_failed` (plus the policy
   refusals above); the fixed reason code (`id_token_nonce`,
   `token_refused`, `unknown_kid`, …) goes to the audit log
@@ -227,7 +261,8 @@ in full decides nothing: an array of more than 256 entries (Entra caps
 its `groups` claim at 200), or a claim named in `_claim_names` (Entra's
 group overage, pointing at Graph, which is not followed). The
 memberships its mappings grant are then neither added nor removed; a
-missing claim, in contrast, carries none of its values.
+missing claim, in contrast, carries none of its values. A `github` provider
+has no ID token, so its mappings never decide anything.
 
 The pairs are taken from the mappings when the token is verified,
 before the writing transaction; a parked identity keeps which pairs were
@@ -265,7 +300,7 @@ provider doesn't count as one.
 
 | Table | Notes |
 |---|---|
-| `identity_providers` | `name` unique per tenant, `kind` oidc, `enabled`, `visible`, `issuer`, `discovery_url`, `client_id`, `client_secret_sealed`, `client_auth` post\|basic, `scopes[]`, `policy` jit\|link_only\|deny, `trust_upstream_mfa`, `mfa_acr`, `email_domains[]`, `generation` (bumped by a repoint) |
+| `identity_providers` | `name` unique per tenant, `kind` oidc\|google\|entra\|github (fixed at creation), `hosted_domain` (google only), `allowed_tenants[]` (entra only), `trust_upstream_email`, `enabled`, `visible`, `issuer`, `discovery_url`, `client_id`, `client_secret_sealed`, `client_auth` post\|basic, `scopes[]`, `policy` jit\|link_only\|deny, `trust_upstream_mfa`, `mfa_acr`, `email_domains[]`, `generation` (bumped by a repoint) |
 | `user_identities` | (tenant, IdP, `subject`) unique, (tenant, user, IdP) unique, `email` (as last seen upstream, informational), `linked_at`, `last_used_at`; cascades with the user or the IdP |
 | `idp_group_mappings` | `(tenant, IdP, claim, value, group)` unique, composite FKs to the IdP and the group (cascade); `claim` `^[A-Za-z0-9_.:/-]{1,64}$`, `value` 1–256 bytes |
 | `group_members.manual` / `.idp_id` | source of a membership: added by an administrator and/or kept by that IdP's mappings (`CHECK (manual OR idp_id IS NOT NULL)`, composite FK to the IdP `ON DELETE SET NULL (idp_id)`) |

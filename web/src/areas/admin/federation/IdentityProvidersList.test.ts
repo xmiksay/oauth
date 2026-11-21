@@ -74,6 +74,7 @@ describe('IdentityProvidersList', () => {
     await w.find('#create-idp').trigger('submit')
     await flushPromises()
     expect(identityProviders.create).toHaveBeenCalledWith({
+      kind: 'oidc',
       name: 'Entra',
       issuer: 'https://login.example.com/t/v2.0',
       discovery_url: null,
@@ -85,6 +86,9 @@ describe('IdentityProvidersList', () => {
       trust_upstream_mfa: false,
       mfa_acr: null,
       email_domains: ['contoso.com', 'fabrikam.com'],
+      hosted_domain: null,
+      allowed_tenants: [],
+      trust_upstream_email: false,
       enabled: true,
       visible: true,
     })
@@ -96,7 +100,58 @@ describe('IdentityProvidersList', () => {
     await button(w, 'New identity provider')?.trigger('click')
     expect(w.find('#idp-acr').exists()).toBe(false)
     expect(w.text()).toContain('Skip local MFA when the provider reports MFA')
-    await w.find('#create-idp input[type=checkbox]').setValue(true)
+    await w.find('#idp-trust-mfa').setValue(true)
     expect(w.find('#idp-acr').exists()).toBe(true)
+  })
+
+  it('fills a multi-tenant Entra provider from the preset', async () => {
+    identityProviders.create.mockResolvedValue(fakeIdp({ id: 'new1' }))
+    const w = await mountList(['GlobalAdmin'])
+    await button(w, 'New identity provider')?.trigger('click')
+    await w.find('#idp-kind').setValue('entra')
+    expect((w.find('#idp-name').element as HTMLInputElement).value).toBe('Microsoft')
+    expect(w.find('#idp-tenants').exists()).toBe(false)
+    await w.find('#idp-entra-tenant').setValue('organizations')
+    expect(w.find('#idp-tenants').exists()).toBe(true)
+    await w.find('#idp-tenants').setValue('9188040d-6c67-4c5b-b112-36a304b66dad')
+    await w.find('#idp-client-id').setValue('client-1')
+    expect(w.text()).not.toContain('Risk: new accounts')
+    await w.find('#idp-trust-email').setValue(true)
+    expect(w.text()).toContain('Risk: new accounts')
+    await w.find('#create-idp').trigger('submit')
+    await flushPromises()
+    expect(identityProviders.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'entra',
+        issuer: 'https://login.microsoftonline.com/{tenantid}/v2.0',
+        discovery_url:
+          'https://login.microsoftonline.com/organizations/v2.0/.well-known/openid-configuration',
+        allowed_tenants: ['9188040d-6c67-4c5b-b112-36a304b66dad'],
+        trust_upstream_email: true,
+      }),
+    )
+  })
+
+  it('offers only what applies to GitHub', async () => {
+    identityProviders.create.mockResolvedValue(fakeIdp({ id: 'new1' }))
+    const w = await mountList(['GlobalAdmin'])
+    await button(w, 'New identity provider')?.trigger('click')
+    await w.find('#idp-kind').setValue('github')
+    for (const id of ['#idp-discovery', '#idp-client-auth', '#idp-trust-email', '#idp-trust-mfa']) {
+      expect(w.find(id).exists()).toBe(false)
+    }
+    expect((w.find('#idp-issuer').element as HTMLInputElement).value).toBe('https://github.com')
+    await w.find('#idp-client-id').setValue('gh-client')
+    await w.find('#create-idp').trigger('submit')
+    await flushPromises()
+    expect(identityProviders.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'github',
+        name: 'GitHub',
+        scopes: ['read:user', 'user:email'],
+        trust_upstream_mfa: false,
+        trust_upstream_email: false,
+      }),
+    )
   })
 })

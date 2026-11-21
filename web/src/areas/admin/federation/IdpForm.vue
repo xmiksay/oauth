@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
-import type { IdentityProvider, IdentityProviderInput } from '@/api/types'
+import { computed, reactive, ref, watch } from 'vue'
+import type { IdentityProvider, IdentityProviderInput, IdpKind } from '@/api/types'
 import {
   CLIENT_AUTH_LABELS,
   POLICIES,
   POLICY_HELP,
   POLICY_LABELS,
+  PRESETS,
+  applyPreset,
+  entraUrls,
   formState,
+  isMultiTenant,
   toInput,
 } from './idpForm'
 
@@ -22,6 +26,20 @@ const f = reactive(formState(props.initial))
 // Write-only: lives only in this form, is sent once and goes with the component.
 const secret = ref('')
 const removeSecret = ref(false)
+const isGithub = computed(() => f.kind === 'github')
+const multiTenant = computed(() => isMultiTenant(f))
+
+function pickKind(event: Event) {
+  applyPreset(f, (event.target as HTMLSelectElement).value as IdpKind)
+  entraTenant.value = ''
+}
+
+// Entra helper (new providers): a directory id or organizations / common fills both URLs.
+const entraTenant = ref('')
+watch(entraTenant, (tenant) => {
+  const urls = entraUrls(tenant)
+  if (urls) Object.assign(f, urls)
+})
 
 function submit() {
   const { enabled, ...rest } = toInput(f)
@@ -42,6 +60,48 @@ function submit() {
       class="space-y-4"
       :disabled="readonly"
     >
+      <div v-if="!initial">
+        <label
+          class="label"
+          for="idp-kind"
+        >Provider type</label>
+        <select
+          id="idp-kind"
+          :value="f.kind"
+          class="input"
+          @change="pickKind"
+        >
+          <option
+            v-for="(preset, kind) in PRESETS"
+            :key="kind"
+            :value="kind"
+          >
+            {{ preset.label }}
+          </option>
+        </select>
+      </div>
+      <p
+        v-else
+        class="text-sm"
+      >
+        <span class="font-medium">Provider type:</span> {{ PRESETS[f.kind].label }}
+      </p>
+      <div v-if="f.kind === 'entra' && !initial">
+        <label
+          class="label"
+          for="idp-entra-tenant"
+        >Directory (tenant) ID</label>
+        <input
+          id="idp-entra-tenant"
+          v-model="entraTenant"
+          class="input"
+          placeholder="00000000-0000-0000-0000-000000000000, organizations or common"
+        >
+        <p class="hint">
+          A directory ID makes it single-tenant; organizations or common accept any directory
+          (multi-tenant). Fills in the issuer and discovery URL.
+        </p>
+      </div>
       <div>
         <label
           class="label"
@@ -66,11 +126,22 @@ function submit() {
           id="idp-issuer"
           v-model="f.issuer"
           class="input"
-          type="url"
           required
         >
+        <p
+          v-if="isGithub"
+          class="hint"
+        >
+          The web origin: https://github.com, or your GitHub Enterprise Server.
+        </p>
+        <p
+          v-else-if="f.kind === 'entra'"
+          class="hint"
+        >
+          {tenantid} in the issuer accepts tokens of any directory, checked against their tid.
+        </p>
       </div>
-      <div>
+      <div v-if="!isGithub">
         <label
           class="label"
           for="idp-discovery"
@@ -125,7 +196,7 @@ function submit() {
           Remove the secret
         </label>
       </div>
-      <div>
+      <div v-if="!isGithub">
         <label
           class="label"
           for="idp-client-auth"
@@ -155,7 +226,37 @@ function submit() {
           class="input"
         >
         <p class="hint">
-          Space-separated; openid is required.
+          {{ isGithub ? 'Space-separated; user:email is needed for the email.' : 'Space-separated; openid is required.' }}
+        </p>
+      </div>
+      <div v-if="f.kind === 'google'">
+        <label
+          class="label"
+          for="idp-hd"
+        >Hosted domain (optional)</label>
+        <input
+          id="idp-hd"
+          v-model="f.hosted_domain"
+          class="input"
+          placeholder="contoso.com"
+        >
+        <p class="hint">
+          Only accounts of this Google Workspace domain may sign in (the token's hd claim).
+        </p>
+      </div>
+      <div v-if="multiTenant">
+        <label
+          class="label"
+          for="idp-tenants"
+        >Allowed directories (optional)</label>
+        <input
+          id="idp-tenants"
+          v-model="f.allowed_tenants"
+          class="input"
+          placeholder="directory (tenant) IDs, comma-separated"
+        >
+        <p class="hint">
+          Empty accepts every Entra directory.
         </p>
       </div>
       <div>
@@ -195,9 +296,34 @@ function submit() {
           </span>
         </label>
       </fieldset>
-      <div>
+      <div v-if="!isGithub">
         <label class="flex items-start gap-2 text-sm">
           <input
+            id="idp-trust-email"
+            v-model="f.trust_upstream_email"
+            type="checkbox"
+            class="mt-1"
+          >
+          <span>
+            <span class="font-medium">Trust the provider's email addresses</span>
+            <span class="muted block">Treat the email as verified even when the provider doesn't say
+              so<template v-if="f.kind === 'entra'"> (Entra's xms_edov claim already counts)</template>.</span>
+          </span>
+        </label>
+        <p
+          v-if="f.trust_upstream_email"
+          class="mt-1 text-sm text-amber-700 dark:text-amber-400"
+          role="note"
+        >
+          Risk: new accounts get whatever address the provider reports. Only for a provider whose
+          administrators control the addresses — never one where users type their own — and
+          preferably limited to your email domains.
+        </p>
+      </div>
+      <div v-if="!isGithub">
+        <label class="flex items-start gap-2 text-sm">
+          <input
+            id="idp-trust-mfa"
             v-model="f.trust_upstream_mfa"
             type="checkbox"
             class="mt-1"

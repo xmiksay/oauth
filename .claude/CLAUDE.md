@@ -132,7 +132,11 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   timeouts) and `http::read_capped`; provider URLs pass `federation::urls`
   (https, loopback http only with `idp_allow_http_loopback`) and the
   federation client resolves through `federation::resolve::PublicOnly`
-  (no private / loopback / link-local destinations outside dev). Changing an
+  (no private / loopback / link-local destinations outside dev). Per-`kind`
+  rules (Google `hd`, Entra `tid` / `{tenantid}` issuer / `xms_edov`,
+  `trust_upstream_email`) live in `federation::kinds`, the GitHub OAuth2
+  adapter (no ID token: `/user` + verified primary of `/user/emails`) in
+  `federation::github`; `kind` is fixed at creation. Changing an
   IdP's `issuer`, `client_id` or `discovery_url` (a repoint) unlinks all its
   identities (`identities::unlink_all`), bumps its `generation` and (issuer /
   discovery URL) drops the stored secret, in one transaction holding the row
