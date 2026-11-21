@@ -1,7 +1,9 @@
 //! Token issuance. The access token's shape follows the RESOURCE app
 //! (`access_token_format`, `signing_alg`, `access_token_ttl_secs`); the ID
-//! token follows the CLIENT app's `signing_alg`. Requests with OIDC scopes
-//! only get a JWT (RS256, 1 h) whose audience is the userinfo endpoint.
+//! token follows the CLIENT app's `signing_alg`. The resource's
+//! `groups_claim_format` picks group ids or names for the `groups` claim.
+//! Requests with OIDC scopes only get a JWT (RS256, 1 h, group ids) whose
+//! audience is the userinfo endpoint.
 
 pub mod claims;
 pub mod code;
@@ -18,7 +20,7 @@ use axum::{
 use chrono::{DateTime, Duration, FixedOffset};
 use entity::{
     applications,
-    enums::{AccessTokenFormat, SigningAlg},
+    enums::{AccessTokenFormat, GroupsClaimFormat, SigningAlg},
     tenants, users,
 };
 use sea_orm::ConnectionTrait;
@@ -179,6 +181,13 @@ pub async fn issue_delegated(
         Some(r) => principal::user_roles(conn, d.tenant.id, r.id, d.user.id, &groups).await?,
         None => Vec::new(),
     };
+    // The resource decides the claim's shape, like the rest of the token;
+    // userinfo-audience tokens keep ids.
+    let groups_format = d
+        .resource
+        .map_or(GroupsClaimFormat::Id, |r| r.groups_claim_format);
+    let group_claim =
+        principal::group_claim_values(conn, d.tenant.id, &groups, groups_format).await?;
     let user_ctx = || UserContext {
         user: d.user,
         session_id: d.session_id,
@@ -199,7 +208,7 @@ pub async fn issue_delegated(
             d.oidc_scopes
         },
         roles: &roles,
-        groups: &groups,
+        groups: &group_claim,
         iat: now.timestamp(),
         exp: expires_at.timestamp(),
         jti: Uuid::now_v7(),

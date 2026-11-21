@@ -150,7 +150,7 @@ pub async fn tenant_allows(
 
 #[cfg(test)]
 mod tests {
-    use entity::enums::{AccessTokenFormat, SigningAlg};
+    use entity::enums::{AccessTokenFormat, GroupsClaimFormat, SigningAlg};
 
     use super::*;
 
@@ -237,6 +237,7 @@ mod tests {
             identifier_uri: None,
             access_token_format: AccessTokenFormat::Jwt,
             signing_alg: SigningAlg::Rs256,
+            groups_claim_format: GroupsClaimFormat::Id,
             access_token_ttl_secs: 3600,
             refresh_token_ttl_secs: 3600,
             created_at: now,

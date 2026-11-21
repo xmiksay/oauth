@@ -1,11 +1,17 @@
 //! Directory facts that become claims: group memberships and app roles.
 
 use anyhow::Context;
-use entity::{app_role_assignments, app_roles, enums::member_type, group_members};
+use entity::{
+    app_role_assignments, app_roles,
+    enums::{GroupsClaimFormat, member_type},
+    group_members, groups,
+};
 use sea_orm::{
     ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, sea_query::Condition,
 };
 use uuid::Uuid;
+
+use super::claims::MAX_GROUPS;
 
 pub async fn user_groups(
     conn: &impl ConnectionTrait,
@@ -21,6 +27,30 @@ pub async fn user_groups(
         .context("loading group memberships")?
         .into_iter()
         .map(|m| m.group_id)
+        .collect())
+}
+
+/// Values of the `groups` claim for the resource's `groups_claim_format`.
+/// Above [`MAX_GROUPS`] the claim becomes the overage flag whatever the
+/// format, so names aren't loaded then (only the count matters).
+pub async fn group_claim_values(
+    conn: &impl ConnectionTrait,
+    tenant_id: Uuid,
+    groups: &[Uuid],
+    format: GroupsClaimFormat,
+) -> anyhow::Result<Vec<String>> {
+    if format == GroupsClaimFormat::Id || groups.len() > MAX_GROUPS || groups.is_empty() {
+        return Ok(groups.iter().map(Uuid::to_string).collect());
+    }
+    Ok(groups::Entity::find()
+        .filter(groups::Column::TenantId.eq(tenant_id))
+        .filter(groups::Column::Id.is_in(groups.to_vec()))
+        .order_by_asc(groups::Column::Id)
+        .all(conn)
+        .await
+        .context("loading group names")?
+        .into_iter()
+        .map(|g| g.display_name)
         .collect())
 }
 

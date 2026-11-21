@@ -16,6 +16,7 @@ const app: Application = {
   audience: 'api://shop',
   access_token_format: 'jwt',
   signing_alg: 'RS256',
+  groups_claim_format: 'id',
   access_token_ttl_secs: 3600,
   refresh_token_ttl_secs: 86400,
   created_at: '',

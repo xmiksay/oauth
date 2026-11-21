@@ -155,6 +155,7 @@ Additional rules:
   "effective_web_origins": [],              // read-only: web_origins ∪ (public clients) redirect-URI origins
   "audience": "api://<client_id>",          // identifier_uri, else api://{client_id}
   "access_token_format": "jwt|opaque", "signing_alg": "RS256|ES256",
+  "groups_claim_format": "id|name",         // what the groups claim of tokens for this resource carries
   "access_token_ttl_secs": 3600, "refresh_token_ttl_secs": 1209600,
   "created_at", "updated_at" }
 // ClientSecret (the value only in the create response, as "secret")
@@ -248,11 +249,15 @@ sessions and revoke refresh / opaque access tokens (JWTs expire).
 
 ## Groups — read: any role; write: GlobalAdmin, UserAdmin, `ReadWrite.All`
 
+`display_name` is unique per tenant, case-insensitively (`Ops` and `ops`
+collide; renaming a group to its own name in another case is fine), since it
+can be the `groups` claim (`groups_claim_format`).
+
 | Method & path | Body | Response |
 |---|---|---|
 | `GET groups` *paged* `?search=` | – | `Group`s |
-| `POST groups` | `{ display_name, description? }` | 201 `Group` |
-| `GET groups/{id}` · `PATCH groups/{id}` · `DELETE groups/{id}` | `{ display_name?, description? }` | `Group` / 204 |
+| `POST groups` | `{ display_name, description? }` | 201 `Group` (409 if the name is taken) |
+| `GET groups/{id}` · `PATCH groups/{id}` · `DELETE groups/{id}` | `{ display_name?, description? }` | `Group` / 204 (409 if the new name is taken) |
 | `GET groups/{id}/members` *paged* | – | `User`s |
 | `POST groups/{id}/members` | `{ user_id }` | 204 (409 if already a member) |
 | `DELETE groups/{id}/members/{user_id}` | – | 204 |
@@ -270,7 +275,7 @@ sessions and revoke refresh / opaque access tokens (JWTs expire).
 | Method & path | Body | Response |
 |---|---|---|
 | `GET applications` *paged* `?search=` (name, client_id) | – | `Application`s |
-| `POST applications` | `{ display_name, client_id?, client_type? (confidential), redirect_uris?, post_logout_redirect_uris?, web_origins?, identifier_uri?, access_token_format?, signing_alg?, access_token_ttl_secs?, refresh_token_ttl_secs? }` | 201 `Application` |
+| `POST applications` | `{ display_name, client_id?, client_type? (confidential), redirect_uris?, post_logout_redirect_uris?, web_origins?, identifier_uri?, access_token_format?, signing_alg?, groups_claim_format?, access_token_ttl_secs?, refresh_token_ttl_secs? }` | 201 `Application` |
 | `GET applications/{id}` | – | `Application` |
 | `PATCH applications/{id}` | same fields except `client_id`, `client_type` (immutable → 400); `identifier_uri: null` clears it | `Application` |
 | `DELETE applications/{id}` | – | 204 (everything of the app cascades) |
@@ -300,6 +305,13 @@ Validation:
   (new public clients default to 24 h; the DB also caps at 90 days). The
   access token format, alg and TTL apply to tokens **for** this app as a
   resource; `signing_alg` also signs ID tokens issued **to** it.
+- `groups_claim_format` `id|name` (default `id`; not editable on built-in
+  apps): the `groups` claim of delegated access tokens **for** this app as
+  a resource carries group ids or group display names (names are unique per
+  tenant, case-insensitively, but a rename changes the claim and a deleted
+  group's name can be reused — bind authorization to names only where
+  that's acceptable). The overage rule is the same for both: more than 200
+  groups → no `groups`, `hasgroups: true`.
 
 ### Secrets
 

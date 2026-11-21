@@ -1,0 +1,73 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
+import { createMemoryHistory, createRouter } from 'vue-router'
+import { ApiError } from '@/api/client'
+import type { Group } from '@/api/types'
+import { fakeMe } from '@/test/helpers'
+
+const groups = {
+  get: vi.fn(),
+  update: vi.fn(),
+  members: vi.fn(),
+  addMember: vi.fn(),
+  removeMember: vi.fn(),
+  remove: vi.fn(),
+}
+vi.mock('@/api/directory', () => ({ groups, users: { list: vi.fn() } }))
+vi.mock('@/api/applications', () => ({ applications: { list: vi.fn() } }))
+
+const { default: GroupDetail } = await import('./GroupDetail.vue')
+const { useAuthStore } = await import('@/stores/auth')
+
+const group: Group = {
+  id: 'g1',
+  display_name: 'Ops',
+  description: null,
+  created_at: '',
+  updated_at: '',
+}
+
+async function mountDetail() {
+  const pinia = createPinia()
+  setActivePinia(pinia)
+  useAuthStore().setMe(fakeMe({ directory_roles: ['UserAdmin'] }))
+  const blank = { render: () => null }
+  const router = createRouter({
+    history: createMemoryHistory(),
+    routes: [
+      { path: '/admin/groups', name: 'admin-groups', component: blank },
+      { path: '/admin/groups/:id', name: 'admin-group', component: GroupDetail },
+    ],
+  })
+  await router.push('/admin/groups/g1')
+  const w = mount(GroupDetail, { global: { plugins: [pinia, router] } })
+  await flushPromises()
+  return w
+}
+
+beforeEach(() => {
+  Object.values(groups).forEach((f) => f.mockReset())
+  groups.get.mockResolvedValue(group)
+  groups.members.mockResolvedValue({ items: [], next_cursor: null })
+})
+
+describe('GroupDetail', () => {
+  it('shows a taken name (409) in the properties form', async () => {
+    const w = await mountDetail()
+    groups.update.mockRejectedValue(
+      new ApiError(409, {
+        error: 'conflict',
+        error_description: 'another group already has this name (letter case is ignored)',
+      }),
+    )
+    await w.find('#gd-name').setValue('Approvers')
+    await w.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(groups.update).toHaveBeenCalledWith('g1', { display_name: 'Approvers', description: '' })
+    const alert = w.find('form [role=alert]')
+    expect(alert.text()).toContain('already has this name')
+    expect(w.find('#gd-name-hint').text()).toContain('ignoring letter case')
+  })
+})

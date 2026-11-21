@@ -31,7 +31,9 @@ pub struct AccessInput<'a> {
     pub client_object_id: Uuid,
     pub scopes: &'a [String],
     pub roles: &'a [String],
-    pub groups: &'a [Uuid],
+    /// Rendered `groups` claim values (ids or names, see
+    /// [`super::principal::group_claim_values`]).
+    pub groups: &'a [String],
     pub iat: i64,
     pub exp: i64,
     pub jti: Uuid,
@@ -76,12 +78,11 @@ pub fn access_token(input: &AccessInput<'_>) -> Map<String, Value> {
     claims
 }
 
-fn insert_groups(claims: &mut Map<String, Value>, groups: &[Uuid]) {
+fn insert_groups(claims: &mut Map<String, Value>, groups: &[String]) {
     if groups.len() > MAX_GROUPS {
         claims.insert("hasgroups".into(), true.into());
     } else if !groups.is_empty() {
-        let ids: Vec<String> = groups.iter().map(Uuid::to_string).collect();
-        claims.insert("groups".into(), json!(ids));
+        claims.insert("groups".into(), json!(groups));
     }
 }
 
@@ -169,7 +170,7 @@ mod tests {
 
     fn input<'a>(
         user: Option<UserContext<'a>>,
-        groups: &'a [Uuid],
+        groups: &'a [String],
         scopes: &'a [String],
         roles: &'a [String],
     ) -> AccessInput<'a> {
@@ -201,7 +202,7 @@ mod tests {
         };
         let scopes = vec!["read".to_owned(), "write".to_owned()];
         let roles = vec!["Admin".to_owned()];
-        let groups = [Uuid::nil()];
+        let groups = [Uuid::nil().to_string()];
         let c = access_token(&input(Some(ctx), &groups, &scopes, &roles));
         assert_eq!(c["sub"], u.id.to_string());
         assert_eq!(c["oid"], c["sub"]);
@@ -238,10 +239,14 @@ mod tests {
             amr: &[],
             auth_time: 0,
         };
-        let at_cap: Vec<Uuid> = (0..MAX_GROUPS).map(|_| Uuid::now_v7()).collect();
+        let at_cap: Vec<String> = (0..MAX_GROUPS).map(|i| format!("g{i}")).collect();
         let c = access_token(&input(Some(ctx(&u)), &at_cap, &[], &[]));
         assert_eq!(c["groups"].as_array().unwrap().len(), MAX_GROUPS);
-        let over: Vec<Uuid> = (0..=MAX_GROUPS).map(|_| Uuid::now_v7()).collect();
+        assert_eq!(
+            c["groups"][0], "g0",
+            "values are emitted as given (ids or names)"
+        );
+        let over: Vec<String> = (0..=MAX_GROUPS).map(|i| format!("g{i}")).collect();
         let c = access_token(&input(Some(ctx(&u)), &over, &[], &[]));
         assert!(c.get("groups").is_none());
         assert_eq!(c["hasgroups"], true);

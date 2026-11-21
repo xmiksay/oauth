@@ -2,7 +2,7 @@
 
 use sea_orm::entity::prelude::*;
 
-use crate::enums::{AccessTokenFormat, ClientType, SigningAlg};
+use crate::enums::{AccessTokenFormat, ClientType, GroupsClaimFormat, SigningAlg};
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "applications")]
@@ -23,6 +23,8 @@ pub struct Model {
     pub identifier_uri: Option<String>,
     pub access_token_format: AccessTokenFormat,
     pub signing_alg: SigningAlg,
+    /// What the `groups` claim of access tokens for this (resource) app carries.
+    pub groups_claim_format: GroupsClaimFormat,
     pub access_token_ttl_secs: i32,
     pub refresh_token_ttl_secs: i32,
     pub created_at: DateTimeWithTimeZone,

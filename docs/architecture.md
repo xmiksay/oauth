@@ -161,9 +161,9 @@ migration transaction). Deleting a tenant cascades to everything it owns.
 | `users` | `user_type` member\|guest, `email` unique per tenant on `lower(email)` (casing kept), `password_hash` (argon2id PHC, nullable), `must_change_password`, `disabled`, `first_device_at` (first sign-in device recorded), `webauthn_handle` (random 32-byte WebAuthn user handle) |
 | `webauthn_credentials` · `webauthn_challenges` | passkeys (credential id unique per tenant, COSE key, counter, backup flags) and single-use 5-min ceremony challenges — [passkeys.md](passkeys.md) |
 | `user_totp` · `user_recovery_codes` | sealed TOTP secret + `confirmed_at`; SHA-256 code hashes + `used_at` |
-| `groups` · `group_members` | static groups; members are users |
+| `groups` · `group_members` | static groups; members are users; `display_name` unique per tenant case-insensitively (index on `(tenant_id, lower(display_name))`) |
 | `directory_role_assignments` | (user, role) unique; role GlobalAdmin\|ApplicationAdmin\|UserAdmin |
-| `applications` | `client_id` unique per tenant, `client_type` confidential\|public, `builtin`, `redirect_uris[]`, `post_logout_redirect_uris[]`, `web_origins[]` (explicit CORS origins, ≤ 32), `identifier_uri` (unique per tenant), `access_token_format` jwt\|opaque, `signing_alg` RS256\|ES256, access TTL 300–86400 s, refresh TTL |
+| `applications` | `client_id` unique per tenant, `client_type` confidential\|public, `builtin`, `redirect_uris[]`, `post_logout_redirect_uris[]`, `web_origins[]` (explicit CORS origins, ≤ 32), `identifier_uri` (unique per tenant), `access_token_format` jwt\|opaque, `signing_alg` RS256\|ES256, `groups_claim_format` id\|name, access TTL 300–86400 s, refresh TTL |
 | `client_secrets` | SHA-256 hash, display `hint`, optional `expires_at`; many per app for rotation |
 | `app_scopes` · `app_roles` | delegated scopes (`admin_consent_required`) and app roles (`allowed_member_types` ⊆ {user, application}); `value` unique per app |
 | `app_required_permissions` | client app → resource app, exactly one of `scope_id` / `app_role_id` (FK’d through the resource app) |
@@ -267,8 +267,8 @@ need no consent (grants are keyed by a resource app).
 
 | Token | Format / signing | Claims |
 |---|---|---|
-| Access (delegated) | The **resource** app's `access_token_format` (JWT RFC 9068, header `typ: at+jwt`, or opaque) and `signing_alg`, TTL `access_token_ttl_secs` | `iss sub aud exp iat nbf jti client_id azp tid oid sid amr auth_time scp roles groups ver idtyp=user`; `aud` = resource `identifier_uri` or `api://{client_id}`; `scp` = resource scope values; `roles` = user's and user's groups' app roles of the resource; `groups` = group ids, more than 200 → omitted and `hasgroups: true` |
-| Access (OIDC scopes only) | JWT RS256, 1 h | as above with `aud = {issuer}/oauth2/userinfo`, `scp` = the OIDC scopes — the only tokens userinfo accepts |
+| Access (delegated) | The **resource** app's `access_token_format` (JWT RFC 9068, header `typ: at+jwt`, or opaque) and `signing_alg`, TTL `access_token_ttl_secs` | `iss sub aud exp iat nbf jti client_id azp tid oid sid amr auth_time scp roles groups ver idtyp=user`; `aud` = resource `identifier_uri` or `api://{client_id}`; `scp` = resource scope values; `roles` = user's and user's groups' app roles of the resource; `groups` = group ids, or display names when the resource's `groups_claim_format` is `name` (read at issuance, so a rename shows on the next token); more than 200 → omitted and `hasgroups: true` (either format) |
+| Access (OIDC scopes only) | JWT RS256, 1 h | as above (`groups` always ids) with `aud = {issuer}/oauth2/userinfo`, `scp` = the OIDC scopes — the only tokens userinfo accepts |
 | Access (app-only) | resource settings | `sub = oid =` client app id, `idtyp=app`, `roles`, no `scp` |
 | ID token | JWT signed with the **client** app's `signing_alg`, `typ: JWT`, 1 h | `aud = client_id`, `azp`, `nonce`, `auth_time`, `amr`, `sid`, `oid`, `tid`, `at_hash`, `ver`, plus `name preferred_username` (profile) and `email email_verified` (email) |
 | Refresh | opaque, rotating | — |
@@ -278,6 +278,11 @@ Opaque access tokens store the same claim set as `claims` jsonb. JWT
 verification (userinfo, introspection, `id_token_hint`) accepts only keys the
 tenant still publishes and checks `typ`, so ID tokens can't pose as access
 tokens.
+Discovery's `claims_supported` lists ID token / userinfo claims only, so the
+access-token-only `scp`, `roles`, `groups` and `hasgroups` aren't in it.
+Consumers binding to group names (e.g. Kubernetes structured authentication,
+Grafana) register a resource app with `groups_claim_format: name` and
+validate access tokens for its audience.
 
 ### Userinfo, introspection, revocation, logout
 

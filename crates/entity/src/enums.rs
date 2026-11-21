@@ -41,6 +41,18 @@ pub enum AccessTokenFormat {
     Opaque,
 }
 
+/// What the `groups` claim of an app's access tokens carries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter, DeriveActiveEnum)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
+pub enum GroupsClaimFormat {
+    /// Group object ids (stable across renames).
+    #[sea_orm(string_value = "id")]
+    Id,
+    /// Group display names (unique per tenant, case-insensitively).
+    #[sea_orm(string_value = "name")]
+    Name,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter, DeriveActiveEnum)]
 #[sea_orm(rs_type = "String", db_type = "Text")]
 pub enum SigningAlg {

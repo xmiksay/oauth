@@ -10,7 +10,7 @@ use axum::{
 };
 use entity::{
     applications,
-    enums::{AccessTokenFormat, ClientType, SigningAlg},
+    enums::{AccessTokenFormat, ClientType, GroupsClaimFormat, SigningAlg},
 };
 use sea_orm::{
     ActiveEnum, ActiveModelTrait, ActiveValue::Set, ColumnTrait, DbErr, EntityTrait, QueryFilter,
@@ -56,6 +56,7 @@ pub fn view(a: &applications::Model) -> Value {
         "audience": scope::audience(a),
         "access_token_format": a.access_token_format.to_value(),
         "signing_alg": a.signing_alg.to_value(),
+        "groups_claim_format": a.groups_claim_format.to_value(),
         "access_token_ttl_secs": a.access_token_ttl_secs,
         "refresh_token_ttl_secs": a.refresh_token_ttl_secs,
         "created_at": ts(&a.created_at),
@@ -131,6 +132,7 @@ pub struct AppBody {
     identifier_uri: Option<Option<String>>,
     access_token_format: Option<String>,
     signing_alg: Option<String>,
+    groups_claim_format: Option<String>,
     access_token_ttl_secs: Option<i32>,
     refresh_token_ttl_secs: Option<i32>,
 }
@@ -200,6 +202,13 @@ fn apply(
         let alg: SigningAlg = parse(raw, "signing_alg", "RS256, ES256")?;
         mark(set_changed(&mut row.signing_alg, alg), "signing_alg");
     }
+    if let Some(raw) = &body.groups_claim_format {
+        let format: GroupsClaimFormat = parse(raw, "groups_claim_format", "id, name")?;
+        mark(
+            set_changed(&mut row.groups_claim_format, format),
+            "groups_claim_format",
+        );
+    }
     if let Some(ttl) = body.access_token_ttl_secs {
         if !ACCESS_TTL.contains(&ttl) {
             return Err(AppError::BadRequest(
@@ -263,6 +272,7 @@ pub async fn create(
         identifier_uri: Set(None),
         access_token_format: Set(AccessTokenFormat::Jwt),
         signing_alg: Set(SigningAlg::Rs256),
+        groups_claim_format: Set(GroupsClaimFormat::Id),
         ..Default::default()
     };
     if client_type == ClientType::Public {

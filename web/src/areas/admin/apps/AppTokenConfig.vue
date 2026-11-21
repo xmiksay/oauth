@@ -2,7 +2,7 @@
 import { computed, ref, watchEffect } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useApplicationStore } from '@/stores/application'
-import type { SigningAlg, TokenFormat } from '@/api/types'
+import type { GroupsClaimFormat, SigningAlg, TokenFormat } from '@/api/types'
 import { useAction } from '@/composables/useAction'
 import { formatDuration } from '@/lib/format'
 import ErrorAlert from '@/components/ErrorAlert.vue'
@@ -17,6 +17,7 @@ const store = useApplicationStore()
 const { app, canEdit, canEditConfig } = storeToRefs(store)
 const format = ref<TokenFormat>('jwt')
 const alg = ref<SigningAlg>('RS256')
+const groupsClaim = ref<GroupsClaimFormat>('id')
 const accessMinutes = ref(60)
 const refreshHours = ref(24)
 // The inputs show rounded units; remember what was shown so a lifetime the admin didn't touch
@@ -31,6 +32,7 @@ watchEffect(() => {
   if (!app.value) return
   format.value = app.value.access_token_format
   alg.value = app.value.signing_alg
+  groupsClaim.value = app.value.groups_claim_format
   shown.access = accessMinutes.value = Math.round(app.value.access_token_ttl_secs / 60)
   shown.refresh = refreshHours.value = Math.round(app.value.refresh_token_ttl_secs / 3600)
 })
@@ -41,6 +43,7 @@ async function save() {
     store.update({
       access_token_format: format.value,
       signing_alg: alg.value,
+      groups_claim_format: groupsClaim.value,
       ...(accessMinutes.value !== shown.access
         ? { access_token_ttl_secs: accessMinutes.value * 60 }
         : {}),
@@ -102,6 +105,34 @@ async function save() {
             ES256
           </option>
         </select>
+      </div>
+      <div class="sm:col-span-2">
+        <label
+          class="label"
+          for="tc-groups"
+        >Groups claim</label>
+        <select
+          id="tc-groups"
+          v-model="groupsClaim"
+          class="input"
+          :disabled="!canEditConfig"
+          aria-describedby="tc-groups-hint"
+        >
+          <option value="id">
+            Group IDs
+          </option>
+          <option value="name">
+            Group names
+          </option>
+        </select>
+        <p
+          id="tc-groups-hint"
+          class="hint"
+        >
+          What the <code>groups</code> claim of access tokens for this API lists. Names suit
+          consumers that bind to readable names (Kubernetes, Grafana) but change when a group is
+          renamed; IDs never do. Over 200 groups, either becomes <code>hasgroups: true</code>.
+        </p>
       </div>
       <div>
         <label
