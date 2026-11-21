@@ -29,6 +29,7 @@ function fakeApp(over: Partial<Application> = {}): Application {
     groups_claim_format: 'id',
     access_token_ttl_secs: 3600,
     refresh_token_ttl_secs: 86400,
+    device_code_enabled: false,
     created_at: '',
     updated_at: '',
     ...over,
