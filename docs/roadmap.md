@@ -41,8 +41,10 @@
    `state` / `nonce`, ID token verification, first-sign-in policy
    `jit` / `link_only` / `deny`, explicit linking only (in-flow or My
    Account), optional trust of upstream MFA, home-realm discovery.
-2. **`feat/m2-idp-presets`** — Google, Entra (single / multi-tenant with
-   a `tid`-templated issuer) and GitHub (OAuth2 adapter).
+2. **`feat/m2-idp-presets`** (done) — Google (hosted domain), Entra
+   (single / multi-tenant with a `tid`-templated issuer, allowed tenants,
+   `xms_edov`) and GitHub (OAuth2 adapter), plus the per-IdP
+   `trust_upstream_email` ([federation.md](federation.md#presets)).
 3. **`feat/m2-device-code`** (done) — device authorization grant (RFC 8628):
    per-app opt-in, `/oauth2/devicecode`, the `/device` verification page
    (sign-in + mandatory confirmation), a session of the device's own,

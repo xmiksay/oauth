@@ -4,6 +4,7 @@ import type {
   IdentityProviderInput,
   IdentityProviderPatch,
   IdpClientAuth,
+  IdpKind,
   IdpPolicy,
 } from '@/api/types'
 
@@ -28,8 +29,60 @@ export const CLIENT_AUTH_LABELS: Record<IdpClientAuth, string> = {
 
 const DEFAULT_SCOPES = ['openid', 'email', 'profile']
 
+/** What a preset fills in (all of it stays editable; the server applies the same defaults). */
+export interface Preset {
+  label: string
+  /** Suggested display name. */
+  name: string
+  issuer: string
+  scopes: string[]
+}
+
+export const PRESETS: Record<IdpKind, Preset> = {
+  oidc: { label: 'OpenID Connect', name: '', issuer: '', scopes: DEFAULT_SCOPES },
+  google: {
+    label: 'Google',
+    name: 'Google',
+    issuer: 'https://accounts.google.com',
+    scopes: DEFAULT_SCOPES,
+  },
+  entra: { label: 'Microsoft Entra ID', name: 'Microsoft', issuer: '', scopes: DEFAULT_SCOPES },
+  github: {
+    label: 'GitHub',
+    name: 'GitHub',
+    issuer: 'https://github.com',
+    scopes: ['read:user', 'user:email'],
+  },
+}
+
+export const TENANT_PLACEHOLDER = '{tenantid}'
+const ENTRA = 'https://login.microsoftonline.com'
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
+/**
+ * Issuer and discovery URL of an Entra provider for a directory (tenant) id (single-tenant), or
+ * `organizations` / `common` (multi-tenant: the issuer keeps the `{tenantid}` placeholder). `null`
+ * for anything else.
+ */
+export function entraUrls(tenant: string): { issuer: string; discovery_url: string } | null {
+  const t = tenant.trim().toLowerCase()
+  if (GUID.test(t)) return { issuer: `${ENTRA}/${t}/v2.0`, discovery_url: '' }
+  if (t === 'organizations' || t === 'common') {
+    return {
+      issuer: `${ENTRA}/${TENANT_PLACEHOLDER}/v2.0`,
+      discovery_url: `${ENTRA}/${t}/v2.0/.well-known/openid-configuration`,
+    }
+  }
+  return null
+}
+
+/** Whether an issuer is a multi-tenant (templated) Entra one. */
+export const isMultiTenant = (f: { kind: IdpKind; issuer: string }) =>
+  f.kind === 'entra' && f.issuer.includes(TENANT_PLACEHOLDER)
+
 /** Editable fields as the inputs hold them (lists as text); the secret is kept apart. */
 export interface IdpFormState {
+  kind: IdpKind
   name: string
   issuer: string
   discovery_url: string
@@ -40,6 +93,9 @@ export interface IdpFormState {
   trust_upstream_mfa: boolean
   mfa_acr: string
   email_domains: string
+  hosted_domain: string
+  allowed_tenants: string
+  trust_upstream_email: boolean
   enabled: boolean
   visible: boolean
 }
@@ -47,6 +103,7 @@ export interface IdpFormState {
 /** A new provider's defaults (those the server applies too), or `idp`'s current values. */
 export function formState(idp?: IdentityProvider): IdpFormState {
   return {
+    kind: idp?.kind ?? 'oidc',
     name: idp?.name ?? '',
     issuer: idp?.issuer ?? '',
     discovery_url: idp?.discovery_url ?? '',
@@ -57,9 +114,31 @@ export function formState(idp?: IdentityProvider): IdpFormState {
     trust_upstream_mfa: idp?.trust_upstream_mfa ?? false,
     mfa_acr: idp?.mfa_acr ?? '',
     email_domains: (idp?.email_domains ?? []).join(', '),
+    hosted_domain: idp?.hosted_domain ?? '',
+    allowed_tenants: (idp?.allowed_tenants ?? []).join(', '),
+    trust_upstream_email: idp?.trust_upstream_email ?? false,
     enabled: idp?.enabled ?? true,
     visible: idp?.visible ?? true,
   }
+}
+
+/** Switches a new provider's form to `kind`, filling in the preset's values. */
+export function applyPreset(f: IdpFormState, kind: IdpKind): void {
+  const presetNames = Object.values(PRESETS).map((p) => p.name)
+  const preset = PRESETS[kind]
+  Object.assign(f, {
+    kind,
+    name: presetNames.includes(f.name) ? preset.name : f.name,
+    issuer: preset.issuer,
+    discovery_url: '',
+    scopes: preset.scopes.join(' '),
+    client_auth: 'post',
+    hosted_domain: '',
+    allowed_tenants: '',
+    trust_upstream_mfa: false,
+    mfa_acr: '',
+    trust_upstream_email: false,
+  })
 }
 
 /** Items of a comma- / whitespace-separated list. */
@@ -71,6 +150,7 @@ const orNull = (s: string) => s.trim() || null
 
 export function toInput(f: IdpFormState): IdentityProviderInput {
   return {
+    kind: f.kind,
     name: f.name.trim(),
     issuer: f.issuer.trim(),
     discovery_url: orNull(f.discovery_url),
@@ -81,6 +161,9 @@ export function toInput(f: IdpFormState): IdentityProviderInput {
     trust_upstream_mfa: f.trust_upstream_mfa,
     mfa_acr: orNull(f.mfa_acr),
     email_domains: words(f.email_domains),
+    hosted_domain: f.kind === 'google' ? orNull(f.hosted_domain) : null,
+    allowed_tenants: isMultiTenant(f) ? words(f.allowed_tenants) : [],
+    trust_upstream_email: f.kind !== 'github' && f.trust_upstream_email,
     enabled: f.enabled,
     visible: f.visible,
   }

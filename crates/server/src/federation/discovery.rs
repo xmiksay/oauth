@@ -104,6 +104,9 @@ impl Upstream {
         &self,
         idp: &identity_providers::Model,
     ) -> Result<Arc<Metadata>, Failure> {
+        if let Some(meta) = super::github::metadata(idp, self.allow_http_loopback)? {
+            return Ok(Arc::new(meta));
+        }
         let url = urls::discovery_url(idp);
         let key = format!("{} {url} {}", idp.id, idp.issuer);
         let now = Instant::now();

@@ -19,11 +19,6 @@ pub struct Exchange<'a> {
     pub auth: IdpClientAuth,
 }
 
-#[derive(Deserialize)]
-struct TokenResponse {
-    id_token: Option<String>,
-}
-
 /// RFC 6749 §2.3.1: both halves are form-urlencoded before Basic encoding.
 fn basic_credentials(client_id: &str, secret: &str) -> Zeroizing<String> {
     let enc = |s: &str| form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>();
@@ -38,6 +33,26 @@ impl Upstream {
         meta: &Metadata,
         ex: Exchange<'_>,
     ) -> Result<Zeroizing<String>, Failure> {
+        #[derive(Deserialize)]
+        struct TokenResponse {
+            id_token: Option<String>,
+        }
+        let raw = self.redeem(meta, ex).await?;
+        let parsed: TokenResponse =
+            serde_json::from_slice(&raw).map_err(|_| Failure("token_response"))?;
+        parsed
+            .id_token
+            .map(Zeroizing::new)
+            .ok_or(Failure("token_response_no_id_token"))
+    }
+
+    /// POSTs the code to the token endpoint; returns the (successful)
+    /// response body.
+    pub async fn redeem(
+        &self,
+        meta: &Metadata,
+        ex: Exchange<'_>,
+    ) -> Result<Zeroizing<Vec<u8>>, Failure> {
         let url = urls::checked(&meta.token_endpoint, self.allow_http_loopback)
             .ok_or(Failure("token_endpoint"))?;
         let mut form = vec![
@@ -49,7 +64,8 @@ impl Upstream {
         let mut request = self
             .http
             .post(url)
-            .header(reqwest::header::ACCEPT, "application/json");
+            .header(reqwest::header::ACCEPT, "application/json")
+            .header(reqwest::header::USER_AGENT, super::USER_AGENT);
         match (ex.auth, ex.client_secret) {
             (IdpClientAuth::Basic, Some(secret)) => {
                 let value = basic_credentials(ex.client_id, secret);
@@ -87,17 +103,11 @@ impl Upstream {
             tracing::warn!(status = status.as_u16(), "upstream token endpoint refused");
             return Err(Failure("token_refused"));
         }
-        let raw = Zeroizing::new(
+        Ok(Zeroizing::new(
             http::read_capped(response, MAX_RESPONSE_BYTES)
                 .await
                 .map_err(|_| Failure("token_response"))?,
-        );
-        let parsed: TokenResponse =
-            serde_json::from_slice(&raw).map_err(|_| Failure("token_response"))?;
-        parsed
-            .id_token
-            .map(Zeroizing::new)
-            .ok_or(Failure("token_response_no_id_token"))
+        ))
     }
 }
 

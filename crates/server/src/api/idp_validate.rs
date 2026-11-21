@@ -1,10 +1,13 @@
 //! Validation of identity-provider fields (pure).
 
-use entity::enums::{IdpClientAuth, IdpPolicy};
+use entity::enums::{IdpClientAuth, IdpKind, IdpPolicy};
 use sea_orm::ActiveEnum;
 
 use super::validate::scope_token_chars;
-use crate::{error::AppError, federation::urls};
+use crate::{
+    error::AppError,
+    federation::{kinds, urls},
+};
 
 const MAX_NAME: usize = 64;
 const MAX_URL: usize = 2048;
@@ -12,6 +15,7 @@ const MAX_CLIENT_ID: usize = 512;
 const MAX_SECRET: usize = 1024;
 const MAX_SCOPES: usize = 20;
 const MAX_DOMAINS: usize = 50;
+const MAX_TENANTS: usize = 50;
 
 fn bad(msg: impl Into<String>) -> AppError {
     AppError::BadRequest(msg.into())
@@ -73,7 +77,12 @@ pub fn policy(raw: &str) -> Result<IdpPolicy, AppError> {
         .map_err(|_| bad("policy must be `jit`, `link_only` or `deny`"))
 }
 
-/// Distinct scope tokens including `openid`.
+pub fn kind(raw: &str) -> Result<IdpKind, AppError> {
+    IdpKind::try_from_value(&raw.to_owned())
+        .map_err(|_| bad("kind must be `oidc`, `google`, `entra` or `github`"))
+}
+
+/// Distinct scope tokens (`openid` is a rule of the kind, `idp_rules`).
 pub fn scopes(raw: &[String]) -> Result<Vec<String>, AppError> {
     let mut out: Vec<String> = Vec::new();
     for scope in raw {
@@ -86,9 +95,6 @@ pub fn scopes(raw: &[String]) -> Result<Vec<String>, AppError> {
     }
     if out.len() > MAX_SCOPES {
         return Err(bad(format!("at most {MAX_SCOPES} scopes")));
-    }
-    if !out.iter().any(|s| s == "openid") {
-        return Err(bad("scopes must include `openid`"));
     }
     Ok(out)
 }
@@ -128,6 +134,35 @@ pub fn email_domains(raw: &[String]) -> Result<Vec<String>, AppError> {
     Ok(out)
 }
 
+/// A Google Workspace domain (`hd`), lower-cased.
+pub fn hosted_domain(raw: &str) -> Result<String, AppError> {
+    let domain = raw.trim().to_ascii_lowercase();
+    if !dns_name(&domain) {
+        return Err(bad("hosted_domain must be a DNS name"));
+    }
+    Ok(domain)
+}
+
+/// Distinct Entra directory (tenant) ids, lower-cased GUIDs.
+pub fn allowed_tenants(raw: &[String]) -> Result<Vec<String>, AppError> {
+    let mut out: Vec<String> = Vec::new();
+    for tid in raw {
+        let tid = tid.trim().to_ascii_lowercase();
+        if !kinds::is_tenant_id(&tid) {
+            return Err(bad(
+                "allowed_tenants must be directory (tenant) ids (GUIDs)",
+            ));
+        }
+        if !out.contains(&tid) {
+            out.push(tid);
+        }
+    }
+    if out.len() > MAX_TENANTS {
+        return Err(bad(format!("at most {MAX_TENANTS} allowed tenants")));
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,12 +190,15 @@ mod tests {
     }
 
     #[test]
-    fn scopes_need_openid() {
+    fn scopes_are_tokens() {
         assert_eq!(
             scopes(&strings(&["openid", "email", "openid"])).unwrap(),
             ["openid", "email"]
         );
-        assert!(scopes(&strings(&["email"])).is_err());
+        assert_eq!(
+            scopes(&strings(&["read:user", "user:email"])).unwrap(),
+            ["read:user", "user:email"]
+        );
         assert!(scopes(&strings(&["openid", "a b"])).is_err());
         assert!(scopes(&strings(&["openid", ""])).is_err());
     }
@@ -181,6 +219,20 @@ mod tests {
         ] {
             assert!(email_domains(&strings(&[bad])).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn preset_fields() {
+        assert_eq!(hosted_domain(" Contoso.COM ").unwrap(), "contoso.com");
+        assert!(hosted_domain("contoso").is_err());
+        let tid = "9188040D-6C67-4C5B-B112-36A304B66DAD";
+        assert_eq!(
+            allowed_tenants(&strings(&[tid, &tid.to_lowercase()])).unwrap(),
+            ["9188040d-6c67-4c5b-b112-36a304b66dad"]
+        );
+        assert!(allowed_tenants(&strings(&["organizations"])).is_err());
+        assert_eq!(kind("entra").unwrap(), IdpKind::Entra);
+        assert!(kind("saml").is_err());
     }
 
     #[test]

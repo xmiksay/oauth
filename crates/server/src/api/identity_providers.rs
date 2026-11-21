@@ -23,6 +23,7 @@ use super::{
     extract::{Json, Path, Query},
     guard::conflict_on_unique,
     idp_body::{IdpBody, apply, ensure_domains_free, seal},
+    idp_rules, idp_validate,
     page::{self, Order, PageParams, Paged},
     ts,
 };
@@ -51,6 +52,9 @@ fn view(state: &AppState, caller: &Caller, idp: &identity_providers::Model) -> V
         "trust_upstream_mfa": idp.trust_upstream_mfa,
         "mfa_acr": idp.mfa_acr,
         "email_domains": idp.email_domains,
+        "hosted_domain": idp.hosted_domain,
+        "allowed_tenants": idp.allowed_tenants,
+        "trust_upstream_email": idp.trust_upstream_email,
         "redirect_uri": urls::callback_url(&state.config, &caller.tenant.slug),
         "created_at": ts(&idp.created_at),
         "updated_at": ts(&idp.updated_at),
@@ -138,7 +142,18 @@ pub async fn create(
     Json(body): Json<IdpBody>,
 ) -> AppResult<Response> {
     caller.require(Area::IdentityProviders, Access::Write)?;
-    let (Some(_), Some(_), Some(_)) = (&body.name, &body.issuer, &body.client_id) else {
+    let kind = body
+        .kind
+        .as_deref()
+        .map(idp_validate::kind)
+        .transpose()?
+        .unwrap_or(IdpKind::Oidc);
+    let default_issuer = idp_rules::default_issuer(kind);
+    let (Some(_), true, Some(_)) = (
+        &body.name,
+        body.issuer.is_some() || default_issuer.is_some(),
+        &body.client_id,
+    ) else {
         return Err(AppError::BadRequest(
             "name, issuer and client_id are required".into(),
         ));
@@ -149,17 +164,21 @@ pub async fn create(
     let mut row = identity_providers::ActiveModel {
         id: Set(id),
         tenant_id: Set(tenant_id),
-        kind: Set(IdpKind::Oidc),
+        kind: Set(kind),
+        issuer: Set(default_issuer.unwrap_or_default().to_owned()),
         enabled: Set(true),
         visible: Set(true),
         discovery_url: Set(None),
         client_secret_sealed: Set(None),
         client_auth: Set(IdpClientAuth::Post),
-        scopes: Set(["openid", "email", "profile"].map(str::to_owned).to_vec()),
+        scopes: Set(idp_rules::default_scopes(kind)),
         policy: Set(IdpPolicy::LinkOnly),
         trust_upstream_mfa: Set(false),
         mfa_acr: Set(None),
         email_domains: Set(Vec::new()),
+        hosted_domain: Set(None),
+        allowed_tenants: Set(Vec::new()),
+        trust_upstream_email: Set(false),
         created_at: Set(now),
         updated_at: Set(now),
         ..Default::default()
@@ -180,7 +199,12 @@ pub async fn create(
             &txn,
             EventType::IdentityProviderCreate,
             Some(Target::IdentityProvider(idp.id)),
-            json!({ "name": idp.name, "issuer": idp.issuer, "policy": idp.policy.to_value() }),
+            json!({
+                "name": idp.name,
+                "kind": idp.kind.to_value(),
+                "issuer": idp.issuer,
+                "policy": idp.policy.to_value(),
+            }),
         )
         .await?;
     txn.commit().await?;
@@ -198,6 +222,13 @@ pub async fn update(
     let tenant_id = caller.tenant_id();
     let txn = state.db.begin().await?;
     let idp = lock(&txn, tenant_id, id).await?;
+    // The kind decides what subjects mean (GitHub's are user ids): it is
+    // fixed at creation.
+    if let Some(raw) = &body.kind
+        && idp_validate::kind(raw)? != idp.kind
+    {
+        return Err(AppError::BadRequest("kind can't be changed".into()));
+    }
     let mut row: identity_providers::ActiveModel = idp.clone().into();
     let mut secret = None;
     let mut fields = apply(&state, &mut row, &body, &mut secret)?;

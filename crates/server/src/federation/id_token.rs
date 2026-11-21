@@ -8,7 +8,13 @@ use jsonwebtoken::{
 };
 use serde_json::{Map, Value};
 
-use super::{Failure, Upstream, discovery::Metadata, group_map, profile};
+use super::{
+    Failure, Upstream,
+    discovery::Metadata,
+    group_map,
+    kinds::{self, Rules},
+    profile,
+};
 use crate::secret;
 
 /// Allowed clock difference to the provider, both ways.
@@ -18,7 +24,8 @@ const MAX_AMR_VALUES: usize = 20;
 
 /// What the token must match.
 pub struct Expected<'a> {
-    pub issuer: &'a str,
+    /// The issuer and the provider kind's extra checks.
+    pub rules: Rules<'a>,
     pub client_id: &'a str,
     pub nonce: &'a str,
     /// Unix seconds.
@@ -73,7 +80,7 @@ pub fn check_claims(
     claims: &Map<String, Value>,
     expected: &Expected<'_>,
 ) -> Result<Claims, Failure> {
-    if str_claim(claims, "iss") != Some(expected.issuer) {
+    if !str_claim(claims, "iss").is_some_and(|iss| kinds::issuer_matches(&expected.rules, iss)) {
         return Err(Failure("id_token_iss"));
     }
     if !audience_ok(claims, expected.client_id) {
@@ -136,7 +143,7 @@ pub fn check_claims(
             .collect(),
         _ => Vec::new(),
     };
-    Ok(Claims {
+    let mut out = Claims {
         subject: subject.to_owned(),
         email: str_claim(claims, "email").and_then(profile::clean_email),
         email_verified,
@@ -145,7 +152,9 @@ pub fn check_claims(
         acr: str_claim(claims, "acr").and_then(profile::clean_token),
         auth_time,
         mapped: group_map::extract(claims, expected.mapped_claims),
-    })
+    };
+    kinds::check(&expected.rules, claims, &mut out)?;
+    Ok(out)
 }
 
 /// The one algorithm a key may verify: RS256 for RSA, ES256 for P-256,
@@ -216,7 +225,7 @@ mod tests {
 
     fn expected() -> Expected<'static> {
         Expected {
-            issuer: "https://up.example",
+            rules: Rules::oidc("https://up.example"),
             client_id: "rp",
             nonce: "n-123",
             now: NOW,

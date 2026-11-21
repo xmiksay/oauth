@@ -8,7 +8,7 @@ use sea_orm::{
 use serde::Deserialize;
 use uuid::Uuid;
 
-use super::{app_body::nullable, idp_validate as v, set_changed};
+use super::{app_body::nullable, idp_rules as rules, idp_validate as v, set_changed};
 use crate::{
     app::AppState,
     error::{AppError, AppResult},
@@ -18,6 +18,8 @@ use crate::{
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IdpBody {
+    /// Create only (a PATCH may repeat the current one).
+    pub kind: Option<String>,
     pub name: Option<String>,
     pub issuer: Option<String>,
     #[serde(default, deserialize_with = "nullable")]
@@ -33,6 +35,10 @@ pub struct IdpBody {
     #[serde(default, deserialize_with = "nullable")]
     pub mfa_acr: Option<Option<String>>,
     pub email_domains: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "nullable")]
+    pub hosted_domain: Option<Option<String>>,
+    pub allowed_tenants: Option<Vec<String>>,
+    pub trust_upstream_email: Option<bool>,
     pub enabled: Option<bool>,
     pub visible: Option<bool>,
 }
@@ -146,12 +152,31 @@ pub fn apply(
             "email_domains",
         );
     }
+    if let Some(raw) = &body.hosted_domain {
+        let value = raw.as_deref().map(v::hosted_domain).transpose()?;
+        mark(set_changed(&mut row.hosted_domain, value), "hosted_domain");
+    }
+    if let Some(raw) = &body.allowed_tenants {
+        mark(
+            set_changed(&mut row.allowed_tenants, v::allowed_tenants(raw)?),
+            "allowed_tenants",
+        );
+    }
+    if let Some(trust) = body.trust_upstream_email {
+        mark(
+            set_changed(&mut row.trust_upstream_email, trust),
+            "trust_upstream_email",
+        );
+    }
     if let Some(enabled) = body.enabled {
         mark(set_changed(&mut row.enabled, enabled), "enabled");
     }
     if let Some(visible) = body.visible {
         mark(set_changed(&mut row.visible, visible), "visible");
     }
+    let stored = rules::Row::of(row)
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("identity provider row incomplete")))?;
+    rules::check(&stored)?;
     Ok(fields)
 }
 
