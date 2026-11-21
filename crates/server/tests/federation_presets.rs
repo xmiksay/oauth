@@ -330,6 +330,7 @@ async fn presets_have_defaults_and_rules() {
         (json!({ "trust_upstream_email": true }), "github"),
         (json!({ "hosted_domain": "contoso.com" }), "hosted_domain"),
         (json!({ "issuer": "https://github.com/x" }), "web origin"),
+        (json!({ "issuer": "https://GitHub.com" }), "lower-case host"),
         (json!({ "client_secret": null }), "client_secret"),
     ] {
         let (status, out) = fed.api(Method::PATCH, &path, Some(body)).await;

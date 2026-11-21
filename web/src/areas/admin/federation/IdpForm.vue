@@ -137,7 +137,7 @@ function submit() {
           v-if="isGithub"
           class="hint"
         >
-          The web origin: https://github.com, or your GitHub Enterprise Server.
+          The web origin (lower-case host, no default port): https://github.com, or your GitHub Enterprise Server.
         </p>
         <p
           v-else-if="f.kind === 'entra'"
