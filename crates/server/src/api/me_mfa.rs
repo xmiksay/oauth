@@ -147,6 +147,75 @@ pub async fn mfa_notice(
     Ok(())
 }
 
+/// Stores a fresh pending (unconfirmed) TOTP secret for `user` and returns
+/// what the authenticator app needs (shown once). 409 when an enrollment
+/// is already confirmed. Shared with the login transaction's enrolment.
+pub(crate) async fn start_enrollment(
+    conn: &impl ConnectionTrait,
+    master_key: &[u8; 32],
+    issuer_name: &str,
+    user: &users::Model,
+) -> AppResult<Value> {
+    let mut raw = Zeroizing::new([0u8; SECRET_BYTES]);
+    rand::fill(raw.as_mut_slice()).map_err(|_| anyhow!("generating TOTP secret"))?;
+    let sealed = totp::seal_secret(master_key, user.tenant_id, user.id, raw.as_slice())?;
+    // Callers' checks are advisory; `store` is the atomic guard against an
+    // enrollment confirmed in the meantime.
+    if !totp::store(conn, user.tenant_id, user.id, sealed, false).await? {
+        return Err(AppError::Conflict(
+            "TOTP is already enrolled; remove it first".into(),
+        ));
+    }
+    let secret_b32 = Zeroizing::new(base32(raw.as_slice()));
+    Ok(json!({
+        "secret": secret_b32.as_str(),
+        "otpauth_uri": otpauth_uri(issuer_name, &user.email, &secret_b32),
+        "digits": totp::DIGITS,
+        "period": totp::STEP_SECS,
+        "algorithm": "SHA1",
+    }))
+}
+
+/// The user's pending (unconfirmed) TOTP enrollment.
+pub(crate) async fn pending_enrollment(
+    conn: &impl ConnectionTrait,
+    user: &users::Model,
+) -> AppResult<user_totp::Model> {
+    enrollment(conn, user.tenant_id, user.id)
+        .await?
+        .filter(|t| t.confirmed_at.is_none())
+        .ok_or_else(|| AppError::Conflict("no pending TOTP enrollment".into()))
+}
+
+/// Activates `pending` if `code` is valid for it and replaces the user's
+/// recovery codes (returned in plaintext, shown once) — on `txn`.
+pub(crate) async fn activate(
+    txn: &impl ConnectionTrait,
+    master_key: &[u8; 32],
+    user: &users::Model,
+    pending: &user_totp::Model,
+    code: &str,
+) -> AppResult<Vec<String>> {
+    let secret = totp::open_secret(master_key, pending)?;
+    let now = u64::try_from(chrono::Utc::now().timestamp()).unwrap_or(0);
+    let step = totp::verify_code(&secret, code, now, None)
+        .ok_or_else(|| AppError::BadRequest("invalid code".into()))?;
+    let confirmed = user_totp::Entity::update_many()
+        .col_expr(user_totp::Column::ConfirmedAt, Expr::current_timestamp())
+        .col_expr(user_totp::Column::LastUsedStep, Expr::value(step))
+        .filter(user_totp::Column::UserId.eq(user.id))
+        .filter(user_totp::Column::SecretEnc.eq(pending.secret_enc.clone()))
+        .filter(user_totp::Column::ConfirmedAt.is_null())
+        .exec(txn)
+        .await?;
+    if confirmed.rows_affected != 1 {
+        return Err(AppError::Conflict(
+            "the TOTP enrollment changed; start again".into(),
+        ));
+    }
+    replace_recovery_codes(txn, user.tenant_id, user.id).await
+}
+
 pub async fn begin_totp(
     State(state): State<AppState>,
     caller: Caller,
@@ -160,29 +229,14 @@ pub async fn begin_totp(
         ));
     }
     body.verify(&state, &caller, &user).await?;
-    let mut raw = Zeroizing::new([0u8; SECRET_BYTES]);
-    rand::fill(raw.as_mut_slice()).map_err(|_| anyhow!("generating TOTP secret"))?;
-    let sealed = totp::seal_secret(
+    let view = start_enrollment(
+        &state.db,
         &state.config.master_key,
-        user.tenant_id,
-        user.id,
-        raw.as_slice(),
-    )?;
-    // The check above is advisory; `store` is the atomic guard against an
-    // enrollment confirmed in the meantime.
-    if !totp::store(&state.db, user.tenant_id, user.id, sealed, false).await? {
-        return Err(AppError::Conflict(
-            "TOTP is already enrolled; remove it first".into(),
-        ));
-    }
-    let secret_b32 = Zeroizing::new(base32(raw.as_slice()));
-    Ok(axum::Json(json!({
-        "secret": secret_b32.as_str(),
-        "otpauth_uri": otpauth_uri(&caller.tenant.display_name, &user.email, &secret_b32),
-        "digits": totp::DIGITS,
-        "period": totp::STEP_SECS,
-        "algorithm": "SHA1",
-    })))
+        &caller.tenant.display_name,
+        &user,
+    )
+    .await?;
+    Ok(axum::Json(view))
 }
 
 #[derive(Deserialize)]
@@ -197,10 +251,7 @@ pub async fn confirm_totp(
     Json(body): Json<CodeBody>,
 ) -> AppResult<axum::Json<Value>> {
     let user = me(&state, &caller).await?;
-    let pending = enrollment(&state.db, user.tenant_id, user.id)
-        .await?
-        .filter(|t| t.confirmed_at.is_none())
-        .ok_or_else(|| AppError::Conflict("no pending TOTP enrollment".into()))?;
+    let pending = pending_enrollment(&state.db, &user).await?;
     let key = rate_limit::user_key(user.id);
     let limit = rate_limit::PER_ACCOUNT;
     if let Err(retry_after) =
@@ -208,25 +259,8 @@ pub async fn confirm_totp(
     {
         return Err(AppError::RateLimited { retry_after });
     }
-    let secret = totp::open_secret(&state.config.master_key, &pending)?;
-    let now = u64::try_from(chrono::Utc::now().timestamp()).unwrap_or(0);
-    let step = totp::verify_code(&secret, &body.code, now, None)
-        .ok_or_else(|| AppError::BadRequest("invalid code".into()))?;
     let txn = state.db.begin().await?;
-    let confirmed = user_totp::Entity::update_many()
-        .col_expr(user_totp::Column::ConfirmedAt, Expr::current_timestamp())
-        .col_expr(user_totp::Column::LastUsedStep, Expr::value(step))
-        .filter(user_totp::Column::UserId.eq(user.id))
-        .filter(user_totp::Column::SecretEnc.eq(pending.secret_enc.clone()))
-        .filter(user_totp::Column::ConfirmedAt.is_null())
-        .exec(&txn)
-        .await?;
-    if confirmed.rows_affected != 1 {
-        return Err(AppError::Conflict(
-            "the TOTP enrollment changed; start again".into(),
-        ));
-    }
-    let codes = replace_recovery_codes(&txn, user.tenant_id, user.id).await?;
+    let codes = activate(&txn, &state.config.master_key, &user, &pending, &body.code).await?;
     caller
         .audit(
             &txn,

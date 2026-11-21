@@ -241,6 +241,7 @@ mod tests {
             access_token_ttl_secs: 3600,
             refresh_token_ttl_secs: 3600,
             device_code_enabled: false,
+            mfa_policy: entity::enums::AppMfaPolicy::Inherit,
             created_at: now,
             updated_at: now,
         }

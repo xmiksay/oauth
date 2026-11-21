@@ -1,7 +1,7 @@
 //! `/api/v1/applications` — app registrations. Built-in apps
 //! (`management-api`, `admin-portal`, `my-account`) can't be deleted; only a
-//! GlobalAdmin may change them, and only their display name and token
-//! lifetimes.
+//! GlobalAdmin may change them, and only their display name, token
+//! lifetimes and MFA policy.
 
 use axum::{
     extract::State,
@@ -16,26 +16,23 @@ use sea_orm::{
     ActiveEnum, ActiveModelTrait, ActiveValue::Set, ColumnTrait, DbErr, EntityTrait, QueryFilter,
     TransactionTrait,
 };
-use serde::{Deserialize, Deserializer};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::{
     Caller,
-    app_rules::{
-        ACCESS_TTL, DEFAULT_REFRESH_TTL_PUBLIC, ensure_may_manage_credentials, find_app,
-        refresh_ttl,
-    },
+    app_body::{AppBody, apply, parse},
+    app_rules::{DEFAULT_REFRESH_TTL_PUBLIC, ensure_may_manage_credentials, find_app},
     extract::{Json, Path, Query},
     page::{self, Order, PageParams, Paged},
-    search, set_changed, ts, validate,
+    search, ts, validate,
 };
 use crate::{
     app::AppState,
     audit::{EventType, Target},
     authz::{Access, Area},
-    cors,
-    directory::{self, display_name},
+    cors, directory,
     error::{AppError, AppResult},
     oidc::scope,
     secret,
@@ -60,6 +57,7 @@ pub fn view(a: &applications::Model) -> Value {
         "access_token_ttl_secs": a.access_token_ttl_secs,
         "refresh_token_ttl_secs": a.refresh_token_ttl_secs,
         "device_code_enabled": a.device_code_enabled,
+        "mfa_policy": a.mfa_policy.to_value(),
         "created_at": ts(&a.created_at),
         "updated_at": ts(&a.updated_at),
     })
@@ -110,132 +108,6 @@ pub async fn get(
     Ok(axum::Json(view(
         &find_app(&state.db, caller.tenant_id(), id).await?,
     )))
-}
-
-/// `Some(None)` = explicit `null` (clear), `None` = absent (keep).
-pub(super) fn nullable<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
-    d: D,
-) -> Result<Option<Option<T>>, D::Error> {
-    Option::<T>::deserialize(d).map(Some)
-}
-
-/// Create and update body. `client_id` / `client_type` are create-only.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AppBody {
-    client_id: Option<String>,
-    client_type: Option<String>,
-    display_name: Option<String>,
-    redirect_uris: Option<Vec<String>>,
-    post_logout_redirect_uris: Option<Vec<String>>,
-    web_origins: Option<Vec<String>>,
-    #[serde(default, deserialize_with = "nullable")]
-    identifier_uri: Option<Option<String>>,
-    access_token_format: Option<String>,
-    signing_alg: Option<String>,
-    groups_claim_format: Option<String>,
-    access_token_ttl_secs: Option<i32>,
-    refresh_token_ttl_secs: Option<i32>,
-    device_code_enabled: Option<bool>,
-}
-
-fn parse<E: ActiveEnum<Value = String>>(raw: &str, field: &str, allowed: &str) -> AppResult<E> {
-    E::try_from_value(&raw.to_owned())
-        .map_err(|_| AppError::BadRequest(format!("{field} must be one of: {allowed}")))
-}
-
-/// Validates the settable fields and applies those whose value differs from
-/// `row`; returns the changed names (unchanged values sent back are ignored,
-/// so built-in / privileged-app rules only see real changes).
-fn apply(
-    row: &mut applications::ActiveModel,
-    body: &AppBody,
-    client_id: &str,
-    client_type: ClientType,
-) -> AppResult<Vec<&'static str>> {
-    let mut fields = Vec::new();
-    let mut mark = |changed: bool, name: &'static str| {
-        if changed {
-            fields.push(name);
-        }
-    };
-    if let Some(name) = &body.display_name {
-        let name = display_name(name, "application")?;
-        mark(set_changed(&mut row.display_name, name), "display_name");
-    }
-    if let Some(uris) = &body.redirect_uris {
-        validate::redirect_uris(uris, "redirect_uris")?;
-        mark(
-            set_changed(&mut row.redirect_uris, uris.clone()),
-            "redirect_uris",
-        );
-    }
-    if let Some(uris) = &body.post_logout_redirect_uris {
-        validate::redirect_uris(uris, "post_logout_redirect_uris")?;
-        mark(
-            set_changed(&mut row.post_logout_redirect_uris, uris.clone()),
-            "post_logout_redirect_uris",
-        );
-    }
-    if let Some(origins) = &body.web_origins {
-        validate::web_origins(origins)?;
-        mark(
-            set_changed(&mut row.web_origins, origins.clone()),
-            "web_origins",
-        );
-    }
-    if let Some(uri) = &body.identifier_uri {
-        if let Some(uri) = uri {
-            validate::identifier_uri(uri, client_id)?;
-        }
-        mark(
-            set_changed(&mut row.identifier_uri, uri.clone()),
-            "identifier_uri",
-        );
-    }
-    if let Some(raw) = &body.access_token_format {
-        let format: AccessTokenFormat = parse(raw, "access_token_format", "jwt, opaque")?;
-        mark(
-            set_changed(&mut row.access_token_format, format),
-            "access_token_format",
-        );
-    }
-    if let Some(raw) = &body.signing_alg {
-        let alg: SigningAlg = parse(raw, "signing_alg", "RS256, ES256")?;
-        mark(set_changed(&mut row.signing_alg, alg), "signing_alg");
-    }
-    if let Some(raw) = &body.groups_claim_format {
-        let format: GroupsClaimFormat = parse(raw, "groups_claim_format", "id, name")?;
-        mark(
-            set_changed(&mut row.groups_claim_format, format),
-            "groups_claim_format",
-        );
-    }
-    if let Some(ttl) = body.access_token_ttl_secs {
-        if !ACCESS_TTL.contains(&ttl) {
-            return Err(AppError::BadRequest(
-                "access_token_ttl_secs must be 300-86400".into(),
-            ));
-        }
-        mark(
-            set_changed(&mut row.access_token_ttl_secs, ttl),
-            "access_token_ttl_secs",
-        );
-    }
-    if let Some(ttl) = body.refresh_token_ttl_secs {
-        refresh_ttl(client_type, ttl)?;
-        mark(
-            set_changed(&mut row.refresh_token_ttl_secs, ttl),
-            "refresh_token_ttl_secs",
-        );
-    }
-    if let Some(enabled) = body.device_code_enabled {
-        mark(
-            set_changed(&mut row.device_code_enabled, enabled),
-            "device_code_enabled",
-        );
-    }
-    Ok(fields)
 }
 
 fn map_write_error(err: DbErr) -> AppError {
@@ -304,10 +176,11 @@ pub async fn create(
     Ok((StatusCode::CREATED, axum::Json(view(&app))).into_response())
 }
 
-const BUILTIN_EDITABLE: [&str; 3] = [
+const BUILTIN_EDITABLE: [&str; 4] = [
     "display_name",
     "access_token_ttl_secs",
     "refresh_token_ttl_secs",
+    "mfa_policy",
 ];
 
 pub async fn update(

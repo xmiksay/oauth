@@ -5,6 +5,7 @@
 //! another tenant's users under `/api/v1/tenants/{slug}/users`). Bearer tokens
 //! only (no cookies, so no CSRF surface). Contract: `docs/api/management.md`.
 
+mod app_body;
 mod app_rules;
 mod applications;
 mod apps_permissions;
@@ -24,7 +25,7 @@ mod idp_validate;
 mod me;
 mod me_email;
 mod me_identities;
-mod me_mfa;
+pub(crate) mod me_mfa;
 mod me_passkeys;
 mod me_telegram;
 pub mod page;

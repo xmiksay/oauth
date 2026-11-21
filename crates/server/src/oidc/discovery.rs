@@ -42,8 +42,9 @@ pub async fn configuration(
         "code_challenge_methods_supported": ["S256"],
         "scopes_supported": OIDC_SCOPES,
         "prompt_values_supported": ["none", "login", "consent"],
+        "acr_values_supported": [crate::tokens::claims::ACR_MFA],
         "claims_supported": [
-            "iss", "sub", "aud", "exp", "iat", "auth_time", "nonce", "amr", "sid", "azp",
+            "iss", "sub", "aud", "exp", "iat", "auth_time", "nonce", "amr", "acr", "sid", "azp",
             "at_hash", "oid", "tid", "ver", "name", "preferred_username", "email",
             "email_verified",
         ],

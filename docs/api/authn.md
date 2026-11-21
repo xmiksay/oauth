@@ -39,7 +39,7 @@ the API answers with a `redirect`, which the SPA follows
 ```json
 {
   "tx": "6a0c…",
-  "step": "password | link | mfa | change_password | consent",
+  "step": "password | link | mfa | mfa_enroll | change_password | consent",
   "tenant": { "slug": "contoso", "display_name": "Contoso" },
   "client": { "client_id": "web-app", "display_name": "Web App" },
   "user": { "email": "ann@example.com", "display_name": "Ann" },
@@ -191,6 +191,10 @@ reused session ended while consent was pending).
 | `passkey` | AssertionJSON | step `password` / `link` (passwordless) or `mfa` (second factor) |
 | `telegram/send` | `{}` | step `mfa` (user has `telegram`): sends a 6-digit code to the linked chat, replacing an earlier one; `200 { "sent": true, "expires_in": 300 }` (not a step view). `502 delivery_failed` when Telegram didn't take it (retry), `400 invalid_request` when no chat is linked, `503 telegram_unavailable` without a bot |
 | `telegram` | `{ "code": "123456" }` | step `mfa`: the code last sent (5 min, single use, 5 guesses — then send a new one; spaces ignored) |
+| `enroll/totp` | `{}` | step `mfa_enroll`: a new pending TOTP secret (replacing an unconfirmed one), `200 { "secret", "otpauth_uri", "digits", "period", "algorithm" }` (not a step view; show once). `409 conflict` when a TOTP is already confirmed |
+| `enroll/totp/confirm` | `{ "code": "123456" }` | step `mfa_enroll`: a current code of the pending secret activates it; the step view or redirect that follows **plus** `"recovery_codes": [10 codes]` (shown once, before continuing). `401 invalid_code`, `409 conflict` without a pending secret |
+| `enroll/passkey/options` | `{}` | step `mfa_enroll`: `200 { "publicKey": PublicKeyCredentialCreationOptionsJSON }` (not a step view) |
+| `enroll/passkey` | `{ "credential": RegistrationJSON, "name"? }` | step `mfa_enroll`: stores the new passkey; it is this sign-in's second factor |
 | `change-password` | `{ "new_password" }` | step `change_password` (`must_change_password`) |
 | `consent` | `{ "approve": true, "scopes": ["Orders.Read"] }` or `{ "approve": false }` | step `consent`; approving must list every scope shown (all-or-nothing) |
 
@@ -199,6 +203,16 @@ Order: `password` → `mfa` (if TOTP confirmed, a passkey registered or a Telegr
 passkey at the `password` step signs the user in on its own (it skips
 `mfa` and `change_password`). A transaction created for a
 user who already has a session but must consent starts at `consent`.
+
+**MFA policy** ([../authn.md](../authn.md#mfa-policy)): when the tenant, the
+client app or the requested resource app requires MFA and the sign-in isn't
+multi-factor yet, the step after the first factor is `mfa` (the user has a
+factor) or `mfa_enroll` (they don't: set up TOTP or a passkey, which then
+counts as the second factor), before `change_password` / `consent`. A user
+who already has a single-factor session is stepped up: `/authorize` starts a
+transaction at `mfa` / `mfa_enroll` for the session's user (no password
+again) and its completion replaces the session; with `prompt=none` it
+answers `interaction_required` instead.
 Setting the new password ends the user's other sessions and revokes their
 refresh tokens and opaque access tokens. A completed sign-in replaces any
 earlier session of this browser (e.g. after `prompt=login`).
@@ -212,7 +226,7 @@ earlier session of this browser (e.g. after `prompt=login`).
 | 409 | `conflict` | Email change: the new address was taken meanwhile |
 | 401 | `invalid_credentials` | Wrong email or password, or unknown email — never distinguished (unknown accounts are verified against a dummy argon2 hash to equalise timing) |
 | 401 | `invalid_credentials` | Any rejected passkey assertion (unknown, other account's, wrong origin / RP, no user verification, bad signature, used / expired challenge, counter regression) — never distinguished; the audit log has the reason |
-| 401 | `invalid_code` | Wrong / reused TOTP code or recovery code; wrong, expired, used or dead (5 guesses) Telegram code |
+| 401 | `invalid_code` | Wrong / reused TOTP code or recovery code; wrong, expired, used or dead (5 guesses) Telegram code; a wrong code confirming a TOTP enrolment |
 | 403 | `account_disabled` | Correct password, but the user is disabled |
 | 403 | `csrf_rejected` | `Origin` missing or not the tenant's `{origin}` |
 | 404 | `not_found` | Unknown, expired, finished or foreign transaction (`no-store`). An unknown or disabled tenant (host) also answers `404 {"error":"not_found","error_description":"resource not found"}`, from the tenant resolver (without `no-store`) |
@@ -231,7 +245,7 @@ successes too. IPv6 clients are bucketed per /64.
 
 | Bucket | Limit | Applies to |
 |---|---|---|
-| client IP, per tenant | 30 / 5 min | `password`, `totp`, `recovery`, `passkey`, `telegram`, `change-password` |
+| client IP, per tenant | 30 / 5 min | `password`, `totp`, `recovery`, `passkey`, `telegram`, `enroll/totp/confirm`, `enroll/passkey`, `change-password` |
 | account, per tenant | 10 / 15 min | same; keyed by user id once the email (or the passkey's credential, or the transaction) resolves it, else by the trimmed, lower-cased email (or the credential id) |
 | user, per tenant | 3 / 15 min | `telegram/send` (across transactions) |
 | client IP, per tenant | 60 / 5 min | `/oauth2/authorize` requests that create a login transaction → `429` JSON (`rate_limited`), not a redirect |

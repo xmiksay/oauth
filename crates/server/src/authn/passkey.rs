@@ -174,6 +174,8 @@ pub async fn submit(
 pub async fn factors(state: &AppState, tx: &tx::LoadedTx) -> AuthnResult<Vec<&'static str>> {
     Ok(match (tx.row.stage, tx.row.user_id) {
         (LoginStage::Password | LoginStage::Link, _) => vec!["password", "passkey"],
+        // What can be set up.
+        (LoginStage::MfaEnroll, Some(_)) => vec!["totp", "passkey"],
         (LoginStage::Mfa, Some(user_id)) => {
             let tenant_id = tx.row.tenant_id;
             let mut out = Vec::new();

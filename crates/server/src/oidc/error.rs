@@ -20,6 +20,8 @@ pub enum ErrorCode {
     InvalidScope,
     AccessDenied,
     LoginRequired,
+    /// `prompt=none` but the sign-in needs the user (MFA step-up).
+    InteractionRequired,
     ConsentRequired,
     RequestNotSupported,
     InvalidToken,
@@ -43,6 +45,7 @@ impl ErrorCode {
             Self::InvalidScope => "invalid_scope",
             Self::AccessDenied => "access_denied",
             Self::LoginRequired => "login_required",
+            Self::InteractionRequired => "interaction_required",
             Self::ConsentRequired => "consent_required",
             Self::RequestNotSupported => "request_not_supported",
             Self::InvalidToken => "invalid_token",

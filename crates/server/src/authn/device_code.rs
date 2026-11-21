@@ -22,7 +22,7 @@ use super::{
     cookie::{self, Kind},
     ctx::Ctx,
     ip::ClientIp,
-    rate_limit, session, tx,
+    mfa_policy, rate_limit, session, tx,
 };
 use crate::{
     app::AppState,
@@ -103,10 +103,12 @@ pub async fn enter(
                     cookies: Vec::new(),
                 });
             }
-            (LoginStage::Consent, Some(session))
+            let step_up = mfa_policy::step_up(&state, &tenant, client.id, &req, session).await?;
+            (step_up.unwrap_or(LoginStage::Consent), Some(session))
         }
         None => (LoginStage::Password, None),
     };
+    let step_up = !matches!(stage, LoginStage::Password | LoginStage::Consent);
     let binding = tx::browser_binding(&headers, &state.config)?;
     let id = tx::create(
         conn,
@@ -116,6 +118,7 @@ pub async fn enter(
             req: &req,
             stage,
             session,
+            step_up,
             binding: &binding,
         },
     )

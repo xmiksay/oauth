@@ -8,9 +8,13 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use entity::{enums::DirectoryRole, tenants};
+use entity::{
+    enums::{DirectoryRole, MfaPolicy},
+    tenants,
+};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ConnectionTrait, EntityTrait, QueryFilter, TransactionTrait,
+    ActiveEnum, ActiveModelTrait, ActiveValue::Set, ConnectionTrait, EntityTrait, QueryFilter,
+    TransactionTrait,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -43,6 +47,7 @@ pub fn view(t: &tenants::Model) -> Value {
         "is_system": t.is_system,
         "disabled": t.disabled,
         "audit_retention_days": t.audit_retention_days,
+        "mfa_policy": t.mfa_policy.to_value(),
         "created_at": ts(&t.created_at),
         "updated_at": ts(&t.updated_at),
     })
@@ -166,6 +171,7 @@ pub struct UpdateTenant {
     display_name: Option<String>,
     disabled: Option<bool>,
     audit_retention_days: Option<i32>,
+    mfa_policy: Option<String>,
 }
 
 /// Validates and stores the changes on `txn` (loading the tenant there),
@@ -206,6 +212,14 @@ async fn save(
             fields.push("audit_retention_days");
         }
     }
+    if let Some(raw) = &body.mfa_policy {
+        let policy = MfaPolicy::try_from_value(raw).map_err(|_| {
+            AppError::BadRequest("mfa_policy must be one of: optional, required".into())
+        })?;
+        if set_changed(&mut row.mfa_policy, policy) {
+            fields.push("mfa_policy");
+        }
+    }
     if fields.is_empty() {
         return Ok(tenant);
     }
@@ -226,7 +240,7 @@ async fn save(
     Ok(updated)
 }
 
-/// Rename, disable / enable, retention. Disabling makes the tenant 404
+/// Rename, disable / enable, retention, MFA policy. Disabling makes the tenant 404
 /// everywhere (sign-in, tokens, management API).
 pub async fn update(
     State(state): State<AppState>,
@@ -263,10 +277,11 @@ pub async fn get_settings(caller: Caller) -> AppResult<axum::Json<Value>> {
 pub struct Settings {
     display_name: Option<String>,
     audit_retention_days: Option<i32>,
+    mfa_policy: Option<String>,
 }
 
-/// `PATCH /api/v1/settings`: a tenant's own Global Admin renames it
-/// or sets its audit retention (creating, disabling and enabling tenants
+/// `PATCH /api/v1/settings`: a tenant's own Global Admin renames it,
+/// sets its audit retention or its MFA policy (creating, disabling and enabling tenants
 /// stay with the system tenant's admins).
 pub async fn update_settings(
     State(state): State<AppState>,
@@ -278,6 +293,7 @@ pub async fn update_settings(
         display_name: body.display_name,
         disabled: None,
         audit_retention_days: body.audit_retention_days,
+        mfa_policy: body.mfa_policy,
     };
     let txn = state.db.begin().await?;
     let updated = save(&txn, &caller, &caller.tenant.slug, &body).await?;

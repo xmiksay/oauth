@@ -2,7 +2,7 @@
 
 use sea_orm::entity::prelude::*;
 
-use crate::enums::{AccessTokenFormat, ClientType, GroupsClaimFormat, SigningAlg};
+use crate::enums::{AccessTokenFormat, AppMfaPolicy, ClientType, GroupsClaimFormat, SigningAlg};
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "applications")]
@@ -29,6 +29,8 @@ pub struct Model {
     pub refresh_token_ttl_secs: i32,
     /// Opt-in to the device authorization grant (RFC 8628).
     pub device_code_enabled: bool,
+    /// `required` forces MFA for sign-ins to this app (as client or resource).
+    pub mfa_policy: AppMfaPolicy,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
 }

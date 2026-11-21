@@ -2,6 +2,8 @@
 
 use sea_orm::entity::prelude::*;
 
+use crate::enums::MfaPolicy;
+
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "tenants")]
 pub struct Model {
@@ -13,6 +15,7 @@ pub struct Model {
     pub is_system: bool,
     pub disabled: bool,
     pub audit_retention_days: i32,
+    pub mfa_policy: MfaPolicy,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
 }
