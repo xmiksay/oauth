@@ -50,8 +50,12 @@ GlobalAdmin, like its redirect URIs; never on built-in apps). Others get
   token as in the code flow, an ID token with `openid` (no `nonce`) and a
   refresh token with `offline_access`.
 - Audited: `device_code.approve` / `device_code.deny` (the user, target the
-  client app; deny `reason` `declined` or `admin_consent_required`) and
+  client app; deny `reason` `declined`, `admin_consent_required`,
+  `session_ended`, `idp_repointed` or `idp_disabled`) and
   `device_code.redeem` (the client, target the user, with the new session).
+  Every path that ends the device's login transaction without approving
+  denies the device request on the same DB transaction as its audit event,
+  so the device gets `access_denied` instead of polling until expiry.
 
 ## Guessing user codes
 

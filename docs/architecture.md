@@ -67,8 +67,7 @@ proxy sits in front; the server ignores the forwarded host either way).
 | `GET /.well-known/openid-configuration` (CORS: [CORS](#cors) for this and JWKS / token / userinfo / revoke, incl. `OPTIONS` preflights) | app | `oidc::discovery`, `cors` |
 | `GET /discovery/keys` — JWKS (next + active + unexpired retired), `max-age=300` | app | `oidc::discovery` |
 | `GET /oauth2/authorize` | app | `oidc::authorize` |
-| `POST /oauth2/token` | app | `oidc::token`, `oidc::refresh_grant`, `oidc::device_grant` |
-| `POST /oauth2/devicecode` — device authorization request (RFC 8628) | app | `oidc::device_authorization` |
+| `POST /oauth2/token`, `POST /oauth2/devicecode` (RFC 8628 device authorization) | app | `oidc::token`, `oidc::refresh_grant`, `oidc::device_grant`, `oidc::device_authorization` |
 | `GET\|POST /oauth2/userinfo` | app | `oidc::userinfo` |
 | `POST /oauth2/introspect` (RFC 7662) | app | `oidc::introspect` |
 | `POST /oauth2/revoke` (RFC 7009) | app | `oidc::revoke` |
@@ -264,15 +263,9 @@ need no consent (grants are keyed by a resource app).
   client app (only roles allowing `application` members; delegated tokens
   only get roles allowing `user`); no refresh / ID token. App-only tokens
   carry no `scp`, so resources must authorize them by `roles`.
-- `urn:ietf:params:oauth:grant-type:device_code`: see below.
+- `urn:ietf:params:oauth:grant-type:device_code` (RFC 8628): [device_code.md](device_code.md).
 - Responses `Cache-Control: no-store`; errors RFC 6749 §5.2 JSON (401 +
   `WWW-Authenticate: Basic` for `invalid_client` after Basic auth).
-
-### Device authorization grant
-
-RFC 8628 for apps that opted in (`device_code_enabled`): `POST
-/oauth2/devicecode`, code entry on `/device`, polling the token endpoint.
-See [device_code.md](device_code.md).
 
 ### Tokens
 
@@ -328,8 +321,7 @@ Cross-origin SPAs (public client + PKCE on another host) need to read the
 protocol endpoints from the browser. CORS — preflight and actual responses —
 exists **only** on discovery, JWKS, `/oauth2/token`, `/oauth2/revoke` and
 `/oauth2/userinfo`; never on the login API, the management API, introspection
-(confidential clients only), `/oauth2/devicecode` (its clients are devices
-without a usable browser, never a web page) or logout (the `POST` is the tenant's own SPA,
+(confidential clients only), `/oauth2/devicecode` or logout (the `POST` is the tenant's own SPA,
 CSRF-checked by `Origin`; `GET` is a navigation).
 
 - **Allowed origins of an app** = its explicit `web_origins` ∪, for a public
@@ -404,9 +396,7 @@ Refresh-token lifetimes are capped (90 days; public clients 7 days). Objects of 
 Every mutation writes its `audit_events` row in the same transaction; the
 login API records sign-ins (success with the new session, failures with a
 reason code; rate-limited attempts are not logged) and forced password
-changes; the token endpoint records refresh-token reuse, code replay and
-device-code redemptions; device approvals / denials are recorded by the
-login step that decides them.
+changes; the token endpoint records refresh-token reuse and code replay.
 Withdrawing a consent grant revokes the client's refresh families and
 opaque access tokens for the resource (one user, or everyone for an admin
 grant); deleting a scope revokes the families holding it, and refresh
