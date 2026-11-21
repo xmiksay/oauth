@@ -123,7 +123,7 @@ Additional rules:
 ```jsonc
 // Tenant
 { "id", "slug", "display_name", "is_system": false, "disabled": false,
-  "audit_retention_days": 90, "created_at", "updated_at" }
+  "audit_retention_days": 90, "mfa_policy": "optional|required", "created_at", "updated_at" }
 // User (list / create / update)
 { "id", "email", "display_name", "user_type": "member", "email_verified": false,
   "disabled": false, "must_change_password": true, "has_password": true,
@@ -159,6 +159,7 @@ Additional rules:
   "groups_claim_format": "id|name",         // what the groups claim of tokens for this resource carries
   "access_token_ttl_secs": 3600, "refresh_token_ttl_secs": 1209600,
   "device_code_enabled": false,             // RFC 8628 device code grant opt-in
+  "mfa_policy": "inherit|required",         // required: sign-ins to it (client or resource) need MFA
   "created_at", "updated_at" }
 // ClientSecret (the value only in the create response, as "secret")
 { "id", "hint": "abc", "description": null, "expires_at", "created_at" }
@@ -188,7 +189,7 @@ Additional rules:
 | `GET /api/v1/tenants` *paged* `?search=` (slug, name) | – | `Tenant`s |
 | `POST /api/v1/tenants` | `{ slug, display_name, admin_email, admin_display_name? }` | 201 `{ tenant, admin: { id, email }, one_time_password }` |
 | `GET /api/v1/tenants/{slug}` | – | `Tenant` (also disabled ones) |
-| `PATCH /api/v1/tenants/{slug}` | `{ display_name?, disabled?, audit_retention_days? (30–3650) }` | `Tenant` |
+| `PATCH /api/v1/tenants/{slug}` | `{ display_name?, disabled?, audit_retention_days? (30–3650), mfa_policy? (optional\|required) }` | `Tenant` |
 | `GET /api/v1/tenants/{slug}/users` *paged* `?search=` (email, name) | – | that tenant's `User`s |
 | `GET /api/v1/tenants/{slug}/users/{id}` | – | `UserDetail` (as `GET users/{id}`) |
 | `POST /api/v1/tenants/{slug}/users/{id}/reset-password` | optional: empty, or a JSON object with no fields (`{}`), read as JSON whatever the `Content-Type`; any field or non-object / malformed body → 400 (the password is always generated; the error never quotes the body, not even a field name); over the body limit → 413 | `{ one_time_password, must_change_password: true }` — as `reset-password` without `password`: sessions, refresh tokens and opaque access tokens revoked, the user notified ("reset by a system administrator") |
@@ -222,7 +223,7 @@ id), and in the target tenant's log with the user's `email` and
 | Method & path | Body | Response |
 |---|---|---|
 | `GET /api/v1/settings` | – | `Tenant` |
-| `PATCH /api/v1/settings` | `{ display_name?, audit_retention_days? (30–3650) }` | `Tenant` (audited as `tenant.update` in the tenant's own log) |
+| `PATCH /api/v1/settings` | `{ display_name?, audit_retention_days? (30–3650), mfa_policy? (optional\|required) }` | `Tenant` (audited as `tenant.update` in the tenant's own log) |
 
 Creating, disabling and enabling tenants stay with the system tenant's
 GlobalAdmins (`disabled` here → 400, unknown field).
@@ -277,7 +278,7 @@ can be the `groups` claim (`groups_claim_format`).
 | Method & path | Body | Response |
 |---|---|---|
 | `GET applications` *paged* `?search=` (name, client_id) | – | `Application`s |
-| `POST applications` | `{ display_name, client_id?, client_type? (confidential), redirect_uris?, post_logout_redirect_uris?, web_origins?, identifier_uri?, access_token_format?, signing_alg?, groups_claim_format?, access_token_ttl_secs?, refresh_token_ttl_secs?, device_code_enabled? (false) }` | 201 `Application` |
+| `POST applications` | `{ display_name, client_id?, client_type? (confidential), redirect_uris?, post_logout_redirect_uris?, web_origins?, identifier_uri?, access_token_format?, signing_alg?, groups_claim_format?, access_token_ttl_secs?, refresh_token_ttl_secs?, device_code_enabled? (false), mfa_policy? (inherit) }` | 201 `Application` |
 | `GET applications/{id}` | – | `Application` |
 | `PATCH applications/{id}` | same fields except `client_id`, `client_type` (immutable → 400); `identifier_uri: null` clears it | `Application` |
 | `DELETE applications/{id}` | – | 204 (everything of the app cascades) |
@@ -318,6 +319,12 @@ Validation:
   grant (`/oauth2/devicecode` + the `device_code` token grant, see
   [../device_code.md](../device_code.md)).
   Not settable on built-in apps (403).
+- `mfa_policy` `inherit|required` (default `inherit`; a GlobalAdmin may set
+  it on built-in apps too): `required` makes every sign-in to the app — as
+  the client, or when its scopes are requested as the resource — multi-factor
+  even under a tenant policy of `optional` (forced enrolment / step-up as in
+  [../authn.md](../authn.md#mfa-policy)). There is no `optional`: an app can
+  only tighten the tenant's `mfa_policy`.
 
 ### Secrets
 
@@ -408,10 +415,10 @@ exclusive, RFC 3339) → `AuditEvent`s.
 | `token.refresh_reuse`, `token.code_replay` | client app → user, failure | `family_id` / `authorization_code_id` |
 | `tenant.create`, `tenant.update` | system admin → tenant (logged in the system tenant; a system admin's `tenant.update` of another tenant is ALSO logged in that tenant's own log, in the same transaction; a tenant admin's settings change only in their own) | `slug`, `admin_user_id` / `fields`, `disabled` |
 | `user.create`, `user.update`, `user.delete`, `user.password_reset`, `user.mfa_reset`, `user.sessions_revoke` | admin or app → user (JIT federation: user → self; a system admin's reset in another tenant: system admin → user in both the system log and the tenant's, see Tenants) | create: `email`, `password` (`generated` / `set_by_admin`), JIT: `via: "federation"`, `idp_id`; update: `fields`, `disabled`; delete: `email`; reset: `must_change_password`, `generated`; mfa reset: `passkeys_removed`, `telegram_unlinked`; by a system admin also `email`, plus `tenant_id`, `tenant_slug` in the system log and `via: "system_admin"` in the tenant's |
-| `user.mfa.passkey_register`, `user.mfa.passkey_rename`, `user.mfa.passkey_remove` | user → self (invite: by the link's user), admin → user (remove) | `passkey_id`, `name`, `via` (`me` / `admin` / `invite`) |
+| `user.mfa.passkey_register`, `user.mfa.passkey_rename`, `user.mfa.passkey_remove` | user → self (invite: by the link's user), admin → user (remove) | `passkey_id`, `name`, `via` (`me` / `admin` / `invite` / `sign_in` — forced enrolment) |
 | `user.mfa.passkey_sign_count_regression` | user → self (failure) | `via: "reauth"` |
 | `user.password_change` | user → self | `via`: `sign_in` (forced change) / `me` |
-| `user.profile_update`, `user.session_revoke`, `user.mfa.totp_enroll`, `user.mfa.totp_remove`, `user.mfa.recovery_codes_regenerate` | user → self | `fields` / `session_id` |
+| `user.profile_update`, `user.session_revoke`, `user.mfa.totp_enroll`, `user.mfa.totp_remove`, `user.mfa.recovery_codes_regenerate` | user → self | `fields` / `session_id`; `totp_enroll` during a sign-in's forced enrolment: `via: "sign_in"` |
 | `user.invite` | admin → user | `email`, `resend` |
 | `user.identity_link`, `user.identity_unlink` | user → self, admin → user (unlink) | `idp_id`, `via` (`sign_in` / `me` / `admin`), `identity_id`; failures (outcome `failure`) carry `reason` — a My Account link that didn't complete, or a link skipped when a sign-in completed (`via: sign_in`, `reason` `link_unavailable` / `already_linked`) |
 | `identity_provider.create`, `identity_provider.update`, `identity_provider.delete` | GlobalAdmin → identity provider | `name`, `issuer`, `policy` / `fields`, `identities_removed` / `users_only_via` |

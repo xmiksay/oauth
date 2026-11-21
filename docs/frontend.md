@@ -69,6 +69,13 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   via Telegram", `401 invalid_code` → "Wrong or expired code…", `503 telegram_unavailable`
   (no bot on the server) → "Telegram sign-in is unavailable…" and the MFA step stays;
   404 / 409 / 429 as above.
+  Step `mfa_enroll` ("Set up a second factor", `MfaEnrollStep`; MFA policy, the user has
+  no factor): "Use an authenticator app" `POST`s `…/enroll/totp` and shows the QR code /
+  secret with a code input (`…/enroll/totp/confirm`); the confirmation's `recovery_codes`
+  are shown in `SecretOnceDialog` and only closing it continues with the step / redirect of
+  the same response (`useLoginFlow.resume`). The secret and the codes live only in the
+  step component's local refs. "Create a passkey" (WebAuthn available) runs
+  `…/enroll/passkey/options` → `create()` → `…/enroll/passkey`.
 - **Federation (login)**: the password step shows a "Sign in with {name}" button per
   `idps` entry (below an "or" divider). A click `POST`s `…/federation/{idpId}` and follows the
   returned upstream authorize URL with a full page load (`lib/navigate.navigateTo`, never a
@@ -157,6 +164,10 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   one-time secret) and is dropped when done. "Unlink" → re-auth → `DELETE me/telegram`
   (404 = already unlinked). The admin user detail shows "Telegram linked"; Reset MFA
   unlinks it too.
+- **MFA policy** (admin): Settings (`TenantSettings`) has "Multi-factor authentication"
+  (`mfa_policy` optional / required, Global Admins only); an app's Token configuration tab
+  (`AppTokenConfig`) has its override (`inherit` / `required`), editable wherever the token
+  lifetimes are (built-in apps: Global Admins). Both PATCH only when changed.
 - **Tenants** (admin `areas/admin/access/TenantsPage`, nav "Tenants": only on the system host
   for a Global Admin): list, create (first admin's one-time password via `SecretOnceDialog`),
   edit, enable / disable. Every tenant but the system one links "Users" to

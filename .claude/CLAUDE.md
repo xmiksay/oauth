@@ -153,6 +153,11 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   redirect URI. Polls and redemption hold the row `FOR UPDATE`; the decision
   is a CAS on `pending`. Toggling `device_code_enabled` is a credential
   change (`ensure_may_manage_credentials`).
+- MFA policy (`authn::mfa_policy`, [docs/authn.md](../docs/authn.md#mfa-policy)): tenant
+  `optional|required`, app `inherit|required` (only tightens; client and requested resource
+  both count). Every sign-in completes through `complete::proceed` (which routes a non-MFA
+  sign-in to `mfa` / `mfa_enroll`) and every session reuse checks `mfa_policy::step_up` —
+  never issue a code around them. `acr: "mfa"` is derived from `amr` in `tokens::claims`.
 - Bearer values (cookies, codes, tokens) come from `secret::random_token`
   and are stored only as `secret::hash`; unguessable handles from
   `secret::random_uuid` (not UUIDv7).

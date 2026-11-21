@@ -1,0 +1,217 @@
+// Test-only crate: helpers outside `#[test]` fns (e.g. in `common`) panic on
+// setup failure by design, which clippy's in-tests allowances don't cover.
+#![allow(
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
+
+//! MFA policy at sign-in: forced enrolment (TOTP, passkey), step-up of a
+//! single-factor session, `acr` in tokens.
+mod common;
+
+use axum::http::StatusCode;
+use common::{
+    authenticator::{Alg, Authenticator, Tweak},
+    browser::{Browser, authorize_url, current_totp, query_of},
+    flow::{Fixture, PASSWORD, T, WEB_CB},
+    mgmt::{audited, base32_decode},
+};
+use entity::{
+    applications,
+    enums::{AppMfaPolicy, MfaPolicy},
+    tenants,
+};
+use oauth_server::authn::totp;
+use sea_orm::{ActiveModelTrait, ActiveValue::Set};
+use serde_json::{Value, json};
+
+const OPENID: &str = "openid";
+
+async fn tenant_policy(f: &Fixture, policy: MfaPolicy) {
+    let mut row: tenants::ActiveModel = f.tenant.clone().into();
+    row.mfa_policy = Set(policy);
+    row.update(&f.db).await.unwrap();
+}
+
+async fn app_policy(f: &Fixture, app: &applications::Model, policy: AppMfaPolicy) {
+    let mut row: applications::ActiveModel = app.clone().into();
+    row.mfa_policy = Set(policy);
+    row.update(&f.db).await.unwrap();
+}
+
+fn url(scope: &str, extra: &[(&str, &str)]) -> String {
+    authorize_url("web-app", WEB_CB, scope, extra)
+}
+
+/// Password step of a new transaction in `browser`: `(tx, response)`.
+async fn password(browser: &mut Browser, scope: &str) -> (String, Value) {
+    let tx = browser.authorize(&url(scope, &[])).await.unwrap();
+    let body = json!({ "email": "ann@example.com", "password": PASSWORD });
+    let (status, resp) = browser.step(&tx, "password", body).await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    (tx, resp)
+}
+
+/// Redeems the code of `redirect`; returns the ID token's claims.
+async fn id_claims(f: &Fixture, redirect: &str) -> serde_json::Map<String, Value> {
+    let code = query_of(redirect)["code"].clone();
+    let (status, tokens) = f.redeem(&f.web, Some(&f.web_secret), &code, WEB_CB).await;
+    assert_eq!(status, StatusCode::OK, "{tokens}");
+    f.verify_jwt(tokens["id_token"].as_str().unwrap(), "web-app")
+        .await
+}
+
+fn code_for(secret_b32: &str) -> String {
+    let now = u64::try_from(chrono::Utc::now().timestamp()).unwrap();
+    let secret = base32_decode(secret_b32);
+    format!("{:06}", totp::hotp(&secret, now / totp::STEP_SECS))
+}
+
+#[tokio::test]
+async fn optional_policy_issues_no_acr_and_discovery_advertises_it() {
+    let f = Fixture::new().await;
+    let mut browser = f.browser();
+    let (_, resp) = password(&mut browser, OPENID).await;
+    let claims = id_claims(&f, resp["redirect"].as_str().unwrap()).await;
+    assert_eq!(claims["amr"], json!(["pwd"]));
+    assert!(claims.get("acr").is_none());
+    let (status, _, body) = browser.get("/.well-known/openid-configuration").await;
+    assert_eq!(status, StatusCode::OK);
+    let doc: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(doc["acr_values_supported"], json!(["mfa"]));
+}
+
+#[tokio::test]
+async fn required_tenant_forces_totp_enrolment_before_the_code() {
+    let f = Fixture::new().await;
+    tenant_policy(&f, MfaPolicy::Required).await;
+    let mut browser = f.browser();
+    let (tx, resp) = password(&mut browser, OPENID).await;
+    assert_eq!(resp["step"], "mfa_enroll", "{resp}");
+    assert_eq!(resp["factors"], json!(["totp", "passkey"]));
+    // Nothing else is accepted at this stage.
+    let (status, _) = browser.step(&tx, "totp", json!({ "code": "123456" })).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let (status, _) = browser
+        .step(&tx, "enroll/totp/confirm", json!({ "code": "123456" }))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "no pending enrolment yet");
+    let (status, pending) = browser.step(&tx, "enroll/totp", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{pending}");
+    let secret = pending["secret"].as_str().unwrap();
+    let (status, body) = browser
+        .step(&tx, "enroll/totp/confirm", json!({ "code": "000000x" }))
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_eq!(body["error"], "invalid_code");
+    let (status, done) = browser
+        .step(
+            &tx,
+            "enroll/totp/confirm",
+            json!({ "code": code_for(secret) }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{done}");
+    assert_eq!(done["recovery_codes"].as_array().unwrap().len(), 10);
+    let claims = id_claims(&f, done["redirect"].as_str().unwrap()).await;
+    assert_eq!(claims["amr"], json!(["pwd", "otp", "mfa"]));
+    assert_eq!(claims["acr"], "mfa");
+    let enrolled = audited(&f.db, "user.mfa.totp_enroll", f.user.id).await;
+    assert_eq!(enrolled[0]["via"], "sign_in");
+    // Next time the new factor is simply asked for.
+    let (_, resp) = password(&mut f.browser(), OPENID).await;
+    assert_eq!(resp["step"], "mfa", "{resp}");
+}
+
+#[tokio::test]
+async fn required_tenant_accepts_a_new_passkey_as_the_second_factor() {
+    let f = Fixture::new().await;
+    tenant_policy(&f, MfaPolicy::Required).await;
+    let mut browser = f.browser();
+    let (tx, resp) = password(&mut browser, OPENID).await;
+    assert_eq!(resp["step"], "mfa_enroll", "{resp}");
+    let (status, options) = browser.step(&tx, "enroll/passkey/options", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{options}");
+    let mut auth = Authenticator::new(Alg::Es256, T);
+    let credential = auth.create(&options, &Tweak::default());
+    let (status, done) = browser
+        .step(&tx, "enroll/passkey", json!({ "credential": credential }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{done}");
+    let claims = id_claims(&f, done["redirect"].as_str().unwrap()).await;
+    assert_eq!(claims["amr"], json!(["pwd", "hwk", "mfa"]));
+    assert_eq!(claims["acr"], "mfa");
+    let registered = audited(&f.db, "user.mfa.passkey_register", f.user.id).await;
+    assert_eq!(registered[0]["via"], "sign_in");
+}
+
+#[tokio::test]
+async fn an_app_requiring_mfa_steps_up_a_single_factor_session() {
+    let f = Fixture::new().await;
+    let mut browser = f.browser();
+    let (_, resp) = password(&mut browser, OPENID).await;
+    assert!(resp["redirect"].is_string(), "{resp}");
+    let first_session = browser.cookies["__Host-oauth_sid"].clone();
+    app_policy(&f, &f.web, AppMfaPolicy::Required).await;
+    // prompt=none can't step up.
+    let redirect = browser
+        .authorize(&url(OPENID, &[("prompt", "none")]))
+        .await
+        .unwrap_err();
+    assert_eq!(query_of(&redirect)["error"], "interaction_required");
+    // Without a factor: enrolment, without asking for the password again.
+    let tx = browser.authorize(&url(OPENID, &[])).await.unwrap();
+    let (status, _, view) = browser.get(&format!("/api/authn/tx/{tx}")).await;
+    assert_eq!(status, StatusCode::OK);
+    let view: Value = serde_json::from_str(&view).unwrap();
+    assert_eq!(view["step"], "mfa_enroll", "{view}");
+    // With one: the factor, then a new multi-factor session.
+    f.enroll_totp(&f.user).await;
+    let tx = browser.authorize(&url(OPENID, &[])).await.unwrap();
+    let (status, resp) = browser
+        .step(&tx, "totp", json!({ "code": current_totp() }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    let claims = id_claims(&f, resp["redirect"].as_str().unwrap()).await;
+    assert_eq!(claims["amr"], json!(["pwd", "otp", "mfa"]));
+    assert_ne!(browser.cookies["__Host-oauth_sid"], first_session);
+    // The stepped-up session is reused silently.
+    let redirect = browser.authorize(&url(OPENID, &[])).await.unwrap_err();
+    assert!(query_of(&redirect).contains_key("code"), "{redirect}");
+}
+
+#[tokio::test]
+async fn a_resource_requiring_mfa_counts_too() {
+    let f = Fixture::new().await;
+    app_policy(&f, &f.orders, AppMfaPolicy::Required).await;
+    let (_, resp) = password(&mut f.browser(), OPENID).await;
+    assert!(
+        resp["redirect"].is_string(),
+        "only the resource requires it: {resp}"
+    );
+    let (_, resp) = password(&mut f.browser(), "openid api://orders/Orders.Read").await;
+    assert_eq!(resp["step"], "mfa_enroll", "{resp}");
+}
+
+#[tokio::test]
+async fn a_device_sign_in_steps_up_the_browser_session_too() {
+    let f = Fixture::new().await;
+    let mut browser = f.browser();
+    let (_, resp) = password(&mut browser, OPENID).await;
+    assert!(resp["redirect"].is_string(), "{resp}");
+    common::device::enable(&f, &f.spa).await;
+    app_policy(&f, &f.spa, AppMfaPolicy::Required).await;
+    f.enroll_totp(&f.user).await;
+    let (status, started) = common::device::start(&f, &f.spa, None, OPENID).await;
+    assert_eq!(status, StatusCode::OK, "{started}");
+    let user_code = started["user_code"].as_str().unwrap();
+    let tx = common::device::enter_tx(&mut browser, user_code).await;
+    let (status, view) = browser
+        .step(&tx, "totp", json!({ "code": current_totp() }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{view}");
+    // The device is still confirmed explicitly.
+    assert_eq!(view["step"], "consent", "{view}");
+}

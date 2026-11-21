@@ -15,9 +15,10 @@ compare-and-set updates, so a step submitted twice advances it once:
 
 | Stage | Accepts | Next |
 |---|---|---|
-| `password` | password, passwordless passkey, `federation/{idp}` (upstream round trip) | `mfa` if the user has a factor (unless a passkey or a trusted upstream MFA already made it multi-factor), `link` for an unknown upstream identity under `link_only`, else `change_password` / `consent` / done |
+| `password` | password, passwordless passkey, `federation/{idp}` (upstream round trip) | `mfa` if the user has a factor (unless a passkey or a trusted upstream MFA already made it multi-factor), `mfa_enroll` if MFA is required and they have none, `link` for an unknown upstream identity under `link_only`, else `change_password` / `consent` / done |
 | `link` | password or passkey of the local account that should own the pending upstream identity (`pending_identity`) | as after `password`; the identity is linked in the transaction that completes the sign-in |
 | `mfa` | TOTP, recovery code, passkey, Telegram code | `change_password` / `consent` / done |
+| `mfa_enroll` | a new TOTP secret confirmed with a code, or a new passkey | `change_password` / `consent` / done |
 | `change_password` | a new password | `consent` / done |
 | `consent` | approve / decline | done |
 
@@ -30,6 +31,41 @@ created, a pending identity linked, the sign-in audited and the code issued.
 `["hwk"|"swk","user","mfa"]` for a passwordless passkey sign-in, `["fed"]` after an
 upstream sign-in (`["fed","mfa"]` when the IdP is trusted for MFA and reported it,
 `["fed","otp","mfa"]` etc. after a local second factor).
+
+`acr`: ID and access tokens carry `"acr": "mfa"` when `amr` contains `mfa`
+(a local second factor, a passwordless passkey, or an upstream trusted for
+MFA); single-factor sign-ins have no `acr`. Discovery lists
+`acr_values_supported: ["mfa"]`; the `acr_values` request parameter is not
+interpreted (the policy below decides).
+
+## MFA policy
+
+`tenants.mfa_policy` (`optional` default | `required`) and
+`applications.mfa_policy` (`inherit` default | `required`: an app can only
+tighten). A sign-in needs MFA when the tenant, the client app or the
+requested resource app requires it (`authn::mfa_policy`). It is checked
+whenever a sign-in step would complete the sign-in (`complete::proceed`,
+before `change_password` and `consent`) and whenever `/authorize` or the
+device flow would reuse a session:
+
+- The user has a factor (TOTP, passkey, Telegram — fail closed without a
+  bot as for `mfa`): stage `mfa`.
+- They have none: stage `mfa_enroll` — they set up TOTP (recovery codes are
+  issued as in My Account) or a passkey inside the login transaction; it is
+  audited (`user.mfa.totp_enroll` / `user.mfa.passkey_register`, `via:
+  sign_in`), the user is notified, and the new factor counts as this sign-in's
+  second factor. Only someone past the first factor gets here, which is the
+  usual trade-off of forced enrolment: the first factor alone lets the user
+  (or whoever holds it) register the first second factor.
+- A single-factor session is stepped up instead of reused: a transaction at
+  `mfa` / `mfa_enroll` for the session's user (keeping its `auth_time`),
+  whose completion replaces the session with a multi-factor one.
+  `prompt=none` gets `interaction_required`.
+- An upstream sign-in counts as MFA only when the IdP is trusted for it
+  (`trust_upstream_mfa`, [federation.md](federation.md)).
+
+The policy is read at sign-in / authorize time: tokens already issued and
+refresh grants of existing families are not affected by a later change.
 
 ## Sessions & CSRF
 

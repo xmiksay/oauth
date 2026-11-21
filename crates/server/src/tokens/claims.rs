@@ -57,7 +57,7 @@ pub fn access_token(input: &AccessInput<'_>) -> Map<String, Value> {
             claims.insert("sub".into(), oid.clone().into());
             claims.insert("oid".into(), oid.into());
             claims.insert("sid".into(), user.session_id.to_string().into());
-            claims.insert("amr".into(), json!(user.amr));
+            insert_amr(&mut claims, user.amr);
             claims.insert("auth_time".into(), user.auth_time.into());
             claims.insert("idtyp".into(), "user".into());
             // Delegated tokens carry `scp` even when empty-handed resources
@@ -76,6 +76,19 @@ pub fn access_token(input: &AccessInput<'_>) -> Map<String, Value> {
         claims.insert("roles".into(), json!(input.roles));
     }
     claims
+}
+
+/// `acr` value of a multi-factor sign-in (advertised in discovery).
+pub const ACR_MFA: &str = "mfa";
+
+/// `amr`, plus `acr: "mfa"` when the sign-in was multi-factor (a local
+/// second factor, a passkey or an upstream trusted for MFA); single-factor
+/// sign-ins carry no `acr`.
+fn insert_amr(claims: &mut Map<String, Value>, amr: &[String]) {
+    claims.insert("amr".into(), json!(amr));
+    if amr.iter().any(|a| a == "mfa") {
+        claims.insert("acr".into(), ACR_MFA.into());
+    }
 }
 
 fn insert_groups(claims: &mut Map<String, Value>, groups: &[String]) {
@@ -109,7 +122,7 @@ pub fn id_token(input: &IdTokenInput<'_>) -> Map<String, Value> {
     claims.insert("oid".into(), oid.into());
     claims.insert("tid".into(), input.tenant_id.to_string().into());
     claims.insert("sid".into(), input.user.session_id.to_string().into());
-    claims.insert("amr".into(), json!(input.user.amr));
+    insert_amr(&mut claims, input.user.amr);
     claims.insert("auth_time".into(), input.user.auth_time.into());
     claims.insert("ver".into(), TOKEN_VERSION.into());
     claims.insert("at_hash".into(), at_hash(input.access_token).into());
@@ -215,6 +228,7 @@ mod tests {
         assert_eq!(c["auth_time"], 90);
         assert_eq!(c["ver"], "2.0");
         assert!(c.get("hasgroups").is_none());
+        assert!(c.get("acr").is_none(), "single-factor: no acr");
     }
 
     #[test]
@@ -281,6 +295,7 @@ mod tests {
         assert_eq!(c["email_verified"], true);
         assert!(c.get("name").is_none(), "profile scope not granted");
         assert_eq!(c["amr"], json!(["pwd", "mfa"]));
+        assert_eq!(c["acr"], "mfa");
         assert_eq!(c["at_hash"], at_hash("token"));
         let profile = profile_claims(&u, &["profile".to_owned()]);
         assert_eq!(profile["name"], "Ann");

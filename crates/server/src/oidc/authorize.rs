@@ -24,7 +24,7 @@ use crate::{
         self, AuthnError,
         cookie::{self, Kind},
         ip::ClientIp,
-        rate_limit, session, tx,
+        mfa_policy, rate_limit, session, tx,
     },
     consent::Decision,
     tenancy::Tenant,
@@ -116,9 +116,18 @@ async fn handle(env: &Env<'_>, query: &str) -> OAuthResult<Response> {
         return to_login(env, &client, &req, LoginStage::Password, None).await;
     };
 
+    let none = req.prompt == Some(Prompt::None);
+    // A single-factor session meeting an app that requires MFA: step up
+    // (the user's second factor, or enrolment) instead of reusing it.
+    if let Some(stage) = mfa_policy::step_up(state, tenant, client.id, &req, &session).await? {
+        if none {
+            let msg = "multi-factor authentication is required";
+            return Ok(fail(ErrorCode::InteractionRequired, msg));
+        }
+        return to_login(env, &client, &req, stage, Some(&session)).await;
+    }
     let force = authn::force_consent(&req);
     let eval = authn::evaluate_consent(conn, &client, &req, user.id, force).await?;
-    let none = req.prompt == Some(Prompt::None);
     match eval.decision {
         Decision::Granted => {
             let url =
@@ -176,6 +185,7 @@ async fn to_login(
             req,
             stage,
             session,
+            step_up: !matches!(stage, LoginStage::Password | LoginStage::Consent),
             binding: &binding,
         },
     )

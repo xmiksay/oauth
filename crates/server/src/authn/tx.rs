@@ -33,8 +33,12 @@ pub struct NewTx<'a> {
     pub client_app_id: Uuid,
     pub req: &'a AuthRequest,
     pub stage: LoginStage,
-    /// Set for consent-only transactions that reuse an existing session.
+    /// Set for consent-only transactions that reuse an existing session,
+    /// and for step-ups of one (see `step_up`).
     pub session: Option<&'a sessions::Model>,
+    /// The session's sign-in continues with a further factor (MFA policy)
+    /// and ends in a new session instead of reusing it.
+    pub step_up: bool,
     /// Value of the browser's transaction-binding cookie.
     pub binding: &'a str,
 }
@@ -51,7 +55,7 @@ pub async fn create(conn: &impl ConnectionTrait, new: NewTx<'_>) -> anyhow::Resu
         user_id: Set(new.session.map(|s| s.user_id)),
         amr: Set(new.session.map(|s| s.amr.clone()).unwrap_or_default()),
         auth_time: Set(new.session.map(|s| s.auth_time)),
-        session_id: Set(new.session.map(|s| s.id)),
+        session_id: Set(new.session.filter(|_| !new.step_up).map(|s| s.id)),
         binding_hash: Set(secret::hash(new.binding)),
         expires_at: Set(now + Duration::minutes(TX_TTL_MINUTES)),
         ..Default::default()

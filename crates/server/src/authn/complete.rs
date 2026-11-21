@@ -22,6 +22,7 @@ use super::{
     ctx::Ctx,
     device, device_code,
     ip::ClientIp,
+    mfa_policy,
     session::{self, NewSession},
     tx::{self, LoadedTx},
 };
@@ -112,6 +113,20 @@ pub async fn proceed(
     if user.disabled {
         return Err(AuthnError::AccountDisabled);
     }
+    // MFA policy: a sign-in that isn't multi-factor yet goes through the
+    // user's second factor (or its enrolment) before anything else. Consent
+    // is only ever reached after this check.
+    let next = match next {
+        Some(LoginStage::Mfa | LoginStage::MfaEnroll) => next,
+        _ if from == LoginStage::Consent => next,
+        _ => {
+            let app = tx.row.application_id;
+            let amr = &tx.row.amr;
+            mfa_policy::missing(ctx.state, ctx.tenant, app, &tx.req, user.id, amr)
+                .await?
+                .or(next)
+        }
+    };
     if let Some(stage) = next {
         tx::advance(conn, &tx.row, from, stage).await?;
         tx.row.stage = stage;

@@ -72,7 +72,7 @@ proxy sits in front; the server ignores the forwarded host either way).
 | `POST /oauth2/introspect` (RFC 7662) | app | `oidc::introspect` |
 | `POST /oauth2/revoke` (RFC 7009) | app | `oidc::revoke` |
 | `GET /oauth2/logout` (RP-initiated), `POST` (confirmation page, CSRF-checked) | app | `oidc::logout` |
-| `GET /api/authn/tx/{id}`, `POST …/{password,totp,recovery,passkey/options,passkey,telegram/send,telegram,change-password,consent,federation/{idp},discover}` — login JSON API, contract in [api/authn.md](api/authn.md) | app | `authn` |
+| `GET /api/authn/tx/{id}`, `POST …/{password,totp,recovery,passkey/options,passkey,telegram/send,telegram,enroll/totp,enroll/totp/confirm,enroll/passkey/options,enroll/passkey,change-password,consent,federation/{idp},discover}` — login JSON API, contract in [api/authn.md](api/authn.md) | app | `authn` |
 | `GET /federation/callback` — return from an upstream identity provider ([federation.md](federation.md)) | app | `authn::federation` |
 | `POST /api/authn/password-reset`, `POST /api/authn/email/{verify,reset,invite,invite/passkey/options,invite/passkey}` — email links (the token is the credential), same contract | app | `authn::{reset,email}` |
 | `POST /api/authn/device` — a device's user code entered on `/device` → login transaction, same contract | app | `authn::device_code` |
@@ -159,13 +159,13 @@ migration transaction). Deleting a tenant cascades to everything it owns.
 
 | Table | Notes |
 |---|---|
-| `tenants` | `slug` unique (`^[a-z0-9][a-z0-9-]{1,62}$`, reserved list in `directory::slug`), `is_system` (at most one), `disabled`, `audit_retention_days` |
+| `tenants` | `slug` unique (`^[a-z0-9][a-z0-9-]{1,62}$`, reserved list in `directory::slug`), `is_system` (at most one), `disabled`, `audit_retention_days`, `mfa_policy` optional\|required |
 | `users` | `user_type` member\|guest, `email` unique per tenant on `lower(email)` (casing kept), `password_hash` (argon2id PHC, nullable), `must_change_password`, `disabled`, `first_device_at` (first sign-in device recorded), `webauthn_handle` (random 32-byte WebAuthn user handle) |
 | `webauthn_credentials` · `webauthn_challenges` | passkeys (credential id unique per tenant, COSE key, counter, backup flags) and single-use 5-min ceremony challenges — [passkeys.md](passkeys.md) |
 | `user_totp` · `user_recovery_codes` | sealed TOTP secret + `confirmed_at`; SHA-256 code hashes + `used_at` |
 | `groups` · `group_members` | static groups; members are users; `display_name` unique per tenant case-insensitively (index on `(tenant_id, lower(display_name))`) |
 | `directory_role_assignments` | (user, role) unique; role GlobalAdmin\|ApplicationAdmin\|UserAdmin |
-| `applications` | `client_id` unique per tenant, `client_type` confidential\|public, `builtin`, `redirect_uris[]`, `post_logout_redirect_uris[]`, `web_origins[]` (explicit CORS origins, ≤ 32), `identifier_uri` (unique per tenant), `access_token_format` jwt\|opaque, `signing_alg` RS256\|ES256, `groups_claim_format` id\|name, access TTL 300–86400 s, refresh TTL, `device_code_enabled` (RFC 8628 opt-in) |
+| `applications` | `client_id` unique per tenant, `client_type` confidential\|public, `builtin`, `redirect_uris[]`, `post_logout_redirect_uris[]`, `web_origins[]` (explicit CORS origins, ≤ 32), `identifier_uri` (unique per tenant), `access_token_format` jwt\|opaque, `signing_alg` RS256\|ES256, `groups_claim_format` id\|name, access TTL 300–86400 s, refresh TTL, `device_code_enabled` (RFC 8628 opt-in), `mfa_policy` inherit\|required |
 | `client_secrets` | SHA-256 hash, display `hint`, optional `expires_at`; many per app for rotation |
 | `app_scopes` · `app_roles` | delegated scopes (`admin_consent_required`) and app roles (`allowed_member_types` ⊆ {user, application}); `value` unique per app |
 | `app_required_permissions` | client app → resource app, exactly one of `scope_id` / `app_role_id` (FK’d through the resource app) |
@@ -173,7 +173,7 @@ migration transaction). Deleting a tenant cascades to everything it owns.
 | `consent_grants` | (client, resource, user) unique; `user_id` NULL = tenant-wide admin consent; `scopes[]` |
 | `signing_keys` | `kid` (JWK thumbprint) unique, `alg`, `status` next\|active\|retired (≤ 1 active and ≤ 1 next per tenant+alg), sealed private key (PKCS#8 DER, both algs), `public_jwk`, `activated_at` / `retired_at` / `expires_at` |
 | `sessions` | `token_hash` (cookie), `amr[]`, `auth_time`, ip, user agent, `expires_at` (`SESSION_TTL_HOURS`); `id` is the `sid` claim |
-| `login_transactions` | random UUIDv4 `id` (the `tx` handle), `binding_hash` (SHA-256 of the browser's tx-binding cookie), client app, `params` jsonb (validated `AuthRequest`), `stage` password\|link\|mfa\|change_password\|consent, user / amr / auth_time once known, `session_id` when an existing session only needs consent (a device sign-in names its `device_authorizations` row in `params.device`), `pending_identity` jsonb (stage `link`), `federated` jsonb (IdP + generation of an upstream sign-in); 15 min |
+| `login_transactions` | random UUIDv4 `id` (the `tx` handle), `binding_hash` (SHA-256 of the browser's tx-binding cookie), client app, `params` jsonb (validated `AuthRequest`), `stage` password\|link\|mfa\|mfa_enroll\|change_password\|consent, user / amr / auth_time once known (a step-up starts with the session's), `session_id` when an existing session only needs consent (a device sign-in names its `device_authorizations` row in `params.device`), `pending_identity` jsonb (stage `link`), `federated` jsonb (IdP + generation of an upstream sign-in); 15 min |
 | `identity_providers` · `user_identities` · `federation_states` | upstream OIDC providers (name unique per tenant, sealed secret, policy, MFA trust, email domains), linked (IdP, subject) per user (one per IdP), single-use 10-min round-trip state — [federation.md](federation.md#data) |
 | `device_authorizations` | `device_code_hash` (unique), `user_code_hash` (unique per tenant), client, scopes (OIDC + bare resource values), resource app, `status` pending\|approved\|denied, `user_id` (who decided) + `amr` / `auth_time` of the approving sign-in, `interval_secs` (5, +5 per `slow_down`, ≤ 60), `last_polled_at`, `decided_at`, `consumed_at` (single redemption); 15 min |
 | `authorization_codes` | `code_hash`, client, user, session, redirect URI, scopes (OIDC + bare resource values), resource app, nonce, S256 challenge, amr, auth_time; 60 s, `consumed_at` (single use) |
@@ -271,10 +271,10 @@ need no consent (grants are keyed by a resource app).
 
 | Token | Format / signing | Claims |
 |---|---|---|
-| Access (delegated) | The **resource** app's `access_token_format` (JWT RFC 9068, header `typ: at+jwt`, or opaque) and `signing_alg`, TTL `access_token_ttl_secs` | `iss sub aud exp iat nbf jti client_id azp tid oid sid amr auth_time scp roles groups ver idtyp=user`; `aud` = resource `identifier_uri` or `api://{client_id}`; `scp` = resource scope values; `roles` = user's and user's groups' app roles of the resource; `groups` = group ids, or display names when the resource's `groups_claim_format` is `name` (read at issuance, so a rename shows on the next token); more than 200 → omitted and `hasgroups: true` (either format) |
+| Access (delegated) | The **resource** app's `access_token_format` (JWT RFC 9068, header `typ: at+jwt`, or opaque) and `signing_alg`, TTL `access_token_ttl_secs` | `iss sub aud exp iat nbf jti client_id azp tid oid sid amr acr auth_time scp roles groups ver idtyp=user` (`acr: "mfa"` only after a multi-factor sign-in); `aud` = resource `identifier_uri` or `api://{client_id}`; `scp` = resource scope values; `roles` = user's and user's groups' app roles of the resource; `groups` = group ids, or display names when the resource's `groups_claim_format` is `name` (read at issuance, so a rename shows on the next token); more than 200 → omitted and `hasgroups: true` (either format) |
 | Access (OIDC scopes only) | JWT RS256, 1 h | as above (`groups` always ids) with `aud = {issuer}/oauth2/userinfo`, `scp` = the OIDC scopes — the only tokens userinfo accepts |
 | Access (app-only) | resource settings | `sub = oid =` client app id, `idtyp=app`, `roles`, no `scp` |
-| ID token | JWT signed with the **client** app's `signing_alg`, `typ: JWT`, 1 h | `aud = client_id`, `azp`, `nonce`, `auth_time`, `amr`, `sid`, `oid`, `tid`, `at_hash`, `ver`, plus `name preferred_username` (profile) and `email email_verified` (email) |
+| ID token | JWT signed with the **client** app's `signing_alg`, `typ: JWT`, 1 h | `aud = client_id`, `azp`, `nonce`, `auth_time`, `amr`, `acr` (`mfa`, multi-factor sign-ins only), `sid`, `oid`, `tid`, `at_hash`, `ver`, plus `name preferred_username` (profile) and `email email_verified` (email) |
 | Refresh | opaque, rotating | — |
 
 `amr` values per sign-in method: [authn.md](authn.md#login-transactions).

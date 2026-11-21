@@ -8,7 +8,7 @@ use sea_orm::{
 use serde::Deserialize;
 use uuid::Uuid;
 
-use super::{applications::nullable, idp_validate as v, set_changed};
+use super::{app_body::nullable, idp_validate as v, set_changed};
 use crate::{
     app::AppState,
     error::{AppError, AppResult},

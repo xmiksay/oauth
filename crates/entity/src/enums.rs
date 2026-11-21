@@ -53,6 +53,28 @@ pub enum GroupsClaimFormat {
     Name,
 }
 
+/// A tenant's MFA policy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter, DeriveActiveEnum)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
+pub enum MfaPolicy {
+    /// Users with a second factor use it; others sign in without one.
+    #[sea_orm(string_value = "optional")]
+    Optional,
+    /// Every sign-in is multi-factor (enrolment is forced).
+    #[sea_orm(string_value = "required")]
+    Required,
+}
+
+/// An application's MFA policy: it can only tighten the tenant's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter, DeriveActiveEnum)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
+pub enum AppMfaPolicy {
+    #[sea_orm(string_value = "inherit")]
+    Inherit,
+    #[sea_orm(string_value = "required")]
+    Required,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter, DeriveActiveEnum)]
 #[sea_orm(rs_type = "String", db_type = "Text")]
 pub enum SigningAlg {
@@ -174,6 +196,10 @@ pub enum LoginStage {
     /// to sign in locally, which links it.
     #[sea_orm(string_value = "link")]
     Link,
+    /// MFA is required but the user has no second factor: they set up
+    /// TOTP or a passkey before the sign-in completes.
+    #[sea_orm(string_value = "mfa_enroll")]
+    MfaEnroll,
 }
 
 impl LoginStage {
@@ -185,6 +211,7 @@ impl LoginStage {
             Self::ChangePassword => "change_password",
             Self::Consent => "consent",
             Self::Link => "link",
+            Self::MfaEnroll => "mfa_enroll",
         }
     }
 }

@@ -30,6 +30,7 @@ mod m20261018_000009_federation;
 mod m20261121_000010_web_origins;
 mod m20261121_000011_group_names;
 mod m20261121_000012_device_code;
+mod m20261122_000013_mfa_policy;
 
 pub struct Migrator;
 
@@ -49,6 +50,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261121_000010_web_origins::Migration),
             Box::new(m20261121_000011_group_names::Migration),
             Box::new(m20261121_000012_device_code::Migration),
+            Box::new(m20261122_000013_mfa_policy::Migration),
         ]
     }
 }
