@@ -36,6 +36,7 @@ fn role_view(r: &app_roles::Model) -> Value {
         "display_name": r.display_name,
         "description": r.description,
         "allowed_member_types": r.allowed_member_types,
+        "managed": r.managed,
         "created_at": ts(&r.created_at),
     })
 }

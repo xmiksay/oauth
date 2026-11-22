@@ -13,7 +13,9 @@ Upstream providers (OpenID, or GitHub over OAuth 2.0) users can sign in with ([.
   "scopes": ["openid","email","profile"], "policy": "jit|link_only|deny",
   "trust_upstream_mfa": false, "mfa_acr": null, "email_domains": [],
   "hosted_domain": null, "allowed_tenants": [], "trust_upstream_email": false,
-  "redirect_uri": "{origin}/federation/callback", "created_at", "updated_at" }
+  "redirect_uri": "{origin}/federation/callback",
+  "managed": false,   // read-only: created or adopted by `oauth apply` (../provisioning.md)
+  "created_at", "updated_at" }
 // … plus on create / GET / PATCH: { "users_only_via": 0, "linked_users": 0 }
 ```
 

@@ -37,6 +37,7 @@ fn scope_view(s: &app_scopes::Model) -> Value {
         "value": s.value,
         "description": s.description,
         "admin_consent_required": s.admin_consent_required,
+        "managed": s.managed,
         "created_at": ts(&s.created_at),
     })
 }

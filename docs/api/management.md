@@ -147,7 +147,7 @@ Additional rules:
 // Group
 { "id", "display_name", "description": null, "managed": false, "created_at", "updated_at" }
 // DirectoryRoleAssignment
-{ "id", "user_id", "role": "GlobalAdmin|ApplicationAdmin|UserAdmin", "created_at" }
+{ "id", "user_id", "role": "GlobalAdmin|ApplicationAdmin|UserAdmin", "managed": false, "created_at" }
 // Application
 { "id", "client_id", "display_name", "client_type": "confidential|public", "builtin": false,
   "managed": false,
@@ -168,18 +168,19 @@ Additional rules:
 // ClientSecret (the value only in the create response, as "secret")
 { "id", "hint": "abc", "description": null, "expires_at": null, "never_expires": true, "created_at" }
 // Scope
-{ "id", "value", "description", "admin_consent_required": false, "created_at" }
+{ "id", "value", "description", "admin_consent_required": false, "managed": false, "created_at" }
 // AppRole
-{ "id", "value", "display_name", "description", "allowed_member_types": ["user","application"], "created_at" }
+{ "id", "value", "display_name", "description", "allowed_member_types": ["user","application"],
+  "managed": false, "created_at" }
 // RequiredPermission
 { "id", "resource_application_id", "resource_client_id", "type": "delegated|application",
-  "permission_id", "value", "created_at" }
+  "permission_id", "value", "managed": false, "created_at" }
 // AppRoleAssignment
 { "id", "resource_application_id", "app_role_id",
-  "principal_type": "user|group|application", "principal_id", "created_at" }
+  "principal_type": "user|group|application", "principal_id", "managed": false, "created_at" }
 // ConsentGrant (user_id null = tenant-wide admin consent)
 { "id", "client_application_id", "resource_application_id", "user_id": null,
-  "scopes": ["Orders.Read"], "created_at", "updated_at" }
+  "scopes": ["Orders.Read"], "managed": false, "created_at", "updated_at" }
 // AuditEvent
 { "id", "at", "actor_type": "user|application|system|apply", "actor_id": null,
   "event_type": "user.create", "target_type": "user", "target_id",
@@ -187,7 +188,9 @@ Additional rules:
 ```
 
 `managed` (read-only) marks objects created or adopted by `oauth apply`
-from a tenant file ([provisioning](../provisioning.md)): the next apply
+from a tenant file ([provisioning](../provisioning.md)) — every shape above
+that lists it, and identity providers; group memberships carry it only
+internally (a member item's `managed` is the user's): the next apply
 overwrites what the file declares and deletes them once the file no longer
 does. The API changes them like any other object. Events written by apply
 have `actor_type: apply` (no `actor_id`); those of `oauth bootstrap`,

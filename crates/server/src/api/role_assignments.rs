@@ -86,6 +86,7 @@ pub fn view(a: &ara::Model) -> Value {
         "app_role_id": a.app_role_id,
         "principal_type": kind,
         "principal_id": id,
+        "managed": a.managed,
         "created_at": ts(&a.created_at),
     })
 }

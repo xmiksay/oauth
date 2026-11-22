@@ -38,6 +38,7 @@ pub fn view(g: &consent_grants::Model) -> Value {
         "resource_application_id": g.resource_application_id,
         "user_id": g.user_id,
         "scopes": g.scopes,
+        "managed": g.managed,
         "created_at": ts(&g.created_at),
         "updated_at": ts(&g.updated_at),
     })
