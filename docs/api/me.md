@@ -91,5 +91,6 @@ and objects there).
   `revoke-all` = every session including the caller's (its management
   token stops working immediately).
 - `DELETE me/consents/{id}` deletes the user's own grant and revokes the
-  client's refresh / opaque tokens for that resource and user. Tenant-wide
+  client's refresh / opaque tokens for that resource and user (refresh
+  tokens of the client's other resources can't reach it any more). Tenant-wide
   admin grants are not listed and not revocable here.

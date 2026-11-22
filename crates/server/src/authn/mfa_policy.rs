@@ -3,7 +3,8 @@
 //! app or the requested resource app requires one. Applied when a sign-in
 //! completes (`complete::proceed`) and when an existing session is reused
 //! (`oidc::authorize`, the device flow): a single-factor session is then
-//! stepped up instead of reused.
+//! stepped up instead of reused. A refresh token redeemed for another
+//! resource (`oidc::mrrt`) is refused unless its sign-in was multi-factor.
 
 use anyhow::Context;
 use entity::{
@@ -27,19 +28,18 @@ pub fn effective(tenant: MfaPolicy, apps: impl IntoIterator<Item = AppMfaPolicy>
     tenant == MfaPolicy::Required || apps.into_iter().any(|p| p == AppMfaPolicy::Required)
 }
 
-/// Whether a sign-in of `tenant` to `client_app_id` for `req` needs MFA.
+/// Whether a sign-in of `tenant` to `client_app_id` for `resource_id` (a
+/// request's, or a refresh token redeemed for another resource) needs MFA.
 pub async fn required(
     conn: &impl ConnectionTrait,
     tenant: &tenants::Model,
     client_app_id: Uuid,
-    req: &AuthRequest,
+    resource_id: Option<Uuid>,
 ) -> anyhow::Result<bool> {
     if tenant.mfa_policy == MfaPolicy::Required {
         return Ok(true);
     }
-    let ids: Vec<Uuid> = std::iter::once(client_app_id)
-        .chain(req.resource_id)
-        .collect();
+    let ids: Vec<Uuid> = std::iter::once(client_app_id).chain(resource_id).collect();
     let apps = applications::Entity::find()
         .filter(applications::Column::TenantId.eq(tenant.id))
         .filter(applications::Column::Id.is_in(ids))
@@ -72,7 +72,7 @@ pub async fn missing(
     user_id: Uuid,
     amr: &[String],
 ) -> anyhow::Result<Option<LoginStage>> {
-    if is_mfa(amr) || !required(&state.db, tenant, client_app_id, req).await? {
+    if is_mfa(amr) || !required(&state.db, tenant, client_app_id, req.resource_id).await? {
         return Ok(None);
     }
     Ok(Some(stage(state, tenant.id, user_id).await?))
