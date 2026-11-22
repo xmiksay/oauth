@@ -9,6 +9,7 @@
 //! tenant's pages, being a different origin, can't drive this one).
 
 mod complete;
+mod consent_eval;
 pub mod cookie;
 mod ctx;
 mod device;

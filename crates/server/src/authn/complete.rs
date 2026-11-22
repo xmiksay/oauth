@@ -1,17 +1,16 @@
 //! After a step succeeds: pick the next step, evaluate consent, and finally
 //! create the session and redirect back to the client with a code.
 
-use anyhow::Context;
 use axum::{
     extract::{Path, State},
     http::HeaderMap,
 };
 use entity::{
-    app_scopes, applications,
+    applications,
     enums::{LoginStage, Outcome as AuditOutcome},
     users,
 };
-use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, TransactionTrait};
+use sea_orm::{ConnectionTrait, EntityTrait, TransactionTrait};
 use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
@@ -30,76 +29,12 @@ use crate::{
     app::AppState,
     consent::{self, Decision},
     metrics,
-    oidc::{
-        assignment,
-        error::ErrorCode,
-        params::{AuthRequest, Prompt},
-    },
+    oidc::{assignment, error::ErrorCode},
     tenancy::Tenant,
     tokens,
 };
 
-pub fn force_consent(req: &AuthRequest) -> bool {
-    req.prompt == Some(Prompt::Consent)
-}
-
-pub struct ConsentEval {
-    pub decision: Decision,
-    /// The requested scopes of the resource.
-    pub scopes: Vec<app_scopes::Model>,
-}
-
-/// The resource app a pending request names (`req.resource_id`), loaded
-/// once per step and shared by the assignment and consent checks.
-pub async fn pending_resource(
-    conn: &impl ConnectionTrait,
-    client: &applications::Model,
-    resource_id: Option<Uuid>,
-) -> anyhow::Result<Option<applications::Model>> {
-    let Some(resource_id) = resource_id else {
-        return Ok(None);
-    };
-    let resource = applications::Entity::find_by_id(resource_id)
-        .filter(applications::Column::TenantId.eq(client.tenant_id))
-        .one(conn)
-        .await
-        .context("loading resource app")?
-        .context("resource app of a pending request vanished")?;
-    Ok(Some(resource))
-}
-
-/// Consent state of `req` (whose resource is `resource`, from
-/// [`pending_resource`]) for `user_id`. Built-in clients are pre-consented.
-pub async fn evaluate_consent(
-    conn: &impl ConnectionTrait,
-    client: &applications::Model,
-    req: &AuthRequest,
-    resource: Option<&applications::Model>,
-    user_id: Uuid,
-    force: bool,
-) -> anyhow::Result<ConsentEval> {
-    let Some(resource) = resource else {
-        return Ok(ConsentEval {
-            decision: Decision::Granted,
-            scopes: Vec::new(),
-        });
-    };
-    let scopes = app_scopes::Entity::find()
-        .filter(app_scopes::Column::ApplicationId.eq(resource.id))
-        .filter(app_scopes::Column::Value.is_in(req.resource_scopes.clone()))
-        .all(conn)
-        .await
-        .context("loading requested scopes")?;
-    let decision = if client.builtin {
-        Decision::Granted
-    } else {
-        let granted =
-            consent::granted_scopes(conn, client.tenant_id, client.id, resource.id, user_id)
-                .await?;
-        consent::evaluate(&scopes, &granted, force)
-    };
-    Ok(ConsentEval { decision, scopes })
-}
+pub use super::consent_eval::{evaluate_consent, force_consent, pending_resource};
 
 async fn client_of(conn: &impl ConnectionTrait, tx: &LoadedTx) -> AuthnResult<applications::Model> {
     applications::Entity::find_by_id(tx.row.application_id)
@@ -131,14 +66,6 @@ pub async fn proceed(
             let amr = &tx.row.amr;
             let missing =
                 mfa_policy::missing(ctx.state, ctx.tenant, app, &tx.req, user.id, amr).await?;
-            // The policy was tightened while the consent screen was up. A
-            // consent-only transaction can't step up from here (`finish`
-            // would reuse its single-factor session): a new request does.
-            if missing.is_some() && from == LoginStage::Consent {
-                close(ctx, &tx, from, user.id, "mfa_required").await?;
-                let msg = "multi-factor authentication is now required; sign in again";
-                return ctx.error_redirect(&tx.req, ErrorCode::LoginRequired, msg);
-            }
             missing.or(next)
         }
     };
@@ -154,6 +81,29 @@ pub async fn proceed(
         return Ok(refused);
     }
     decide(ctx, tx, from, user, &client, resource, false).await
+}
+
+/// The login_required redirect (transaction burnt) when the MFA policy was
+/// tightened while the consent screen was up. A consent-only transaction
+/// can't step up from here (`finish` would reuse its single-factor
+/// session): a new request does.
+async fn refuse_single_factor(
+    ctx: &Ctx<'_>,
+    tx: &LoadedTx,
+    user: &users::Model,
+) -> AuthnResult<Option<Outcome>> {
+    let (app, amr) = (tx.row.application_id, &tx.row.amr);
+    let missing = mfa_policy::missing(ctx.state, ctx.tenant, app, &tx.req, user.id, amr).await?;
+    if missing.is_none() {
+        return Ok(None);
+    }
+    close(ctx, tx, LoginStage::Consent, user.id, "mfa_required").await?;
+    let msg = "multi-factor authentication is now required; sign in again";
+    Ok(Some(ctx.error_redirect(
+        &tx.req,
+        ErrorCode::LoginRequired,
+        msg,
+    )?))
 }
 
 /// The access_denied redirect (transaction burnt) when `user` holds no
@@ -386,6 +336,9 @@ pub async fn consent(
     }
     if user.disabled {
         return Err(AuthnError::AccountDisabled);
+    }
+    if let Some(refused) = refuse_single_factor(&ctx, &tx, &user).await? {
+        return Ok(refused);
     }
     let client = client_of(conn, &tx).await?;
     let resource = pending_resource(conn, &client, tx.req.resource_id).await?;
