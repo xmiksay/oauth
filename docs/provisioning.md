@@ -14,8 +14,8 @@ let a Kubernetes Job or CI pipeline set up a tenant without a manual UI step:
 ```sh
 oauth bootstrap [--tenant <slug> [--tenant-name <name>]]
                 [--admin-email <email> [--display-name <name>] [--reset-password]]
-                [--provisioning-app <client_id> [--provisioning-role read|read-write] [--rotate-secret]]
-# make bootstrap [TENANT=…] [ADMIN_EMAIL=… [RESET=1]] [PROVISIONING_APP=… [PROVISIONING_ROLE=…] [ROTATE=1]]
+                [--provisioning-app <client_id> [--provisioning-role read|read-write] [--rotate-secret] [--adopt-app]]
+# make bootstrap [TENANT=…] [ADMIN_EMAIL=… [RESET=1]] [PROVISIONING_APP=… [PROVISIONING_ROLE=…] [ROTATE=1] [ADOPT=1]]
 ```
 
 Idempotent, migrates first, runs in one transaction holding the bootstrap
@@ -39,6 +39,12 @@ advisory lock. At least one of `--admin-email` / `--provisioning-app`.
   `client_credentials` and `scope=api://management-api/.default` on the
   tenant's host. Because the app holds management API access only a Global
   Admin can change its credentials or redirect URIs.
+- An **existing** app is taken as the provisioning app only when it already
+  holds one of those two roles (i.e. an earlier bootstrap made it). Any
+  other existing confidential app is refused unless `--adopt-app` is given
+  — a mistyped client_id must not hand someone's web app the management
+  API and a new secret; with the flag the report starts with a `WARNING:`
+  line naming the adopted app.
 - **What the provisioning app may do.** Its "scoped directory role" is the
   management API app role, not a directory role (directory roles are held
   by users only), and `authz` scopes it as follows. `read-write` writes
@@ -94,7 +100,8 @@ empty file (`tenant: contoso`) deletes every managed object of the tenant.
 
 **Scalars.** An optional setting left out keeps the stored value (on create:
 the management API's default). `null` clears a nullable one
-(`identifier_uri`, `discovery_url`, `mfa_acr`, `hosted_domain`).
+(`identifier_uri`, `backchannel_logout_uri`, `discovery_url`, `mfa_acr`,
+`hosted_domain`).
 
 **Validation** is the management API's: the same validators and write
 helpers (`api::app_body`, `api::validate`, `api::idp_body`,
@@ -102,7 +109,16 @@ helpers (`api::app_body`, `api::validate`, `api::idp_body`,
 rule (removing, disabling or deleting the last enabled Global Admin fails;
 it is checked on the end state, so one file may promote a new Global Admin
 and disable or demote the old one). Disabling a user revokes their sessions
-and refresh tokens, like `PATCH /api/v1/users/{id}`.
+and refresh tokens, like `PATCH /api/v1/users/{id}`; disabling and deleting
+both queue the Back-Channel Logouts of the ended sessions (deletion through
+the same `directory::delete_user` as `DELETE /api/v1/users/{id}`). Users are
+locked (`FOR UPDATE`) before they are disabled, deleted or lose a directory
+role, like the API, so a concurrent sign-in finishes first and its session
+is ended too. Identity provider updates go through the API's own
+`api::idp_update`: narrowing `allowed_tenants` / `hosted_domain` bumps the
+provider's generation (a callback verified against the wider rule fails)
+and drops the memberships its group mappings gave, and opening a provider
+that has group mappings to every Entra tenant is refused.
 Apply acts with full trust (like a Global Admin): it may assign management
 API roles and change apps that hold them. The schema is strict: unknown
 fields, duplicate keys and a role assignment without exactly one principal
@@ -110,7 +126,7 @@ are errors before anything is written. So is a reference (group member,
 directory role, role assignment, required permission, admin consent) to a
 user, group or app that apply manages but the file no longer declares: it
 would be created and then deleted with its target in the same run. Files
-are limited to 4 MiB.
+are limited to 4 MiB (the CLI never reads more than that).
 
 **Audit.** Every change is audited like its API counterpart, with
 `actor_type: apply` (no actor id, no IP). Adoption alone (only the marker
@@ -148,9 +164,11 @@ applications:                        # by client_id; built-in apps can't be decl
     display_name: Web                # required
     client_type: confidential|public # optional (default confidential), fixed after create
     redirect_uris, post_logout_redirect_uris, web_origins, identifier_uri,
-    access_token_format, signing_alg, groups_claim_format, assignment_required,
-    access_token_ttl_secs, refresh_token_ttl_secs, device_code_enabled,
-    mfa_policy                       # optional, as in the API
+    access_token_format, signing_alg, groups_claim_format, id_token_groups,
+    assignment_required, access_token_ttl_secs, refresh_token_ttl_secs,
+    device_code_enabled, mfa_policy,
+    backchannel_logout_uri,          # nullable: `null` clears it
+    backchannel_logout_session_required  # optional, as in the API
     scopes:
       - { value: Orders.Read, description: …, admin_consent_required: false }
     roles:
@@ -204,5 +222,3 @@ like `DELETE /api/v1/identity-providers/{id}`.
 - **No tenant creation or tenant settings** (`oauth bootstrap --tenant` and
   `PATCH /api/v1/settings`), no IdP group mappings, no emails (users created
   by apply get no verification or invitation mail).
-- No back-channel logout settings: the server doesn't support back-channel
-  logout yet (`backchannel_logout_supported: false`).

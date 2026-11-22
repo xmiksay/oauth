@@ -130,6 +130,8 @@ fn render_provisioning(out: &mut Vec<String>, p: &provisioning::Outcome) {
     let id = &p.client_id;
     out.push(if p.created {
         format!("Created provisioning app `{id}`.")
+    } else if p.adopted {
+        format!("WARNING: adopted existing app `{id}` as the provisioning app.")
     } else {
         format!("Provisioning app `{id}` already exists.")
     });
@@ -363,6 +365,7 @@ mod tests {
         let outcome = |secret: Option<&str>| provisioning::Outcome {
             client_id: "ci".into(),
             created: secret.is_some(),
+            adopted: false,
             role: "Directory.ReadWrite.All",
             role_assigned: secret.is_some(),
             role_removed: None,
@@ -382,6 +385,11 @@ mod tests {
         assert!(text.contains("--rotate-secret"));
         assert!(!text.contains("sec-"));
         assert!(!text.contains("Removed"));
+        r.provisioning = Some(provisioning::Outcome {
+            adopted: true,
+            ..outcome(None)
+        });
+        assert!(r.render().contains("WARNING: adopted existing app `ci`"));
         let mut downgraded = outcome(None);
         downgraded.role_removed = Some("Directory.ReadWrite.All");
         r.provisioning = Some(downgraded);

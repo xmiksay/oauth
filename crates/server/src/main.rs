@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use anyhow::Context;
 use clap::{ArgGroup, Parser, Subcommand};
 use oauth_server::{
     bootstrap::{self, TenantOptions, provisioning},
@@ -56,6 +55,10 @@ enum Command {
         /// Issue a new secret for an existing provisioning app.
         #[arg(long, requires = "provisioning_app")]
         rotate_secret: bool,
+        /// Make an existing app that holds no provisioning role the
+        /// provisioning app (refused without this flag).
+        #[arg(long, requires = "provisioning_app")]
+        adopt_app: bool,
     },
     /// Apply a declarative tenant file (YAML) in one transaction: create /
     /// update what it declares, delete managed objects it no longer does.
@@ -99,6 +102,7 @@ async fn main() -> anyhow::Result<()> {
             provisioning_app,
             provisioning_role,
             rotate_secret,
+            adopt_app,
         } => {
             let config = Config::from_env()?;
             serve::init_tracing(config.log_format)?;
@@ -115,6 +119,7 @@ async fn main() -> anyhow::Result<()> {
                     client_id,
                     role: provisioning_role,
                     rotate_secret,
+                    adopt: adopt_app,
                 }),
             };
             let report = bootstrap::run(&db, &config, &opts).await?;
@@ -124,8 +129,7 @@ async fn main() -> anyhow::Result<()> {
         Command::Apply { file, dry_run } => {
             let config = Config::from_env()?;
             serve::init_tracing(config.log_format)?;
-            let text = std::fs::read_to_string(&file)
-                .with_context(|| format!("reading {}", file.display()))?;
+            let text = provision::spec::read_file(&file)?;
             let spec = provision::parse(&text)?;
             let db = db::connect(&config.database_url).await?;
             // `Spec::check` already refused other names; this keeps the

@@ -19,14 +19,8 @@ Single binary `oauth` (crate `crates/server`):
   admin if missing, ensures the admin holds `GlobalAdmin`, and prints a
   one-time password (`must_change_password = true`) to stdout. An existing
   admin's password is only replaced with `--reset-password`. Exit 0 either way.
-  `--tenant <slug> [--tenant-name …]` targets a regular tenant instead
-  (created when missing, no `system` tenant on the way);
-  `--provisioning-app <client_id> [--provisioning-role read|read-write]
-  [--rotate-secret]` ensures a confidential app holding that management API
-  app role and prints its secret once (at creation or rotation). At least one
-  of `--admin-email` / `--provisioning-app`. Audited as actor `system`.
-- `oauth apply -f tenant.yaml [--dry-run]` — declarative provisioning of one
-  existing tenant, see [provisioning.md](provisioning.md).
+  `--tenant` / `--provisioning-app`: [provisioning.md](provisioning.md).
+- `oauth apply -f tenant.yaml [--dry-run]` — declarative tenant state ([provisioning.md](provisioning.md)).
 
 Migrations: all pending ones run in a single transaction that first takes
 `pg_advisory_xact_lock(MIGRATION_LOCK_KEY)` (replicas serialize; released exactly on
@@ -81,7 +75,7 @@ Implemented:
 | `consent` | Pure evaluation (granted / needs user / needs admin) + grant lookup / merge-upsert |
 | `tokens` | Issuance (`issue_delegated`, `issue_app_only`), `inspect` (access-token resolution incl. user-disabled check), `claims` (pure builders), `jwt` (sign with active key, verify against published keys + `typ`), `opaque`, `refresh` (family state machine, rotation, revocation), `code`, `principal` (groups, roles) |
 | `jobs` | `sweeper` (incl. audit retention), `rotation`, `secret_expiry` (expiring client-secret warnings), `outbox` (delivery per channel `Courier`: email, Telegram, back-channel logout), leader lock helper |
-| `api` | Management REST API: `auth` (`Caller` / `SystemAdmin` bearer extractors), `guard` (administrator protection, last-GlobalAdmin lock), `page` (UUIDv7 keyset pagination), `validate` (client ids, redirect / identifier URIs, scope values), `secret_value` (length / entropy check of caller-supplied client secrets), `app_rules` (app lookup + row lock, built-in protection, credential protection of privileged apps, lifetime and per-app caps), `extract` (JSON-error extractors), one module per resource (`tenants`, `tenant_users` (system admin: another tenant's users, password / MFA reset), `users`, `user_actions`, `user_invite`, `user_identities`, `groups`, `directory_roles`, `applications`, `identity_providers` (+ `idp_body`, `idp_validate`, `idp_rules` (per-kind cross-field rules + defaults), `idp_group_mappings`), `apps_secrets`, `apps_scopes`, `apps_roles`, `apps_permissions`, `role_assignments`, `consents`, `audit_events`, `me`, `me_mfa`, `me_email`, `me_passkeys`, `me_telegram`, `me_identities`, `user_passkeys`), `reauth` (password-or-passkey re-authentication) |
+| `api` | Management REST API: `auth` (`Caller` / `SystemAdmin` bearer extractors), `guard` (administrator protection, last-GlobalAdmin lock), `page` (UUIDv7 keyset pagination), `validate` (client ids, redirect / identifier URIs, scope values), `secret_value` (length / entropy check of caller-supplied client secrets), `app_rules` (app lookup + row lock, built-in protection, credential protection of privileged apps, lifetime and per-app caps), `extract` (JSON-error extractors), one module per resource (`tenants`, `tenant_users` (system admin: another tenant's users, password / MFA reset), `users`, `user_actions`, `user_invite`, `user_identities`, `groups`, `directory_roles`, `applications`, `identity_providers` (+ `idp_body`, `idp_validate`, `idp_rules` (per-kind cross-field rules + defaults), `idp_update` (the update rule set shared with `oauth apply`: secret drop, generation bump, mapping checks, unlink / mapped-membership drop), `idp_group_mappings`), `apps_secrets`, `apps_scopes`, `apps_roles`, `apps_permissions`, `role_assignments`, `consents`, `audit_events`, `me`, `me_mfa`, `me_email`, `me_passkeys`, `me_telegram`, `me_identities`, `user_passkeys`), `reauth` (password-or-passkey re-authentication) |
 | `webauthn` | Own WebAuthn verifier on AWS-LC + `ciborium`: `cbor`, `authdata`, `cose`, `client_data`, `register`, `assert` — see [passkeys.md](passkeys.md) |
 | `passkey` | Passkey ceremonies over the DB: `challenge` (single-use, 5 min), `store` (credentials, user handle, last-method rule), `wire` (browser JSON, options) |
 | `authz` | Pure permission matrix (directory roles, `Directory.Read.All` / `ReadWrite.All`) and administrator protection |

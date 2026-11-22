@@ -74,11 +74,11 @@ web-build: ## Build the SPA into web/dist
 docker: ## Build the container image ($(IMAGE))
 	docker build -t $(IMAGE) .
 
-bootstrap: ## Tenant + Global Admin / provisioning app (idempotent): make bootstrap ADMIN_EMAIL=… [RESET=1] [TENANT=slug] [PROVISIONING_APP=id [PROVISIONING_ROLE=read] [ROTATE=1]]
-	@[ -n "$(ADMIN_EMAIL)$(PROVISIONING_APP)" ] || { echo "usage: make bootstrap ADMIN_EMAIL=you@example.com [RESET=1] [TENANT=slug] [PROVISIONING_APP=client-id [PROVISIONING_ROLE=read|read-write] [ROTATE=1]]" >&2; exit 1; }
+bootstrap: ## Tenant + Global Admin / provisioning app (idempotent): make bootstrap ADMIN_EMAIL=… [RESET=1] [TENANT=slug] [PROVISIONING_APP=id [PROVISIONING_ROLE=read] [ROTATE=1] [ADOPT=1]]
+	@[ -n "$(ADMIN_EMAIL)$(PROVISIONING_APP)" ] || { echo "usage: make bootstrap ADMIN_EMAIL=you@example.com [RESET=1] [TENANT=slug] [PROVISIONING_APP=client-id [PROVISIONING_ROLE=read|read-write] [ROTATE=1] [ADOPT=1]]" >&2; exit 1; }
 	$(DOTENV) cargo run -- bootstrap $(if $(ADMIN_EMAIL),--admin-email "$(ADMIN_EMAIL)") $(if $(RESET),--reset-password) \
 	  $(if $(TENANT),--tenant "$(TENANT)") $(if $(PROVISIONING_APP),--provisioning-app "$(PROVISIONING_APP)") \
-	  $(if $(PROVISIONING_ROLE),--provisioning-role "$(PROVISIONING_ROLE)") $(if $(ROTATE),--rotate-secret)
+	  $(if $(PROVISIONING_ROLE),--provisioning-role "$(PROVISIONING_ROLE)") $(if $(ROTATE),--rotate-secret) $(if $(ADOPT),--adopt-app)
 
 apply: ## Apply a declarative tenant file (loads .env): make apply FILE=tenant.yaml [DRY_RUN=1]
 	@[ -n "$(FILE)" ] || { echo "usage: make apply FILE=tenant.yaml [DRY_RUN=1]" >&2; exit 1; }

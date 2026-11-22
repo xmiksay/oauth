@@ -256,6 +256,22 @@ pub struct ConsentSpec {
     pub app_roles: Option<Vec<String>>,
 }
 
+/// Reads a tenant file, never more than [`MAX_FILE_BYTES`] + 1 bytes, so an
+/// oversized file is refused without filling memory.
+pub fn read_file(path: &std::path::Path) -> anyhow::Result<String> {
+    use std::io::Read;
+    let what = || format!("reading {}", path.display());
+    let file = std::fs::File::open(path).with_context(what)?;
+    let mut bytes = Vec::new();
+    file.take(u64::try_from(MAX_FILE_BYTES)?.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .with_context(what)?;
+    if bytes.len() > MAX_FILE_BYTES {
+        bail!("{} is larger than {MAX_FILE_BYTES} bytes", path.display());
+    }
+    String::from_utf8(bytes).with_context(|| format!("{} is not UTF-8", path.display()))
+}
+
 /// Parses and checks a tenant file.
 pub fn parse(text: &str) -> anyhow::Result<Spec> {
     if text.len() > MAX_FILE_BYTES {

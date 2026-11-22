@@ -19,9 +19,10 @@ use super::{
 use crate::{
     api::{
         guard::conflict_on_unique,
-        identity_providers::{create_kind, delete_locked, ensure_same_kind, lock, new_row},
+        identity_providers::{create_kind, delete_locked, lock, new_row},
         idp_body::{apply as apply_body, ensure_domains_free, seal},
         idp_rules::check_secret,
+        idp_update::{self, REPOINT},
         idp_validate,
     },
     audit::{Actor, EventType, Target},
@@ -29,7 +30,6 @@ use crate::{
 };
 
 const NAME_TAKEN: &str = "an identity provider with this name exists";
-const REPOINT: [&str; 3] = ["issuer", "client_id", "discovery_url"];
 
 pub async fn apply(
     conn: &impl ConnectionTrait,
@@ -112,43 +112,28 @@ async fn upsert(
         Some(_) => None,
     };
     let body = spec.body(new_secret);
-    ensure_same_kind(&body, &current)?;
-    let mut row: idp::ActiveModel = current.clone().into();
-    let mut plain = None;
-    let fields = apply_body(config, &mut row, &body, &mut plain)?;
-    if let Some(field) = fields.iter().find(|f| REPOINT.contains(f)) {
+    let mut prepared = idp_update::prepare(config, &current, &body)?;
+    if let Some(field) = prepared.fields.iter().find(|f| REPOINT.contains(f)) {
         bail!(
             "changing `{field}` repoints the provider (every linked identity is removed); \
              apply doesn't do that: change it through the management API or admin UI"
         );
     }
-    if fields.is_empty() && current.managed {
+    let label = format!("identity provider {}", current.name);
+    if prepared.fields.is_empty() {
+        if !current.managed {
+            let mut row: idp::ActiveModel = current.clone().into();
+            row.managed = Set(true);
+            row.update(conn).await?;
+            cx.note(update_line(&label, &[], true));
+        }
         return Ok(());
     }
-    seal(config, &mut row, tenant_id, current.id, plain)?;
-    check_secret(&row)?;
-    if fields.contains(&"email_domains") {
-        let domains = row.email_domains.try_as_ref().cloned().unwrap_or_default();
-        ensure_domains_free(conn, tenant_id, current.id, &domains).await?;
-    }
-    row.managed = Set(true);
-    if !fields.is_empty() {
-        row.updated_at = Set(chrono::Utc::now().fixed_offset());
-    }
-    let updated = row
-        .update(conn)
-        .await
-        .map_err(|err| conflict_on_unique(err, NAME_TAKEN))?;
-    let line = update_line(
-        &format!("identity provider {}", current.name),
-        &diff(&current, &updated, &fields),
-        !current.managed,
-    );
-    if fields.is_empty() {
-        cx.note(line);
-        return Ok(());
-    }
-    let details = json!({ "fields": fields, "identities_removed": 0, "memberships_removed": 0 });
+    prepared.row.managed = Set(true);
+    let fields = prepared.fields.clone();
+    let (updated, details) =
+        idp_update::write(conn, config, &current, prepared, Actor::Apply, None).await?;
+    let line = update_line(&label, &diff(&current, &updated, &fields), !current.managed);
     let target = Some(Target::IdentityProvider(current.id));
     cx.record(
         conn,
