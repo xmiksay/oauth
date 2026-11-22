@@ -1,33 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { changedFields } from './application'
-import type { Application } from '@/api/types'
+import { fakeApp } from '@/test/helpers'
 
-const app: Application = {
-  id: 'a1',
-  client_id: 'shop',
-  display_name: 'Shop',
-  client_type: 'public',
-  builtin: false,
-  redirect_uris: ['https://shop/cb'],
-  post_logout_redirect_uris: [],
-  web_origins: [],
-  effective_web_origins: ['https://shop'],
-  identifier_uri: null,
-  audience: 'api://shop',
-  access_token_format: 'jwt',
-  signing_alg: 'RS256',
-  groups_claim_format: 'id',
-  id_token_groups: 'none',
-  assignment_required: false,
-  access_token_ttl_secs: 3600,
-  refresh_token_ttl_secs: 86400,
-  device_code_enabled: false,
-  mfa_policy: 'inherit',
-  backchannel_logout_uri: null,
-  backchannel_logout_session_required: false,
-  created_at: '',
-  updated_at: '',
-}
+const app = fakeApp({ display_name: 'Shop', redirect_uris: ['https://shop/cb'] })
 
 describe('changedFields', () => {
   it('keeps only fields that differ (arrays compared by value)', () => {

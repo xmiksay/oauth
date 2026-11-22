@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import type { Application, DirectoryRole } from '@/api/types'
-import { fakeMe } from '@/test/helpers'
+import { fakeApp, fakeMe } from '@/test/helpers'
 
 const applications = { get: vi.fn(), update: vi.fn() }
 vi.mock('@/api/applications', () => ({ applications }))
@@ -10,36 +10,6 @@ vi.mock('@/api/applications', () => ({ applications }))
 const { default: AppTokenConfig } = await import('./AppTokenConfig.vue')
 const { useAuthStore } = await import('@/stores/auth')
 const { useApplicationStore } = await import('@/stores/application')
-
-function fakeApp(over: Partial<Application> = {}): Application {
-  return {
-    id: 'a1',
-    client_id: 'k8s',
-    display_name: 'Kubernetes',
-    client_type: 'confidential',
-    builtin: false,
-    redirect_uris: [],
-    post_logout_redirect_uris: [],
-    web_origins: [],
-    effective_web_origins: [],
-    identifier_uri: 'api://k8s',
-    audience: 'api://k8s',
-    access_token_format: 'jwt',
-    signing_alg: 'RS256',
-    groups_claim_format: 'id',
-    id_token_groups: 'none',
-    assignment_required: false,
-    access_token_ttl_secs: 3600,
-    refresh_token_ttl_secs: 86400,
-    device_code_enabled: false,
-    mfa_policy: 'inherit',
-    backchannel_logout_uri: null,
-    backchannel_logout_session_required: false,
-    created_at: '',
-    updated_at: '',
-    ...over,
-  }
-}
 
 async function mountForm(app: Application, roles: DirectoryRole[] = ['ApplicationAdmin']) {
   const pinia = createPinia()

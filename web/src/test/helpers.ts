@@ -1,6 +1,6 @@
 import { vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
-import type { IdentityProviderDetail, Me, Passkey } from '@/api/types'
+import type { Application, IdentityProviderDetail, Me, Passkey } from '@/api/types'
 
 export interface Call {
   url: string
@@ -134,6 +134,37 @@ export function fakeIdp(over: Partial<IdentityProviderDetail> = {}): IdentityPro
     updated_at: '2026-10-01T10:00:00Z',
     users_only_via: 0,
     linked_users: 0,
+    ...over,
+  }
+}
+
+/** A confidential, non-built-in app with every optional setting off. */
+export function fakeApp(over: Partial<Application> = {}): Application {
+  return {
+    id: 'a1',
+    client_id: 'hr',
+    display_name: 'HR',
+    client_type: 'confidential',
+    builtin: false,
+    redirect_uris: [],
+    post_logout_redirect_uris: [],
+    web_origins: [],
+    effective_web_origins: [],
+    identifier_uri: null,
+    audience: 'api://hr',
+    access_token_format: 'jwt',
+    signing_alg: 'RS256',
+    groups_claim_format: 'id',
+    id_token_groups: 'none',
+    assignment_required: false,
+    device_code_enabled: false,
+    mfa_policy: 'inherit',
+    backchannel_logout_uri: null,
+    backchannel_logout_session_required: false,
+    access_token_ttl_secs: 3600,
+    refresh_token_ttl_secs: 86400,
+    created_at: '',
+    updated_at: '',
     ...over,
   }
 }
