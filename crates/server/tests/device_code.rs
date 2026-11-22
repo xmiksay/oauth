@@ -90,6 +90,7 @@ async fn approved_device_gets_tokens_once_with_its_own_session() {
         view["oidc_scopes"],
         Value::from(vec!["openid", "offline_access"])
     );
+    assert_eq!(view["releases_groups"], false, "id_token_groups is none");
     let url = decide(&mut browser, &tx, &view, true).await;
     assert_eq!(url, format!("{ORIGIN}/device?result=approved"));
     assert!(browser.has_session(), "the browser signed in for real");

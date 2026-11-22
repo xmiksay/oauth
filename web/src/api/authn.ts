@@ -57,6 +57,11 @@ export interface TxView {
    * a device confirmation names them, `offline_access` above all (a long-lived refresh token).
    */
   oidc_scopes: string[]
+  /**
+   * The client app puts the user's groups into its ID tokens and userinfo (`id_token_groups`
+   * other than `none`), whether or not the `groups` scope was requested.
+   */
+  releases_groups: boolean
 }
 
 export interface EmailVerified {

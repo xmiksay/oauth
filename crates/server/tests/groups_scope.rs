@@ -14,9 +14,12 @@ mod common;
 use axum::http::{Method, StatusCode};
 use common::{
     flow::Fixture,
-    mgmt::{app_admin_token, audited, call, post},
+    mgmt::{
+        app_admin_token, app_by_client_id, audited, call, mint_user_token, post, user_with_roles,
+    },
     mrrt::{LEDGER, consent_to_ledger, redeem_ok, refused},
 };
+use entity::enums::{DirectoryRole::GlobalAdmin, IdTokenGroups};
 use serde_json::{Value, json};
 
 async fn patch_web(f: &Fixture, body: Value) -> (StatusCode, Value) {
@@ -133,4 +136,23 @@ async fn refresh_cannot_add_the_groups_scope() {
         .await;
     let rt = tokens["refresh_token"].as_str().unwrap();
     refused(&f, rt, "openid groups", "invalid_scope").await;
+}
+
+#[tokio::test]
+async fn id_token_groups_is_not_editable_on_builtin_apps() {
+    let f = Fixture::new().await;
+    let ga = user_with_roles(&f.db, f.tenant.id, "ga@example.com", &[GlobalAdmin]).await;
+    let ga = mint_user_token(&f.db, &f.config, &f.tenant, &ga).await;
+    let portal = app_by_client_id(&f.db, f.tenant.id, "admin-portal").await;
+    let path = format!("/api/v1/applications/{}", portal.id);
+    let body = json!({ "id_token_groups": "all" });
+    let (st, _) = call(&f.app, Method::PATCH, &path, Some(&ga), Some(&body)).await;
+    assert_eq!(st, StatusCode::FORBIDDEN);
+    let row = app_by_client_id(&f.db, f.tenant.id, "admin-portal").await;
+    assert_eq!(row.id_token_groups, IdTokenGroups::None);
+    assert!(
+        audited(&f.db, "application.update", portal.id)
+            .await
+            .is_empty()
+    );
 }

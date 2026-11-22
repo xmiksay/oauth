@@ -10,20 +10,25 @@ const root = ref<HTMLElement | null>(null)
 onMounted(() => root.value?.focus())
 
 // RFC 8628 §5.4: a phished user code is approved here, so spell out what the
-// device keeps beyond the resource scopes. `openid` alone adds nothing to say.
+// device keeps beyond the resource scopes. `openid` alone adds nothing to say;
+// the `groups` scope releases nothing by itself: the app's option does
+// (`releases_groups`), and only into ID tokens / userinfo, i.e. with `openid`.
 const OIDC_LINES: Record<string, string> = {
   profile: 'See your name and profile',
   email: 'See your email address',
   offline_access: 'Stay signed in until you sign it out',
-  groups: 'See the groups you belong to',
 }
-const deviceLines = computed(() =>
-  props.view.device
-    ? props.view.oidc_scopes
-        .filter((s) => s !== 'openid')
-        .map((s) => ({ value: s, text: OIDC_LINES[s] ?? s }))
-    : [],
-)
+const deviceLines = computed(() => {
+  const { device, oidc_scopes, releases_groups } = props.view
+  if (!device) return []
+  const lines = oidc_scopes
+    .filter((s) => s !== 'openid' && s !== 'groups')
+    .map((s) => ({ value: s, text: OIDC_LINES[s] ?? s }))
+  if (releases_groups && oidc_scopes.includes('openid')) {
+    lines.push({ value: 'groups', text: 'See the groups you belong to' })
+  }
+  return lines
+})
 </script>
 
 <template>

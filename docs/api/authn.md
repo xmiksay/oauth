@@ -55,6 +55,7 @@ the API answers with a `redirect`, which the SPA follows
   "notice": null,
   "device": false,
   "oidc_scopes": ["openid", "offline_access"],
+  "releases_groups": false,
   "features": { "password_reset": true, "federation": true }
 }
 ```
@@ -86,6 +87,9 @@ signs a device in ([Device code](#device-code)); its `consent` step is then alwa
 every requested scope of the resource, granted before or not. `oidc_scopes`: the
 request's OpenID Connect scopes; the device confirmation names `profile`, `email` and
 above all `offline_access` (the device gets a refresh token and stays signed in).
+`releases_groups`: the client app's `id_token_groups` is not `none`, so its ID tokens
+and userinfo carry the user's groups whether or not `groups` was requested; the device
+confirmation names groups from this flag (with `openid`), never from the `groups` scope.
 
 ## Federation
 

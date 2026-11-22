@@ -344,13 +344,12 @@ pub async fn view(state: &AppState, tenant: &Tenant, tx: &LoadedTx) -> AuthnResu
             }
         }
     }
-    let at_password = stage == LoginStage::Password;
     let buttons: Vec<Value> = idps
         .iter()
-        .filter(|idp| at_password && idp.visible)
+        .filter(|idp| stage == LoginStage::Password && idp.visible)
         .map(brief)
         .collect();
-    let hint = federation::idps::hinted(&idps, &tx.req).filter(|_| at_password);
+    let hint = federation::idps::hinted(&idps, &tx.req).filter(|_| stage == LoginStage::Password);
     Ok(json!({
         "tx": tx.row.id,
         "step": stage.as_str(),
@@ -366,6 +365,7 @@ pub async fn view(state: &AppState, tenant: &Tenant, tx: &LoadedTx) -> AuthnResu
         "notice": notice,
         "device": tx.req.device.is_some(),
         "oidc_scopes": tx.req.oidc_scopes,
+        "releases_groups": client.id_token_groups != entity::enums::IdTokenGroups::None,
         "features": {
             "password_reset": state.config.email_enabled(),
             "federation": !idps.is_empty(),
