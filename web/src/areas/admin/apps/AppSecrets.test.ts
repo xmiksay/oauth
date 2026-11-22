@@ -31,13 +31,14 @@ const NEVER: ClientSecret = {
   created_at: '',
 }
 
-async function mountPage(allowNever: boolean, items: ClientSecret[] = []) {
+async function mountPage(allowNever: boolean | Error, items: ClientSecret[] = []) {
   const pinia = createPinia()
   setActivePinia(pinia)
   useAuthStore().setMe(fakeMe({ directory_roles: ['ApplicationAdmin'] }))
   applications.get.mockResolvedValue(APP)
   secrets.list.mockResolvedValue({ items })
-  settings.get.mockResolvedValue({ allow_non_expiring_secrets: allowNever })
+  if (allowNever instanceof Error) settings.get.mockRejectedValue(allowNever)
+  else settings.get.mockResolvedValue({ allow_non_expiring_secrets: allowNever })
   await useApplicationStore().load(APP.id)
   const w = mount(AppSecrets, { global: { plugins: [pinia] } })
   await flushPromises()
@@ -55,6 +56,12 @@ describe('AppSecrets', () => {
   it('offers "Never" only when the tenant allows it', async () => {
     expect(options(await mountPage(false))).not.toContain('Never')
     expect(options(await mountPage(true))).toContain('Never')
+  })
+
+  it('reports a failed policy read instead of silently hiding "Never"', async () => {
+    const w = await mountPage(new Error('settings unavailable'))
+    expect(options(w)).not.toContain('Never')
+    expect(w.find('[role="alert"]').exists()).toBe(true)
   })
 
   it('creates a non-expiring secret and shows its value once', async () => {

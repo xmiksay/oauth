@@ -23,6 +23,7 @@ const created = ref<string[] | null>(null)
 const allowNever = ref(false)
 const loader = useAction()
 const creator = useAction()
+const policy = useAction()
 
 async function load() {
   if (!app.value || app.value.client_type === 'public') return
@@ -32,8 +33,8 @@ async function load() {
 }
 
 async function loadPolicy() {
-  // Without the setting (e.g. a failed read) the option simply isn't offered.
-  const t = await settings.get().catch(() => null)
+  // Until the setting is read, "Never" isn't offered; a failed read says so.
+  const t = await policy.run(() => settings.get())
   allowNever.value = t?.allow_non_expiring_secrets ?? false
 }
 
@@ -125,6 +126,10 @@ const expired = (s: ClientSecret) =>
         <ErrorAlert
           class="w-full"
           :error="creator.error.value"
+        />
+        <ErrorAlert
+          class="w-full"
+          :error="policy.error.value"
         />
       </form>
       <ErrorAlert :error="loader.error.value" />

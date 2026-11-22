@@ -7,22 +7,19 @@
     clippy::indexing_slicing
 )]
 
-//! Client secret options (#46): caller-supplied values, non-expiring
-//! secrets behind the tenant policy, and the expiry warning job.
+//! Client secret options (#46): caller-supplied values and non-expiring
+//! secrets behind the tenant policy (the expiry warning job:
+//! `secret_expiry_warnings.rs`).
 mod common;
 
 use axum::http::{Method, StatusCode};
-use chrono::Duration;
 use common::{
     flow::Fixture,
-    mail::only_to,
     mgmt::{app_admin_token, audited, call, mint_user_token, post, user_with_roles},
 };
-use entity::{client_secrets, enums::DirectoryRole, outbox};
-use oauth_server::jobs::secret_expiry;
-use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter,
-};
+use entity::{client_secrets, enums::DirectoryRole, tenants};
+use oauth_server::{bootstrap, directory};
+use sea_orm::EntityTrait;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -162,101 +159,94 @@ async fn non_expiring_secrets_follow_the_tenant_policy() {
     assert_eq!(events[0]["never_expires"], true, "{events:?}");
 }
 
-async fn expire_in(f: &Fixture, id: Uuid, after: Duration) {
-    let row = client_secrets::Entity::find_by_id(id)
-        .one(&f.db)
-        .await
-        .unwrap()
-        .unwrap();
-    let mut row: client_secrets::ActiveModel = row.into();
-    row.expires_at = Set(Some(chrono::Utc::now().fixed_offset() + after));
-    row.update(&f.db).await.unwrap();
-}
-
-async fn secret_of(f: &Fixture, app_id: Uuid) -> Uuid {
-    client_secrets::Entity::find()
-        .filter(client_secrets::Column::ApplicationId.eq(app_id))
-        .one(&f.db)
-        .await
-        .unwrap()
-        .unwrap()
-        .id
-}
-
 #[tokio::test]
-async fn app_admins_are_warned_once_before_a_secret_expires() {
-    let f = Fixture::with_email().await;
-    let roles = [
-        ("ga@example.com", DirectoryRole::GlobalAdmin, true),
-        ("aa@example.com", DirectoryRole::ApplicationAdmin, true),
-        ("ua@example.com", DirectoryRole::UserAdmin, true),
-        (
-            "unverified@example.com",
-            DirectoryRole::ApplicationAdmin,
-            false,
-        ),
-    ];
-    for (email, role, verified) in roles {
-        let user = user_with_roles(&f.db, f.tenant.id, email, &[role]).await;
-        if verified {
-            f.verify(&user).await;
-        }
-    }
-    let web = secret_of(&f, f.web.id).await;
-    let ledger = secret_of(&f, f.ledger.id).await;
-    expire_in(&f, web, Duration::days(10)).await;
-    expire_in(&f, ledger, Duration::days(20)).await;
-
-    let now = chrono::Utc::now().fixed_offset();
-    let run = |at| secret_expiry::run_once(&f.db, &f.config, at);
-    assert_eq!(run(now).await.unwrap(), Some(1));
-    assert_eq!(run(now).await.unwrap(), Some(0), "warned once");
-    let queued = outbox::Entity::find()
-        .filter(outbox::Column::Kind.eq("secret_expiring"))
-        .count(&f.db)
-        .await
-        .unwrap();
-    assert_eq!(queued, 2);
-    let mails = f.deliver().await;
-    for to in ["ga@example.com", "aa@example.com"] {
-        let mail = only_to(&mails, to);
-        assert!(mail.subject.contains("web"), "{}", mail.subject);
-        assert!(mail.body.contains("Client ID: web-app"), "{}", mail.body);
-        assert!(
-            mail.body
-                .contains(&format!("/admin/app-registrations/{}/secrets", f.web.id))
-        );
-    }
-    assert!(!mails.iter().any(|m| m.to == "ua@example.com"));
-    assert!(!mails.iter().any(|m| m.to == "unverified@example.com"));
-
-    // The later secret enters the window a week on; an expired one never.
-    assert_eq!(run(now + Duration::days(7)).await.unwrap(), Some(1));
-    let row = client_secrets::Entity::find_by_id(ledger)
-        .one(&f.db)
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(row.expiry_notified_at.is_some());
-    assert_eq!(run(now + Duration::days(30)).await.unwrap(), Some(0));
-}
-
-#[tokio::test]
-async fn without_email_the_job_waits() {
+async fn a_supplied_secret_with_form_reserved_characters_works_when_encoded() {
     let f = Fixture::new().await;
-    let web = secret_of(&f, f.web.id).await;
-    expire_in(&f, web, Duration::days(1)).await;
-    let now = chrono::Utc::now().fixed_offset();
+    let token = app_admin_token(&f).await;
+    let path = new_app(&f, &token, "deployer").await;
+    let value = "Zx8pQ2vN7rT4kL9wB3mY6cH1jF5dS0aG+uE%iO/=";
+    let (st, created) = post(&f, &token, &path, json!({ "secret": value })).await;
+    assert_eq!(st, StatusCode::CREATED, "{created}");
+
+    // RFC 6749 §2.3.1: Basic credentials are form-urlencoded first.
+    let encoded: String = form_urlencoded::byte_serialize(value.as_bytes()).collect();
     assert_eq!(
-        secret_expiry::run_once(&f.db, &f.config, now)
-            .await
-            .unwrap(),
-        None
+        client_credentials(&f, "deployer", &encoded).await,
+        StatusCode::OK
     );
-    let row = client_secrets::Entity::find_by_id(web)
+    // Sent raw, `+` decodes to a space: the documented client pitfall.
+    assert_eq!(
+        client_credentials(&f, "deployer", value).await,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
+async fn a_system_admin_sets_the_policy_of_another_tenant() {
+    let f = Fixture::new().await;
+    let opts = bootstrap::Options {
+        admin_email: "root@example.com".into(),
+        display_name: None,
+        reset_password: false,
+    };
+    bootstrap::run(&f.db, &f.config, &opts).await.unwrap();
+    let system = directory::find_system_tenant(&f.db).await.unwrap().unwrap();
+    let root = directory::find_user_by_email(&f.db, system.id, "root@example.com")
+        .await
+        .unwrap()
+        .unwrap();
+    let root_token = mint_user_token(&f.db, &f.config, &system, &root).await;
+    let tenant_path = common::at("system", &format!("/api/v1/tenants/{}", f.tenant.slug));
+    let allow = json!({ "allow_non_expiring_secrets": true });
+
+    // A tenant admin's token isn't a system admin's.
+    let token = app_admin_token(&f).await;
+    let (st, _) = call(
+        &f.app,
+        Method::PATCH,
+        &tenant_path,
+        Some(&token),
+        Some(&allow),
+    )
+    .await;
+    assert_ne!(st, StatusCode::OK);
+
+    let (st, updated) = call(
+        &f.app,
+        Method::PATCH,
+        &tenant_path,
+        Some(&root_token),
+        Some(&allow),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{updated}");
+    assert_eq!(updated["allow_non_expiring_secrets"], true);
+    let row = tenants::Entity::find_by_id(f.tenant.id)
         .one(&f.db)
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(row.expiry_notified_at, None);
+    assert!(row.allow_non_expiring_secrets);
+    // Logged in both tenants, naming the field.
+    let events = audited(&f.db, "tenant.update", f.tenant.id).await;
+    assert_eq!(events.len(), 2, "{events:?}");
+    for details in &events {
+        assert_eq!(details["fields"], json!(["allow_non_expiring_secrets"]));
+    }
+
+    // The tenant's app admin can now create a non-expiring secret; an
+    // unchanged repeat is not audited again.
+    let path = new_app(&f, &token, "infra").await;
+    let (st, created) = post(&f, &token, &path, json!({ "never_expires": true })).await;
+    assert_eq!(st, StatusCode::CREATED, "{created}");
+    let (st, _) = call(
+        &f.app,
+        Method::PATCH,
+        &tenant_path,
+        Some(&root_token),
+        Some(&allow),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(audited(&f.db, "tenant.update", f.tenant.id).await.len(), 2);
 }
