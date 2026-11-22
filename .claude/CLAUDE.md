@@ -173,7 +173,10 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
 - Back-Channel Logout (`backchannel`, [docs/backchannel_logout.md](../docs/backchannel_logout.md)):
   anything deleting sessions calls `backchannel::queue` first, on the same
   transaction (`directory::revoke_credentials` does it for its callers);
-  delegated issuance records its client (`record_client`). Delivery is an
+  delegated issuance records its client (`record_client`, before inserting
+  any token bound to the session; the code grant refuses a code whose session
+  ended). Each outbox channel has its own leader lock (`jobs::outbox::policy`).
+  Delivery is an
   outbox `Courier` (`channel = backchannel`) through `http::client` +
   `federation::urls` / `resolve::PublicOnly`; never log a logout token or an
   RP endpoint URL.

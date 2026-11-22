@@ -41,7 +41,7 @@ access tokens) carry `sid` = the session id.
 ### Recipients
 
 Every delegated token issuance (code, refresh, device code grants) records
-its client in `session_clients (tenant_id, session_id, application_id)`
+its client — first, before any token bound to the session is inserted — in `session_clients (tenant_id, session_id, application_id)`
 (only while the session exists; rows cascade with the session — including
 expiry sweeps — and with the application). When sessions end, the action's
 transaction first calls `backchannel::queue`, which puts one `backchannel`
@@ -56,7 +56,12 @@ expire notify nobody.**
 Ordering: `queue` first locks the ended sessions `FOR UPDATE`;
 `record_client` reads its session `FOR KEY SHARE`. A token issuance racing
 a logout therefore either commits first (and its client is notified) or
-waits and then finds the session gone (no row, no FK error).
+waits and then finds the session gone (no row, no FK error). The
+`authorization_code` grant requires the session: it calls `record_client`
+before consuming the code and answers `invalid_grant` when the session has
+ended, so a code redeemed after (or losing a race with) its logout issues
+nothing, and one that wins the race holds the session until commit — the
+logout then revokes its refresh token and notifies its client.
 Lock order is session, then refresh tokens, on every path: logout and
 session revocation lock the session before `revoke_by_session` updates
 its tokens, and the refresh grant calls `record_client` before
@@ -71,7 +76,9 @@ The outbox row: `recipient` = application id, `kind` =
 
 `jobs::outbox` runs the `backchannel` channel every tick (always on, on
 its own task beside the job loop, one run at a time, so slow RPs never
-delay the sweeper or the other channels) with
+delay the sweeper or the other channels; its own leader-lock key, so it
+never makes email or Telegram skip a tick; up to 32 rows per run, 15 s
+budget each) with
 the usual lease, backoff (1 m, 5 m, 30 m, 2 h, then 6 h; dead after 8) and
 fencing. Each attempt re-reads the application (deleted, no URI or a URI
 that no longer passes the policy → dead) and signs a **fresh** logout token

@@ -50,31 +50,38 @@ pub enum Ended {
     },
 }
 
-/// Remembers that `application_id` obtained tokens in `session_id` (no-op
-/// if the session is gone, e.g. a refresh after it ended).
+/// Remembers that `application_id` obtained tokens in `session_id` and
+/// returns whether the session still exists (`false`: nothing recorded,
+/// e.g. a refresh after the session ended).
 ///
-/// The session row is taken `FOR KEY SHARE`, which conflicts with the
-/// `FOR UPDATE` that [`queue`] takes first: a logout racing this insert
-/// either waits for it (and then notifies this client) or ends first (the
+/// The session row is taken `FOR KEY SHARE` and held to the end of the
+/// caller's transaction. That conflicts with the `FOR UPDATE` that [`queue`]
+/// takes first: a logout racing the caller either waits for it (and then
+/// notifies this client and revokes the tokens it issued) or ends first (the
 /// locked read then skips the deleted row, so nothing is inserted and no FK
-/// violation surfaces). Callers that also lock refresh tokens call this
-/// first (lock order: session, then tokens — see `oidc::refresh_grant`).
+/// violation surfaces). Call it BEFORE inserting tokens bound to the session
+/// (lock order: session, then tokens — see `oidc::refresh_grant`).
 pub async fn record_client(
     conn: &impl ConnectionTrait,
     tenant_id: Uuid,
     session_id: Uuid,
     application_id: Uuid,
-) -> anyhow::Result<()> {
-    conn.execute_raw(Statement::from_sql_and_values(
-        conn.get_database_backend(),
-        "INSERT INTO session_clients (tenant_id, session_id, application_id) \
-         SELECT tenant_id, id, $3 FROM sessions WHERE tenant_id = $1 AND id = $2 \
-         FOR KEY SHARE ON CONFLICT DO NOTHING",
-        [tenant_id.into(), session_id.into(), application_id.into()],
-    ))
-    .await
-    .context("recording the session's client")?;
-    Ok(())
+) -> anyhow::Result<bool> {
+    let row = conn
+        .query_one_raw(Statement::from_sql_and_values(
+            conn.get_database_backend(),
+            "WITH s AS (SELECT tenant_id, id FROM sessions \
+               WHERE tenant_id = $1 AND id = $2 FOR KEY SHARE), \
+             ins AS (INSERT INTO session_clients (tenant_id, session_id, application_id) \
+               SELECT tenant_id, id, $3 FROM s ON CONFLICT DO NOTHING) \
+             SELECT EXISTS (SELECT 1 FROM s) AS live",
+            [tenant_id.into(), session_id.into(), application_id.into()],
+        ))
+        .await
+        .context("recording the session's client")?
+        .context("recording the session's client returned no row")?;
+    row.try_get::<bool>("", "live")
+        .context("reading whether the session is live")
 }
 
 /// Queues a logout notification for every client with a back-channel URI
