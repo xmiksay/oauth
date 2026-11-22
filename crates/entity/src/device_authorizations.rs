@@ -27,6 +27,9 @@ pub struct Model {
     /// Of the approving sign-in.
     pub amr: Vec<String>,
     pub auth_time: Option<DateTimeWithTimeZone>,
+    /// The browser session that approved; cleared when it ends (FK `SET
+    /// NULL`), and redemption refuses an approval without it.
+    pub approved_session_id: Option<Uuid>,
     /// Minimum seconds between polls; grows with every `slow_down`.
     pub interval_secs: i32,
     pub last_polled_at: Option<DateTimeWithTimeZone>,
@@ -47,6 +50,7 @@ impl std::fmt::Debug for Model {
             .field("scopes", &self.scopes)
             .field("status", &self.status)
             .field("user_id", &self.user_id)
+            .field("approved_session_id", &self.approved_session_id)
             .field("expires_at", &self.expires_at)
             .field("consumed_at", &self.consumed_at)
             .finish_non_exhaustive()

@@ -36,6 +36,7 @@ mod m20261122_000015_idp_presets;
 mod m20261122_000016_assignment_required;
 mod m20261122_000017_backchannel_logout;
 mod m20261122_000018_id_token_groups;
+mod m20261122_000019_device_approved_session;
 
 pub struct Migrator;
 
@@ -61,6 +62,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261122_000016_assignment_required::Migration),
             Box::new(m20261122_000017_backchannel_logout::Migration),
             Box::new(m20261122_000018_id_token_groups::Migration),
+            Box::new(m20261122_000019_device_approved_session::Migration),
         ]
     }
 }

@@ -13,7 +13,7 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
-use crate::{backchannel, mail::tokens};
+use crate::{backchannel, device_flow, mail::tokens};
 
 use super::{
     DirectoryError, display_name, password, reject_control_chars, violates_foreign_key,
@@ -186,6 +186,9 @@ pub async fn revoke_credentials(
         keep: keep_session,
     };
     backchannel::queue(conn, master_key, tenant_id, ended).await?;
+    // Before the sessions go: a redemption holding a request row finishes
+    // first, and the DELETE below (a fresh snapshot) then sees its session.
+    device_flow::deny_unredeemed(conn, tenant_id, user_id).await?;
     for sql in [
         "DELETE FROM sessions WHERE tenant_id = $1 AND user_id = $2 \
          AND ($3::uuid IS NULL OR id <> $3)",

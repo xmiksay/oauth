@@ -45,7 +45,7 @@ pub async fn grant(
     let device_code = params
         .get("device_code")
         .ok_or_else(|| OAuthError::invalid_request("device_code is required"))?;
-    let (txn, row) = lock_request(state, tenant.id, device_code).await?;
+    let (txn, row, session_live) = lock_request(state, tenant.id, device_code).await?;
     let row = row
         .filter(|row| row.application_id == client.id)
         .ok_or_else(|| OAuthError::invalid_grant("unknown device_code"))?;
@@ -76,6 +76,12 @@ pub async fn grant(
             ErrorCode::AccessDenied,
             "the user denied the request",
         )),
+        // The approving session was signed out, revoked or has expired: the
+        // approval dies with it, like an authorization code does.
+        DeviceStatus::Approved if !session_live => Err(OAuthError::new(
+            ErrorCode::AccessDenied,
+            "the approving sign-in session has ended",
+        )),
         DeviceStatus::Approved => {
             let user_agent = headers
                 .get(header::USER_AGENT)
@@ -88,26 +94,43 @@ pub async fn grant(
 }
 
 /// Begins the grant's transaction holding the request's row lock — and,
-/// for a request someone approved, first their user row (lock order user →
-/// request → session, `backchannel::lock_user`: redemption inserts a session
-/// for the user, and deleting a user locks it before cascading here).
+/// for a request someone approved, first their user row and then the
+/// approving session (lock order user → session → request,
+/// `backchannel::lock_user`: redemption inserts a session for the user,
+/// deleting a user locks it before cascading here, and ending the approving
+/// session locks it before its FK clears the request's
+/// `approved_session_id`). The flag says whether that session is still live.
 async fn lock_request(
     state: &AppState,
     tenant_id: Uuid,
     device_code: &str,
-) -> OAuthResult<(DatabaseTransaction, Option<device_authorizations::Model>)> {
-    // `user_id` is set once, by the approval, and never changes: a second
-    // attempt (approved between peek and lock) is always stable.
+) -> OAuthResult<(
+    DatabaseTransaction,
+    Option<device_authorizations::Model>,
+    bool,
+)> {
+    // `user_id` and `approved_session_id` are set once, by the approval; the
+    // user never changes, so a second attempt (approved between peek and
+    // lock) is always stable. The session may only be cleared meanwhile,
+    // which redemption refuses anyway.
     for _ in 0..2 {
         let peeked = device_flow::by_device_code(&state.db, tenant_id, device_code, false).await?;
-        let user_id = peeked.and_then(|r| r.user_id);
+        let user_id = peeked.as_ref().and_then(|r| r.user_id);
+        let session_id = peeked.and_then(|r| r.approved_session_id);
         let txn = state.db.begin().await?;
         if let Some(user_id) = user_id {
             backchannel::lock_user(&txn, tenant_id, user_id).await?;
         }
+        let mut live = false;
+        if let Some(session_id) = session_id {
+            live = device_flow::lock_approving_session(&txn, tenant_id, session_id).await?;
+        }
         let row = device_flow::by_device_code(&txn, tenant_id, device_code, true).await?;
-        if row.as_ref().and_then(|r| r.user_id) == user_id {
-            return Ok((txn, row));
+        let locked = row.as_ref().and_then(|r| r.approved_session_id);
+        if row.as_ref().and_then(|r| r.user_id) == user_id
+            && (locked.is_none() || locked == session_id)
+        {
+            return Ok((txn, row, live && locked.is_some()));
         }
     }
     Err(anyhow::anyhow!("device authorization changed user while being locked").into())
