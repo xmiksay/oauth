@@ -182,13 +182,51 @@ async fn invited_user_gets_a_fresh_invite_even_when_marked_verified() {
         "/login/invite",
     );
 
+    // The echoed `true` is no change: the new address resets to unverified.
     let path = format!("{USERS}/{}", id_of(&created["user"]));
     let body = json!({ "email": "ivy2@example.com", "email_verified": true });
     let (status, user) = call(&f.app, Method::PATCH, &path, tok, Some(&body)).await;
     assert_eq!(status, StatusCode::OK, "{user}");
-    assert_eq!(user["email_verified"], true);
+    assert_eq!(user["email_verified"], false);
     token_in(
         only_to(&f.deliver().await, "ivy2@example.com"),
         "/login/invite",
     );
+}
+
+#[tokio::test]
+async fn echoed_verified_with_a_new_email_still_resets_it() {
+    let f = Fixture::with_email().await;
+    let token = admin_token(&f).await;
+    let tok = Some(token.as_str());
+    let body = json!({
+        "email": "vera@example.com", "display_name": "Vera",
+        "password": "correct horse battery staple", "email_verified": true
+    });
+    let (status, created) = call(&f.app, Method::POST, USERS, tok, Some(&body)).await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let id = id_of(&created["user"]);
+    let path = format!("{USERS}/{id}");
+    f.deliver().await;
+
+    // A client echoing the full object: `true` is the stored value, not a
+    // vouch for the new address.
+    let body = json!({ "email": "vera2@example.com", "email_verified": true });
+    let (status, user) = call(&f.app, Method::PATCH, &path, tok, Some(&body)).await;
+    assert_eq!(status, StatusCode::OK, "{user}");
+    assert_eq!(user["email_verified"], false);
+    let sent = f.deliver().await;
+    token_in(
+        only_to(&sent, "vera2@example.com"),
+        "/myaccount/verify-email",
+    );
+    let events = audited(&f.db, "user.update", id).await;
+    assert_eq!(events.last().unwrap()["fields"], json!(["email"]));
+
+    // Vouching for the new address takes a real switch.
+    let body = json!({ "email_verified": true });
+    let (_, user) = call(&f.app, Method::PATCH, &path, tok, Some(&body)).await;
+    assert_eq!(user["email_verified"], true);
+    let events = audited(&f.db, "user.update", id).await;
+    assert_eq!(events.last().unwrap()["fields"], json!(["email_verified"]));
 }
