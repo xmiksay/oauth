@@ -77,6 +77,10 @@ device flow would reuse a session:
 - A consent-only transaction (a reused session at `consent`) whose policy
   became required while the consent screen was up can't step up: approving
   ends it with `login_required`; the next `/authorize` steps the session up.
+- A refresh token redeemed beyond its family's grant (multi-resource
+  refresh, `oidc::mrrt`) is refused with `invalid_grant` when the tenant,
+  the client or that resource requires MFA and the token's sign-in `amr`
+  was single-factor. No step-up happens on the token endpoint.
 - An upstream sign-in counts as MFA only when the IdP is trusted for it
   (`trust_upstream_mfa`, [federation.md](federation.md)).
 

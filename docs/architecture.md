@@ -247,10 +247,13 @@ need no consent (grants are keyed by a resource app).
   clients too — rotation protects them). Every use rotates; the new token
   inherits the family's absolute `expires_at` (the client's
   `refresh_token_ttl_secs` from the first issue). Presenting a rotated token
-  revokes the whole family. `scope` may narrow the access token (never
-  widen); the new refresh token keeps the original scopes and resource.
+  revokes the whole family. `scope` may narrow the access token; the
+  new refresh token keeps the original scopes and resource. Resource scopes
+  beyond the family's grant — of another resource, or more of the grant's
+  own — go through multi-resource refresh below; OIDC scopes never widen.
   **Multi-resource refresh** (Entra-style, `oidc::mrrt`): `scope` naming
-  another resource than the grant's (still one resource per request, so
+  another resource than the grant's (or values of its own resource the
+  family's grant lacks) (still one resource per request, so
   every access token has one `aud`) mints an access token for it when
   every requested value (`.default` = the client's required permissions on
   it, as at authorize) is covered **now** by the user's or the tenant-wide

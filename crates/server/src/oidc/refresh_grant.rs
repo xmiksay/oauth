@@ -1,7 +1,8 @@
 //! `grant_type=refresh_token`: rotation with family reuse detection and
 //! optional down-scoping (RFC 6749 §6). The new refresh token keeps the
 //! grant's original scopes; only the access token is narrowed — or, for
-//! scopes of another resource, minted for that resource (`mrrt`).
+//! scopes beyond the family's grant (another resource, or more of its own),
+//! minted on live consent (`mrrt`).
 
 use std::{collections::HashMap, net::IpAddr};
 
@@ -39,15 +40,15 @@ fn narrow_oidc(
 }
 
 /// Narrows the grant's own resource values to `requested` (`.default` =
-/// all of them).
-fn narrow_values(original_values: &[String], requested: &[String]) -> OAuthResult<Vec<String>> {
+/// all of them); `None` when `requested` exceeds them.
+fn narrow_values(original_values: &[String], requested: &[String]) -> Option<Vec<String>> {
     if requested.iter().any(|v| v == scope::DEFAULT) {
-        return Ok(original_values.to_vec());
+        return Some(original_values.to_vec());
     }
     if !requested.iter().all(|v| original_values.contains(v)) {
-        return Err(invalid_scope("scope exceeds the original grant"));
+        return None;
     }
-    Ok(requested.to_vec())
+    Some(requested.to_vec())
 }
 
 pub async fn grant(
@@ -102,14 +103,19 @@ pub async fn grant(
             match &requested.resource {
                 None => (oidc, None, Vec::new()),
                 Some((prefix, values)) => {
-                    let found = scope::find_resource(conn, tenant.id, prefix).await?;
-                    match (found, original_resource) {
+                    let found = scope::find_resource(&txn, tenant.id, prefix).await?;
+                    let narrowed = match (&found, &original_resource) {
                         (Some(found), Some(orig)) if found.id == orig.id => {
-                            (oidc, Some(orig), narrow_values(&original_values, values)?)
+                            narrow_values(&original_values, values)
                         }
-                        // Another resource than the grant's: Entra-style
-                        // multi-resource refresh, on live consent.
-                        (found, _) => {
+                        _ => None,
+                    };
+                    match narrowed {
+                        Some(values) => (oidc, original_resource, values),
+                        // Another resource than the grant's, or more of its
+                        // own: Entra-style multi-resource refresh, on live
+                        // consent and MFA.
+                        None => {
                             let (res, values) =
                                 mrrt::resolve(&txn, tenant, client, &row, found, values).await?;
                             (oidc, Some(res), values)
@@ -214,13 +220,13 @@ mod tests {
         let values = s(&["read", "write"]);
         let req = scope::parse("openid api://x/read").unwrap();
         assert_eq!(narrow_oidc(&oidc, &req).unwrap(), s(&["openid"]));
-        assert_eq!(narrow_values(&values, &s(&["read"])).unwrap(), s(&["read"]));
+        assert_eq!(narrow_values(&values, &s(&["read"])), Some(s(&["read"])));
         assert_eq!(
-            narrow_values(&values, &s(&[scope::DEFAULT])).unwrap(),
-            values
+            narrow_values(&values, &s(&[scope::DEFAULT])),
+            Some(values.clone())
         );
         let req = scope::parse("email").unwrap();
         assert!(narrow_oidc(&oidc, &req).is_err());
-        assert!(narrow_values(&values, &s(&["delete"])).is_err());
+        assert_eq!(narrow_values(&values, &s(&["read", "delete"])), None);
     }
 }
