@@ -62,6 +62,9 @@ async fn a_caller_supplied_secret_is_checked_stored_hashed_and_never_echoed() {
     let password1 = format!("{}pas", "password1".repeat(5));
     let password17 = "passwordpassword1".repeat(4);
     let company = "MyCompanySecretKey2026".repeat(2);
+    // #81 review: a repeated word plus a short tail has no whole-value period.
+    let password_tail = format!("{}AbCd", "password".repeat(5));
+    let company_tail = format!("{company}Xq9z");
     for weak in [
         "short",
         hex32,
@@ -74,6 +77,8 @@ async fn a_caller_supplied_secret_is_checked_stored_hashed_and_never_echoed() {
         &password1,
         &password17,
         &company,
+        &password_tail,
+        &company_tail,
     ] {
         let (st, body) = post(&f, &token, &path, json!({ "secret": weak })).await;
         assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
