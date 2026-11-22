@@ -145,6 +145,7 @@ describe('ConsentStep', () => {
     notice: null,
     device: false,
     oidc_scopes: ['openid'],
+    releases_groups: false,
   }
 
   it('names the client, the resource and every requested scope', () => {
@@ -182,6 +183,7 @@ describe('ConsentStep for a device', () => {
     notice: null,
     device: true,
     oidc_scopes: ['openid'],
+    releases_groups: false,
   }
 
   it('asks to confirm the device sign-in with a phishing warning', async () => {
@@ -214,6 +216,21 @@ describe('ConsentStep for a device', () => {
     expect(items[0]).toContain('See your email address')
     expect(items[1]).toContain('Stay signed in until you sign it out')
     expect(items[1]).toContain('offline_access')
+  })
+
+  it('names groups from the app option, not from the groups scope', () => {
+    const lines = (v: Partial<TxView>) =>
+      mount(ConsentStep, { props: { view: { ...view, ...v }, locked: false } })
+        .findAll('li')
+        .map((li) => li.text())
+    // Requested, but the app releases none: nothing to say.
+    expect(lines({ oidc_scopes: ['openid', 'groups'] })).toEqual([])
+    // Not requested, but the app releases them: say so.
+    const released = lines({ oidc_scopes: ['openid'], releases_groups: true })
+    expect(released).toHaveLength(1)
+    expect(released[0]).toContain('See the groups you belong to')
+    // Without `openid` there is no ID token or userinfo to carry them.
+    expect(lines({ oidc_scopes: ['offline_access'], releases_groups: true })).toHaveLength(1)
   })
 
   it('lists no OIDC scopes outside a device sign-in', () => {

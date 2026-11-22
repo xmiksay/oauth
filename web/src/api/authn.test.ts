@@ -114,6 +114,7 @@ describe('login API client', () => {
         notice: null,
         device: false,
         oidc_scopes: ['openid'],
+        releases_groups: false,
       }),
     ).toBe(false)
   })
