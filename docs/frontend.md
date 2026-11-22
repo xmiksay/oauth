@@ -3,23 +3,24 @@
 Part of the [architecture](architecture.md); backend contracts in
 [api/authn.md](api/authn.md) and [api/management.md](api/management.md).
 
-One Vue 3 SPA (TypeScript, Tailwind v4, Pinia, vue-router) with the `/` portal, the `/device`
-page and four areas — `/login`, `/logout`, `/myaccount`, `/admin` — built to `web/dist` and served
-by the backend same-origin on every tenant host (`spa`). The tenant comes from the server: the
-backend writes `<meta name="oauth-tenant" content="{slug}">` into `index.html`
-(`stores/tenant` `currentTenant`) — the host can't tell, since the `APEX_TENANT` is served on the
-apex, whose first label is no slug. Only under the Vite dev server (no meta) is it the first
-hostname label; a single-label dev apex like `localhost` takes `APEX_TENANT` from the repo's
-`.env` (`__APEX_TENANT__`) or, without one, redirects to `<system slug>.<host>/admin`, the slug
-being `SYSTEM_TENANT_SLUG` from that `.env`, which `vite.config.ts` bakes in as
-`__SYSTEM_TENANT_SLUG__`, default `system` (`tenant-defines.ts` also refuses a malformed slug or an
-`APEX_TENANT` equal to it). Only the dev server reads the `.env`: `vite build` and vitest always
-get `system` / no apex tenant, so tests are hermetic and a local `.env` can't break a build. Another tenant's origin comes from the tenant object's `origin` (management API), never
-from swapping host labels — except the create-tenant form's preview of a not-yet-created tenant,
-which can never be the `APEX_TENANT` (`stores/tenant` `tenantOrigin`). Whether the page's tenant IS the system tenant comes from
-`me.tenant_is_system` (`auth.isSystemAdmin` = that + GlobalAdmin), never from the host label;
-dev runs Vite on `*.localhost:5173`,
-proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`).
+One Vue 3 SPA (TypeScript, Tailwind v4, Pinia, vue-router) with the `/` portal, the `/device` page
+and four areas — `/login`, `/logout`, `/myaccount`, `/admin` — built to `web/dist` and served by the
+backend same-origin on every tenant host (`spa`). The tenant comes from the server: the backend
+writes `<meta name="oauth-tenant" content="{slug}">` into `index.html` (`stores/tenant`
+`currentTenant`) — the host can't tell, since the `APEX_TENANT` is served on the apex, whose first
+label is no slug. Only under the Vite dev server (no meta) is it the first hostname label; a
+single-label dev apex like `localhost` takes `APEX_TENANT` from the repo's `.env`
+(`__APEX_TENANT__`) or, without one, redirects to `<system slug>.<host>/admin`, the slug being
+`SYSTEM_TENANT_SLUG` from that `.env`, which `vite.config.ts` bakes in as `__SYSTEM_TENANT_SLUG__`,
+default `system` (`tenant-defines.ts` also refuses a malformed slug or an `APEX_TENANT` equal to
+it). Only the dev server reads the `.env`: `vite build` and vitest always get `system` / no apex
+tenant, so tests are hermetic and a local `.env` can't break a build. Another tenant's origin comes
+from the tenant object's `origin` (management API), never from swapping host labels — except the
+create-tenant form's preview of a not-yet-created tenant, which can never be the `APEX_TENANT`
+(`stores/tenant` `tenantOrigin`). Whether the page's tenant IS the system tenant comes from
+`me.tenant_is_system` (`auth.isSystemAdmin` = that + GlobalAdmin), never from the host label; dev
+runs Vite on `*.localhost:5173`, proxying backend paths with the `Host` kept
+(`PUBLIC_URL=http://localhost:5173`).
 
 - **Portal** (`areas/portal`, route `portal` at `/`, title "Dashboard · {tenant}"): signed in
   through the **my-account** client (`meta.area: 'myaccount'`, so no extra OIDC app; the
