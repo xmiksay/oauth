@@ -126,14 +126,30 @@ async fn lock_request(
             live = device_flow::lock_approving_session(&txn, tenant_id, session_id).await?;
         }
         let row = device_flow::by_device_code(&txn, tenant_id, device_code, true).await?;
-        let locked = row.as_ref().and_then(|r| r.approved_session_id);
-        if row.as_ref().and_then(|r| r.user_id) == user_id
-            && (locked.is_none() || locked == session_id)
-        {
-            return Ok((txn, row, live && locked.is_some()));
+        let locked_user = row.as_ref().and_then(|r| r.user_id);
+        let locked_session = row.as_ref().and_then(|r| r.approved_session_id);
+        if let Some(still_set) = stable((user_id, session_id), (locked_user, locked_session)) {
+            return Ok((txn, row, live && still_set));
         }
     }
-    Err(anyhow::anyhow!("device authorization changed user while being locked").into())
+    Err(anyhow::anyhow!("device authorization changed while being locked").into())
+}
+
+/// Whether the locks taken from the peeked `(user, session)` cover the
+/// locked row: `None` means it was approved in between (retry), `Some`
+/// whether its approving session is still set (cleared meanwhile = dead).
+fn stable(
+    peeked: (Option<Uuid>, Option<Uuid>),
+    locked: (Option<Uuid>, Option<Uuid>),
+) -> Option<bool> {
+    if locked.0 != peeked.0 {
+        return None;
+    }
+    match locked.1 {
+        None => Some(false),
+        Some(session) if Some(session) == peeked.1 => Some(true),
+        Some(_) => None,
+    }
 }
 
 /// Consumes the approved request and issues its tokens on the caller's
@@ -220,4 +236,32 @@ async fn redeem(
     )
     .await?;
     Ok(set)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::stable;
+    use uuid::Uuid;
+
+    #[test]
+    fn unchanged_rows_are_stable() {
+        let (user, session) = (Uuid::now_v7(), Uuid::now_v7());
+        let approved = (Some(user), Some(session));
+        assert_eq!(stable(approved, approved), Some(true));
+        assert_eq!(stable((None, None), (None, None)), Some(false));
+    }
+
+    #[test]
+    fn a_session_cleared_meanwhile_is_dead() {
+        let (user, session) = (Some(Uuid::now_v7()), Some(Uuid::now_v7()));
+        assert_eq!(stable((user, session), (user, None)), Some(false));
+    }
+
+    #[test]
+    fn an_approval_meanwhile_retries() {
+        let (user, session) = (Some(Uuid::now_v7()), Some(Uuid::now_v7()));
+        assert_eq!(stable((None, None), (user, session)), None);
+        assert_eq!(stable((user, None), (user, session)), None);
+        assert_eq!(stable((user, session), (user, Some(Uuid::now_v7()))), None);
+    }
 }

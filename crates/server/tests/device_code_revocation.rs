@@ -18,7 +18,7 @@ use common::{
     ORIGIN,
     browser::Browser,
     device::{decide, enable, enter_tx, poll, rows, sign_in, start},
-    flow::Fixture,
+    flow::{Fixture, PASSWORD},
     mgmt::{call, mint_user_token, user_with_roles},
 };
 use entity::{
@@ -146,4 +146,59 @@ async fn ending_another_session_keeps_the_approval() {
     let (status, body) = poll(&f, &f.spa, None, &device_code).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body["refresh_token"].is_string());
+}
+
+#[tokio::test]
+async fn a_password_change_keeping_the_approving_session_denies_the_device() {
+    let f = Fixture::new().await;
+    let (_browser, device_code, sid) = approved(&f).await;
+    let token = mint_user_token(&f.db, &f.config, &f.tenant, &f.user).await;
+    // Re-point the approval at the token's session: the one the change keeps.
+    let kept = sessions::Entity::find()
+        .filter(sessions::Column::UserId.eq(f.user.id))
+        .filter(sessions::Column::Id.ne(sid))
+        .one(&f.db)
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
+    f.db.execute_unprepared(&format!(
+        "UPDATE device_authorizations SET approved_session_id = '{kept}'"
+    ))
+    .await
+    .unwrap();
+    let body = json!({ "current_password": PASSWORD, "new_password": "a brand new passphrase" });
+    let path = "/api/v1/me/change-password";
+    let (status, resp) = call(&f.app, Method::POST, path, Some(&token), Some(&body)).await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{resp}");
+    let alive = sessions::Entity::find_by_id(kept).one(&f.db).await.unwrap();
+    assert!(alive.is_some(), "the change keeps the caller's session");
+    assert_eq!(rows(&f).await[0].status, DeviceStatus::Denied);
+    refused(&f, &device_code).await;
+}
+
+#[tokio::test]
+async fn an_admin_session_revocation_denies_the_device() {
+    let f = Fixture::new().await;
+    let (_browser, device_code, _) = approved(&f).await;
+    let roles = [DirectoryRole::GlobalAdmin];
+    let admin = user_with_roles(&f.db, f.tenant.id, "admin@example.com", &roles).await;
+    let token = mint_user_token(&f.db, &f.config, &f.tenant, &admin).await;
+    let path = format!("/api/v1/users/{}/revoke-sessions", f.user.id);
+    let (status, body) = call(&f.app, Method::POST, &path, Some(&token), None).await;
+    assert!(status.is_success(), "{status} {body}");
+    assert_eq!(rows(&f).await[0].status, DeviceStatus::Denied);
+    refused(&f, &device_code).await;
+}
+
+#[tokio::test]
+async fn an_approval_without_a_session_is_refused() {
+    let f = Fixture::new().await;
+    let (_browser, device_code, _) = approved(&f).await;
+    // What a row approved before the migration looks like.
+    f.db.execute_unprepared("UPDATE device_authorizations SET approved_session_id = NULL")
+        .await
+        .unwrap();
+    refused(&f, &device_code).await;
+    assert_eq!(rows(&f).await[0].status, DeviceStatus::Approved);
 }

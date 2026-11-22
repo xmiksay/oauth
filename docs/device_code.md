@@ -73,9 +73,10 @@ user tricked into approving an attacker's code can still cut it off:
   SHARE` (lock order user → session → request, the order a session's deletion
   and its FK action take) and answers `access_denied` when the column is
   empty or the session has expired; the row stays `approved` and unconsumed,
-  every later poll gets the same answer. A sign-out racing a redemption that
-  already holds the session waits for it and then ends the device's new
-  session too (it is the user's).
+  every later poll gets the same answer. A single-session sign-out racing a
+  redemption that already holds the session waits for it; the redemption
+  came first, so the device keeps what it was issued (only
+  `revoke_credentials`, below, also ends the device's new session).
 - `directory::revoke_credentials` ("sign out everywhere", admin
   `revoke-sessions`, password change and reset, disabling) marks every
   `approved`, unredeemed request of the user `denied` on its transaction —
@@ -85,6 +86,8 @@ user tricked into approving an attacker's code can still cut it off:
 - Rows approved before migration `m20261122_000019` have no session and are
   refused (they lived 15 minutes at most). Disabling or deleting the user
   stopped redemption before (`active_user`, FK cascade) and still does.
+
+Tests: `crates/server/tests/device_code_revocation.rs`.
 
 ## Guessing user codes
 
