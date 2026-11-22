@@ -1,6 +1,8 @@
 //! `…/applications/{id}/secrets` — client secrets. A generated value is
 //! returned once, at creation; a caller-supplied one (`secret`) is never
 //! echoed. Either way only its SHA-256 and a 3-character hint are stored.
+//! The tenant policy for non-expiring secrets is re-read `FOR SHARE` inside
+//! the create transaction, so a policy switched off mid-request wins.
 
 use axum::{
     extract::State,
@@ -8,10 +10,10 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::Duration;
-use entity::{client_secrets, enums::ClientType};
+use entity::{client_secrets, enums::ClientType, tenants};
 use sea_orm::{
-    ActiveValue::Set, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder,
-    TransactionTrait,
+    ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter,
+    QueryOrder, QuerySelect, TransactionTrait,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -40,6 +42,33 @@ use crate::{
 const DEFAULT_DAYS: i64 = 180;
 const MAX_DAYS: i64 = 730;
 const HINT_LEN: usize = 3;
+const NON_EXPIRING_OFF: &str = "this tenant doesn't allow non-expiring secrets";
+
+/// A generated value's first characters. A supplied value may sit right at
+/// the entropy minimum, so its own characters would leak part of it: its
+/// hint is the start of its SHA-256 in hex instead.
+fn hint(value: &str, supplied: bool) -> String {
+    if !supplied {
+        return value.chars().take(HINT_LEN).collect();
+    }
+    secret::hash(value)
+        .iter()
+        .flat_map(|b| [b >> 4, b & 0xf])
+        .take(HINT_LEN)
+        .filter_map(|n| char::from_digit(u32::from(n), 16))
+        .collect()
+}
+
+/// The tenant's current policy, its row held `FOR SHARE` until commit so a
+/// concurrent settings PATCH serialises with this create.
+async fn non_expiring_allowed<C: ConnectionTrait>(conn: &C, tenant_id: Uuid) -> AppResult<bool> {
+    tenants::Entity::find_by_id(tenant_id)
+        .lock_shared()
+        .one(conn)
+        .await?
+        .map(|t| t.allow_non_expiring_secrets)
+        .ok_or(AppError::NotFound)
+}
 
 fn view(s: &client_secrets::Model) -> Value {
     json!({
@@ -95,9 +124,7 @@ fn lifetime(body: &CreateSecret, allow_non_expiring: bool) -> AppResult<Option<i
             ));
         }
         if !allow_non_expiring {
-            return Err(AppError::BadRequest(
-                "this tenant doesn't allow non-expiring secrets".into(),
-            ));
+            return Err(AppError::BadRequest(NON_EXPIRING_OFF.into()));
         }
         return Ok(None);
     }
@@ -124,6 +151,11 @@ pub async fn create(
     }
     let description = opt_description(body.description.as_deref())?;
     let txn = state.db.begin().await?;
+    // `caller.tenant` is the row as of authentication; the check above only
+    // fails fast.
+    if days.is_none() && !non_expiring_allowed(&txn, caller.tenant_id()).await? {
+        return Err(AppError::BadRequest(NON_EXPIRING_OFF.into()));
+    }
     let app = lock_app(&txn, caller.tenant_id(), app_id).await?;
     ensure_not_builtin(&app)?;
     if app.client_type == ClientType::Public {
@@ -142,13 +174,12 @@ pub async fn create(
         Some(value) => value,
         None => Zeroizing::new(secret::random_token()?),
     };
-    let hint: String = value.chars().take(HINT_LEN).collect();
     let row = client_secrets::ActiveModel {
         id: Set(Uuid::now_v7()),
         tenant_id: Set(app.tenant_id),
         application_id: Set(app.id),
         secret_hash: Set(secret::hash(&value)),
-        hint: Set(hint),
+        hint: Set(hint(&value, caller_supplied)),
         description: Set(description),
         expires_at: Set(days.map(|d| chrono::Utc::now().fixed_offset() + Duration::days(d))),
         ..Default::default()
@@ -217,6 +248,20 @@ mod tests {
             never_expires: never,
             secret: None,
         }
+    }
+
+    #[test]
+    fn hints() {
+        let value = "Zx8pQ2vN7rT4kL9wB3mY6cH1jF5dS0aG";
+        assert_eq!(hint(value, false), "Zx8");
+        let hashed = hint(value, true);
+        assert_eq!(hashed.len(), HINT_LEN);
+        assert!(hashed.bytes().all(|b| b.is_ascii_hexdigit()));
+        let expected: String = secret::hash(value)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert!(expected.starts_with(&hashed));
     }
 
     #[test]

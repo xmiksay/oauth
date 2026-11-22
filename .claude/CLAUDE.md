@@ -7,7 +7,7 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
 
 - Architecture: [docs/architecture.md](../docs/architecture.md), SPA: [docs/frontend.md](../docs/frontend.md),
   sign-in: [docs/authn.md](../docs/authn.md), passkeys: [docs/passkeys.md](../docs/passkeys.md),
-  federation: [docs/federation.md](../docs/federation.md),
+  federation: [docs/federation.md](../docs/federation.md), background jobs: [docs/jobs.md](../docs/jobs.md),
   logout / back-channel logout: [docs/backchannel_logout.md](../docs/backchannel_logout.md), device code: [docs/device_code.md](../docs/device_code.md),
   CORS: [docs/cors.md](../docs/cors.md), consent + assignment: [docs/consent.md](../docs/consent.md), refresh tokens: [docs/refresh_tokens.md](../docs/refresh_tokens.md)
 - Roadmap / milestones: [docs/roadmap.md](../docs/roadmap.md)

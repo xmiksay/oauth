@@ -89,7 +89,7 @@ was off are warned about once it is configured (if not yet expired).
 
 ## Delivery
 
-`jobs::outbox` (see [Background jobs](architecture.md#background-jobs-jobs)):
+`jobs::outbox` (see [Background jobs](jobs.md)):
 claim-then-send. A short transaction (holding the email channel's own
 leader lock, `jobs::outbox::policy`) leases up to 8 due messages
 (`attempts + 1`, `next_attempt_at = now + 10 min`, `FOR UPDATE SKIP LOCKED`);

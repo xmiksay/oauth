@@ -102,12 +102,15 @@ Public clients can't have secrets (400).
   (`openssl rand -base64 32`) or 64 hex digits pass; 32 hex digits, a
   repeated or two-letter value don't. It is stored exactly like a generated
   one (SHA-256 + 3-character `hint`) and never echoed: the response has no
-  `"secret"`. Without `secret` the server generates 256 random bits and
+  `"secret"`. Its `hint` is the first 3 hex digits of that SHA-256, not of
+  the value (a value at the entropy minimum can't spare 18 bits to every
+  directory reader and expiry email). Without `secret` the server generates 256 random bits and
   returns them once, as before. Clients using `client_secret_basic` must
   form-urlencode a value with reserved characters (RFC 6749 §2.3.1).
 - **Non-expiring** (`never_expires: true`, exclusive with
   `expires_in_days`): only where the tenant's `allow_non_expiring_secrets`
-  is on (else 400); `expires_at` is `null`, `never_expires` is `true`.
+  is on (else 400; read again, `FOR SHARE`, in the creating transaction, so
+  a request in flight when the setting is turned off is refused); `expires_at` is `null`, `never_expires` is `true`.
   Turning the setting off later keeps existing non-expiring secrets until
   they are deleted.
 - The `application.secret_add` audit event records `secret_id`,
