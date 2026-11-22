@@ -171,6 +171,8 @@ function setDisabled(t: Tenant) {
             pattern="[a-z0-9][a-z0-9\-]{0,61}[a-z0-9]"
             required
           >
+          <!-- Swapping host labels is right here only: a tenant that doesn't exist yet can't be
+               APEX_TENANT (startup requires that one to exist), so it gets a subdomain. -->
           <p class="hint">
             2–63 lowercase letters, digits and dashes (not at the end); the tenant's host is
             <span class="font-mono">{{ tenantOrigin(form.slug || 'slug') }}</span>.

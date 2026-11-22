@@ -205,6 +205,12 @@ async fn sign_in_tokens_and_csrf_use_the_apex_origin() {
     let logout = apex("/oauth2/logout");
     let (status, _, _) = browser.post_json(&logout, &json!({}), ORIGIN).await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+    let (status, _, body) = browser.post_json(&logout, &json!({}), PUBLIC_URL).await;
+    assert_eq!(
+        (status, &body["signed_out"]),
+        (StatusCode::OK, &json!(true))
+    );
+    assert!(!browser.has_session());
 }
 
 #[tokio::test]
@@ -352,7 +358,9 @@ async fn the_spa_is_told_its_tenant() {
     let app = app::router(AppState::new(conn, config, true), dist.path());
     for (uri, slug) in [
         (apex("/"), T),
+        (apex("/index.html"), T),
         (apex("/admin/users"), T),
+        (at("fabrikam", "/index.html"), "fabrikam"),
         (at("fabrikam", "/login"), "fabrikam"),
     ] {
         let req = Request::get(&uri).body(Body::empty()).unwrap();
