@@ -95,12 +95,22 @@ Public clients can't have secrets (400).
 
 - **Caller-supplied value** (`secret`, config as code / GitOps): the
   automation registers a value it already holds in its secret manager
-  instead of copying a generated one. It must be 32–256 visible ASCII
-  characters (no spaces) with at least 128 bits of *estimated* entropy —
-  length × the Shannon entropy of the value's own character distribution —
-  else 400 (the message never repeats the value). 32 random bytes as base64
-  (`openssl rand -base64 32`) or 64 hex digits pass; 32 hex digits, a
-  repeated or two-letter value don't. It is stored exactly like a generated
+  instead of copying a generated one. It must be **32+ random bytes,
+  base64 or hex encoded**: base64 (standard or URL-safe alphabet, not
+  mixed; padding optional) or an even number of hex digits (either case),
+  at most 256 characters, decoding to at least 32 bytes — else 400 (the
+  message never repeats the value). `openssl rand -base64 32` or
+  `openssl rand -hex 32` pass. The server can't prove a value random, so it
+  also refuses the shapes a hand-picked one takes: decoded bytes that
+  repeat a unit of half their length or less (`"password"` × 8 is valid
+  base64 of a 6-byte period), a run of 8+ consecutive ascending or
+  descending characters (`abcdefgh`, `0123456789`), and text under 128 bits
+  of *estimated* entropy (length × the Shannon entropy of its character
+  distribution: small-alphabet or skewed values). 32 hex digits (16 bytes),
+  passphrases with spaces or punctuation (`CompanyNameProductionSecret2026!`)
+  and the examples above don't pass; a long run of words in the base64
+  alphabet still can, which is why the value must come from a random
+  generator. It is stored exactly like a generated
   one (SHA-256 + 3-character `hint`) and never echoed: the response has no
   `"secret"`. Its `hint` is the first 3 hex digits of that SHA-256, not of
   the value (a value at the entropy minimum can't spare 18 bits to every
