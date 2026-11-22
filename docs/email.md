@@ -73,7 +73,8 @@ survives the sweep of expired device rows), when every browser is new.
 ## Delivery
 
 `jobs::outbox` (see [Background jobs](architecture.md#background-jobs-jobs)):
-claim-then-send. A short transaction leases up to 8 due messages
+claim-then-send. A short transaction (holding the email channel's own
+leader lock, `jobs::outbox::policy`) leases up to 8 due messages
 (`attempts + 1`, `next_attempt_at = now + 10 min`, `FOR UPDATE SKIP LOCKED`);
 8 sends × 60 s plus a 30 s skew margin must fit the 10-minute lease (a
 compile-time check). Each is

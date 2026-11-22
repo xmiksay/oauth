@@ -35,21 +35,59 @@ use crate::{
     mail::{Email, MailError, Mailer, outbox::next_attempt},
 };
 
-/// "oauthobx" in ASCII.
+/// "oauthobx" in ASCII: the email channel's leader lock.
 pub const OUTBOX_LOCK_KEY: i64 = 0x6f61_7574_686f_6278;
-const BATCH: u64 = 8;
-const SEND_SECS: i64 = 60;
 const LEASE_SECS: i64 = 600;
 /// Slack for clock skew between replicas: no send starts this close to the
 /// end of the lease (on top of the send's own budget).
 const MARGIN_SECS: i64 = 30;
-// A whole batch of worst-case sends (plus the margin) must fit in its
-// lease, or another replica could re-claim messages still being sent.
-const _: () = assert!(BATCH as i64 * SEND_SECS + MARGIN_SECS < LEASE_SECS);
 /// How long a claimed message is reserved for the run that claimed it.
 pub const LEASE: Duration = Duration::seconds(LEASE_SECS);
-/// Bounds one whole delivery (lettre's SMTP timeout is per command).
-const SEND_TIMEOUT: StdDuration = StdDuration::from_secs(SEND_SECS.unsigned_abs());
+
+/// How one channel's runs claim and send.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Policy {
+    /// Leader lock of the channel's runs. One per channel: the channels run
+    /// side by side (back-channel on its own task), and a shared key would
+    /// make overlapping claims skip their tick.
+    pub lock_key: i64,
+    /// Messages leased per run.
+    pub batch: u64,
+    /// Upper bound of one delivery (lettre's SMTP timeout is per command;
+    /// back-channel POSTs have a 10 s client timeout).
+    pub send_secs: i64,
+}
+
+pub const fn policy(channel: Channel) -> Policy {
+    match channel {
+        Channel::Email => Policy {
+            lock_key: OUTBOX_LOCK_KEY,
+            batch: 8,
+            send_secs: 60,
+        },
+        // "oauthobt"
+        Channel::Telegram => Policy {
+            lock_key: 0x6f61_7574_686f_6274,
+            batch: 8,
+            send_secs: 60,
+        },
+        // "oauthobb"
+        Channel::Backchannel => Policy {
+            lock_key: 0x6f61_7574_686f_6262,
+            batch: 32,
+            send_secs: 15,
+        },
+    }
+}
+
+/// A whole batch of worst-case sends (plus the margin) must fit in its
+/// lease, or another replica could re-claim messages still being sent.
+const fn fits_lease(p: Policy) -> bool {
+    p.batch as i64 * p.send_secs + MARGIN_SECS < LEASE_SECS
+}
+const _: () = assert!(fits_lease(policy(Channel::Email)));
+const _: () = assert!(fits_lease(policy(Channel::Telegram)));
+const _: () = assert!(fits_lease(policy(Channel::Backchannel)));
 
 /// The job's "now", read at every step (tests move it).
 pub type Clock<'a> = &'a (dyn Fn() -> DateTime<FixedOffset> + Sync);
@@ -90,15 +128,16 @@ impl<M: Mailer> Courier for M {
     }
 }
 
-/// Leases up to [`BATCH`] due messages of `channel`; `None` if another
-/// replica holds the job lock. Each claim counts as an attempt.
+/// Leases up to the channel's batch of due messages; `None` if another
+/// replica holds the channel's lock. Each claim counts as an attempt.
 pub async fn claim(
     db: &DatabaseConnection,
     now: DateTime<FixedOffset>,
     channel: Channel,
 ) -> anyhow::Result<Option<Vec<outbox::Model>>> {
+    let policy = policy(channel);
     let txn = db.begin().await.context("starting outbox claim")?;
-    if !try_lock(&txn, OUTBOX_LOCK_KEY).await? {
+    if !try_lock(&txn, policy.lock_key).await? {
         return Ok(None);
     }
     let rows = outbox::Entity::find()
@@ -116,7 +155,7 @@ pub async fn claim(
             [
                 now.into(),
                 (now + LEASE).into(),
-                BATCH.into(),
+                policy.batch.into(),
                 channel.to_value().into(),
             ],
         ))
@@ -163,14 +202,18 @@ fn email_of(
     })
 }
 
-/// Sends one message, giving up (transient) after [`SEND_TIMEOUT`].
+/// Sends one message, giving up (transient) after the email budget.
 pub async fn send_bounded<M: Mailer>(mailer: &M, email: &Email) -> Result<(), MailError> {
-    bounded(mailer.send(email)).await
+    bounded(Channel::Email, mailer.send(email)).await
 }
 
-/// Any delivery future, given up (transient) after [`SEND_TIMEOUT`].
-async fn bounded(send: impl Future<Output = Result<(), MailError>>) -> Result<(), MailError> {
-    tokio::time::timeout(SEND_TIMEOUT, send)
+/// Any delivery future, given up (transient) after its channel's budget.
+async fn bounded(
+    channel: Channel,
+    send: impl Future<Output = Result<(), MailError>>,
+) -> Result<(), MailError> {
+    let budget = StdDuration::from_secs(policy(channel).send_secs.unsigned_abs());
+    tokio::time::timeout(budget, send)
         .await
         .unwrap_or(Err(MailError::Transient))
 }
@@ -255,7 +298,8 @@ pub async fn run_once<C: Courier>(
     let mut rows = claimed.into_iter();
     while let Some(row) = rows.next() {
         // The claimed `next_attempt_at` is where our lease ends.
-        let deadline = row.next_attempt_at - Duration::seconds(SEND_SECS + MARGIN_SECS);
+        let deadline =
+            row.next_attempt_at - Duration::seconds(policy(C::CHANNEL).send_secs + MARGIN_SECS);
         if shutdown.is_cancelled() || clock() >= deadline {
             release(db, std::iter::once(row).chain(rows), clock()).await?;
             break;
@@ -264,7 +308,7 @@ pub async fn run_once<C: Courier>(
             tracing::warn!(message_id = %row.id, "outbox lease taken over; skipping");
             continue;
         }
-        let result = bounded(courier.deliver(db, config, &row, &tenants)).await;
+        let result = bounded(C::CHANNEL, courier.deliver(db, config, &row, &tenants)).await;
         let now = clock();
         let mut update = outbox::ActiveModel::default();
         let outcome = match result {
@@ -308,7 +352,10 @@ pub async fn run_once<C: Courier>(
 
 #[cfg(test)]
 mod tests {
+    use sea_orm::Iterable;
+
     use super::*;
+    use crate::jobs::{ROTATION_LOCK_KEY, SWEEPER_LOCK_KEY};
 
     struct Hang;
 
@@ -316,6 +363,18 @@ mod tests {
         async fn send(&self, _: &Email) -> Result<(), MailError> {
             std::future::pending().await
         }
+    }
+
+    #[test]
+    fn every_channel_has_its_own_lock_key() {
+        let mut keys: Vec<i64> = Channel::iter().map(|c| policy(c).lock_key).collect();
+        // Keeps the key replicas of older releases take for email.
+        assert_eq!(policy(Channel::Email).lock_key, OUTBOX_LOCK_KEY);
+        keys.extend([SWEEPER_LOCK_KEY, ROTATION_LOCK_KEY]);
+        let n = keys.len();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), n, "lock keys collide");
     }
 
     // Paused clock: the 60 s timeout elapses instantly.
@@ -329,7 +388,8 @@ mod tests {
         };
         // The outer bound only turns a missing inner timeout into a failure
         // instead of a hang.
-        let outcome = tokio::time::timeout(2 * SEND_TIMEOUT, send_bounded(&Hang, &email)).await;
+        let outcome =
+            tokio::time::timeout(StdDuration::from_secs(120), send_bounded(&Hang, &email)).await;
         assert_eq!(outcome, Ok(Err(MailError::Transient)));
     }
 }
