@@ -49,7 +49,7 @@ async function signIn(roles: AdminUserDetail['directory_roles'] = ['GlobalAdmin'
   useTenantStore().slug = 'system'
   const auth = useAuthStore()
   await auth.ensureSignedIn('admin', '/')
-  auth.setMe(fakeMe({ directory_roles: roles }))
+  auth.setMe(fakeMe({ directory_roles: roles, tenant_is_system: true }))
 }
 
 /** Like `AdminLayout`'s outlet: the routed page keyed by `adminPageKey`. */
@@ -354,8 +354,12 @@ describe('TenantUsersPage', () => {
     expect(buttons(w, 'Reset MFA')[0]?.attributes('disabled')).toBeDefined()
   })
 
-  it('stays empty for anyone but a system Global Admin', async () => {
-    await signIn(['UserAdmin'])
+  it.each([
+    ['a UserAdmin of the system tenant', ['UserAdmin'] as const, true],
+    ['a Global Admin of another tenant', ['GlobalAdmin'] as const, false],
+  ])('stays empty for %s', async (_, roles, tenant_is_system) => {
+    await signIn()
+    useAuthStore().setMe(fakeMe({ directory_roles: [...roles], tenant_is_system }))
     const calls = mockFetch()
     const w = await mountAt('/admin/tenants/contoso/users', TenantUsersPage)
     expect(w.text()).toContain('Only a Global Administrator of the system tenant')

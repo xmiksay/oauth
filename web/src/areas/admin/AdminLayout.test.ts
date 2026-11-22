@@ -34,10 +34,10 @@ afterEach(() => {
 })
 
 /** The admin center at `/admin`, whose page holds a text input. */
-async function mountAdmin() {
+async function mountAdmin(me = fakeMe({ directory_roles: ['GlobalAdmin'] })) {
   const pinia = createPinia()
   setActivePinia(pinia)
-  get.mockResolvedValue(fakeMe({ directory_roles: ['GlobalAdmin'] }))
+  get.mockResolvedValue(me)
   const blank = { render: () => null }
   const page = { render: () => h('input', { id: 'in-main' }) }
   const router = createRouter({
@@ -67,6 +67,17 @@ async function focusAndEscape(el: HTMLElement) {
 }
 
 describe('AdminLayout', () => {
+  it('shows Tenants only to a Global Admin of the system tenant, whatever its slug', async () => {
+    const tenantsLink = (w: VueWrapper) => w.findAll('a').some((a) => a.text() === 'Tenants')
+    expect(tenantsLink(await mountAdmin())).toBe(false)
+    w?.unmount()
+    const system = await mountAdmin(fakeMe({ directory_roles: ['GlobalAdmin'], tenant_is_system: true }))
+    expect(tenantsLink(system)).toBe(true)
+    w?.unmount()
+    const userAdmin = await mountAdmin(fakeMe({ directory_roles: ['UserAdmin'], tenant_is_system: true }))
+    expect(tenantsLink(userAdmin)).toBe(false)
+  })
+
   it('opening the side nav focuses its first link, so Escape works right away', async () => {
     const w = await mountAdmin()
     await navToggle(w).trigger('click')

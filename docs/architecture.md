@@ -14,7 +14,8 @@ Single binary `oauth` (crate `crates/server`):
 - `oauth telegram set-webhook` — registers `{PUBLIC_URL}/telegram/webhook` with the bot.
 - `oauth bootstrap --admin-email … [--display-name …] [--reset-password]` —
   runs migrations, then (in one transaction holding a dedicated advisory lock,
-  so concurrent runs serialize) creates the `system` tenant if missing and the
+  so concurrent runs serialize) applies the system-slug rule below, creates
+  the system tenant (slug `SYSTEM_TENANT_SLUG`, default `system`) if missing and the
   admin if missing, ensures the admin holds `GlobalAdmin`, and prints a
   one-time password (`must_change_password = true`) to stdout. An existing
   admin's password is only replaced with `--reset-password`. Exit 0 either way.
@@ -22,6 +23,9 @@ Single binary `oauth` (crate `crates/server`):
 Migrations: all pending ones run in a single transaction that first takes
 `pg_advisory_xact_lock(MIGRATION_LOCK_KEY)` (replicas serialize; released exactly on
 commit/rollback), so they must be transaction-safe (no `CREATE INDEX CONCURRENTLY`).
+`serve` then, in that transaction, reconciles the system tenant's slug with `SYSTEM_TENANT_SLUG`
+(`directory::reconcile_system_slug`: refuse a mismatch, or rename + audit with
+`SYSTEM_TENANT_RENAME=1`, [deploy.md](deploy.md#system-tenant-slug)) before the slug and URI checks.
 
 State lives only in PostgreSQL (sessions, codes, login transactions, rate
 limits). Multiple replicas are safe: migrations serialize on the advisory lock,
@@ -42,7 +46,7 @@ default port (`:443` for https, `:80` for http) spelled out counts as none; anot
 IP literal → 404. `X-Forwarded-Host` / `Forwarded` are never trusted. Unknown or disabled
 tenants are 404 everywhere, and so are enabled tenants whose slug today's rules reject
 (startup refuses to run with any — rename or disable them). The apex serves only
-`GET /` → 302 `{scheme}://system.{host}/admin` and the Telegram webhook (404 on tenant
+`GET /` → 302 `{scheme}://{SYSTEM_TENANT_SLUG}.{host}/admin` and the Telegram webhook (404 on tenant
 hosts). Other paths below are per tenant host.
 
 Trust model: issuer, redirect URLs and the CSRF origin all derive from `PUBLIC_URL` plus
@@ -329,7 +333,7 @@ disabled, rate_limited, upstream_failed), `oauth_tokens_issued_total{grant,forma
 
 ### Built-ins per tenant
 
-`create_tenant` (and bootstrap for `system`) provisions, atomically with the
+`create_tenant` (and bootstrap for the system tenant) provisions, atomically with the
 tenant row: one active RS256 and one active ES256 key; `management-api`
 (confidential resource, `identifier_uri = api://management-api`, delegated
 scope `Directory.AccessAsUser` [admin consent], app roles `Directory.Read.All`
@@ -355,7 +359,7 @@ apps / grants); app-only tokens act through their CURRENT
 `Directory.Read.All` / `Directory.ReadWrite.All` assignments (looked up
 per call, not taken from the token) and never touch directory roles or
 tenants; a tenant's GlobalAdmin edits its own `settings`. `/api/v1/tenants` exists only on
-the system host and is for GlobalAdmins of the `system` tenant, who can also look up another tenant's users and reset their password / MFA there (`tenants/{slug}/users`, audited in both tenants' logs). Administrators can only be modified by GlobalAdmins;
+the system host and is for GlobalAdmins of the system tenant (`is_system`; slug `SYSTEM_TENANT_SLUG`), who can also look up another tenant's users and reset their password / MFA there (`tenants/{slug}/users`, audited in both tenants' logs). Administrators can only be modified by GlobalAdmins;
 the last enabled GlobalAdmin can't be removed (per-tenant advisory lock
 serializes the check, and role checks lock the target user row); built-in
 apps are GlobalAdmin-only and read-mostly; management-API grants, and the

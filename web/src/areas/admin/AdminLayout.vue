@@ -7,20 +7,18 @@ import { useAuthStore } from '@/stores/auth'
 import AppHeader from '@/components/AppHeader.vue'
 import SignedInGate from '@/components/SignedInGate.vue'
 import { adminPageKey } from '@/router/admin'
-import { adminNav, SYSTEM_TENANT } from './nav'
+import { adminNav } from './nav'
 
 const { slug } = storeToRefs(useTenantStore())
 const auth = useAuthStore()
-const { isAdmin, isGlobalAdmin } = storeToRefs(auth)
+const { isAdmin, isSystemAdmin } = storeToRefs(auth)
 const route = useRoute()
 const menuOpen = ref(false)
 const header = ref<InstanceType<typeof AppHeader> | null>(null)
 const sideNav = ref<HTMLElement | null>(null)
 const mainEl = ref<HTMLElement | null>(null)
 
-const nav = computed(() =>
-  adminNav.filter((i) => !i.systemOnly || (slug.value === SYSTEM_TENANT && isGlobalAdmin.value)),
-)
+const nav = computed(() => adminNav.filter((i) => !i.systemOnly || isSystemAdmin.value))
 
 // A nav link hides the overlay it sits in, which would drop focus to body: land on the page.
 watch(

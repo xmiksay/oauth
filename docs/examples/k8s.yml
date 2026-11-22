@@ -25,7 +25,8 @@
 # First admin (after the rollout is ready; idempotent, prints a one-time password
 # once — add --reset-password to issue a new one for an existing admin):
 #   kubectl exec deploy/oauth -- oauth bootstrap --admin-email you@example.com
-# then sign in at https://system.id.example.com/admin.
+# then sign in at https://system.id.example.com/admin (`system` =
+# SYSTEM_TENANT_SLUG in the ConfigMap).
 #
 # Hosts: tenant `t` lives at `t.<PUBLIC_URL host>`, so DNS needs both the apex
 # and a wildcard record (`id.example.com`, `*.id.example.com`) pointing at the
@@ -61,6 +62,11 @@ data:
   KEY_ROTATION_DAYS: "90"
   KEY_PREPUBLISH_HOURS: "48"
   SESSION_TTL_HOURS: "24"
+  # Host label of the system (admin) tenant; choose before `oauth bootstrap`.
+  # Changing it later needs SYSTEM_TENANT_RENAME: "1" for one rollout, which
+  # renames the tenant and changes its issuer (its tokens and sessions stop
+  # working) — see docs/deploy.md#system-tenant-slug.
+  # SYSTEM_TENANT_SLUG: "system"
   # The ingress appends the client address; its right-most entry is trusted.
   TRUSTED_PROXY_HEADER: "X-Forwarded-For"
   # Email (verification, password reset, invitations, security notices) needs

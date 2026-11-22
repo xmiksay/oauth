@@ -227,6 +227,7 @@ describe('auth store', () => {
       updated_at: '',
       mfa: { totp: false, totp_pending: false, recovery_codes_remaining: 0, passkeys: 0, telegram: false },
       features: { email: false, telegram: false },
+      tenant_is_system: false,
     }
     auth.setMe({ ...base, directory_roles: ['UserAdmin'] })
     expect([auth.isAdmin, auth.canWriteUsers, auth.canWriteApps, auth.isGlobalAdmin]).toEqual([
@@ -237,6 +238,16 @@ describe('auth store', () => {
     ])
     auth.setMe({ ...base, directory_roles: [] })
     expect(auth.isAdmin).toBe(false)
+  })
+
+  it('a system admin is a Global Admin of the system tenant, whatever its slug', () => {
+    const auth = useAuthStore()
+    auth.setMe(fakeMe({ directory_roles: ['GlobalAdmin'] }))
+    expect(auth.isSystemAdmin).toBe(false)
+    auth.setMe(fakeMe({ directory_roles: ['UserAdmin'], tenant_is_system: true }))
+    expect(auth.isSystemAdmin).toBe(false)
+    auth.setMe(fakeMe({ directory_roles: ['GlobalAdmin'], tenant_is_system: true }))
+    expect(auth.isSystemAdmin).toBe(true)
   })
 })
 

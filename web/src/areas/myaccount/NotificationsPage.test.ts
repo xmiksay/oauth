@@ -34,6 +34,7 @@ async function mountPage(over: Partial<Me> = {}) {
     directory_roles: [],
     mfa: { totp: false, totp_pending: false, recovery_codes_remaining: 0, passkeys: 0, telegram: false },
     features: { email: true, telegram: false },
+    tenant_is_system: false,
     ...over,
   })
   const router = createRouter({

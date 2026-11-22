@@ -20,9 +20,15 @@ export function tenantOrigin(
   return `${loc.protocol}//${slug}.${base}`
 }
 
-/** Admin center of the system tenant, as seen from a single-label dev apex. */
-export function systemAdminUrl(loc: Pick<Location, 'protocol' | 'host'> = window.location): string {
-  return `${loc.protocol}//system.${loc.host}/admin`
+/**
+ * Admin center of the system tenant, as seen from a single-label dev apex. `slug` defaults to
+ * `SYSTEM_TENANT_SLUG` of the dev `.env` (see `vite.config.ts`).
+ */
+export function systemAdminUrl(
+  loc: Pick<Location, 'protocol' | 'host'> = window.location,
+  slug: string = __SYSTEM_TENANT_SLUG__,
+): string {
+  return `${loc.protocol}//${slug}.${loc.host}/admin`
 }
 
 export const useTenantStore = defineStore('tenant', () => {

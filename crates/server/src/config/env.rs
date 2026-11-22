@@ -6,6 +6,7 @@ use anyhow::{Context, bail};
 use base64::{Engine, engine::general_purpose::STANDARD};
 
 use super::{Config, LogFormat, MASTER_KEY_LEN, PublicUrl, SmtpConfig, TelegramConfig};
+use crate::directory::slug::{self, DEFAULT_SYSTEM_TENANT_SLUG};
 
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
@@ -67,9 +68,32 @@ impl Config {
                 get("TELEGRAM_WEBHOOK_SECRET"),
                 get("TELEGRAM_API_URL"),
             )?,
+            system_tenant_slug: parse_system_slug(get("SYSTEM_TENANT_SLUG"))?,
+            system_tenant_rename: get("SYSTEM_TENANT_RENAME")
+                .map(|v| parse_flag("SYSTEM_TENANT_RENAME", &v))
+                .transpose()?
+                .unwrap_or(false),
         };
         config.validate()?;
         Ok(config)
+    }
+}
+
+fn parse_system_slug(raw: Option<String>) -> anyhow::Result<String> {
+    let Some(raw) = raw else {
+        return Ok(DEFAULT_SYSTEM_TENANT_SLUG.to_owned());
+    };
+    let value = raw.trim();
+    slug::validate_system(value).map_err(|e| anyhow::anyhow!("SYSTEM_TENANT_SLUG: {e}"))?;
+    Ok(value.to_owned())
+}
+
+/// `1` / `true` / `0` / `false` (any case).
+fn parse_flag(key: &str, raw: &str) -> anyhow::Result<bool> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" => Ok(true),
+        "0" | "false" => Ok(false),
+        _ => bail!("{key}: expected 1 or 0, got `{raw}`"),
     }
 }
 
@@ -136,6 +160,30 @@ mod tests {
         assert_eq!(cfg.trusted_proxy_header, None);
         assert!(cfg.smtp.is_none() && !cfg.email_enabled());
         assert!(cfg.telegram.is_none() && !cfg.telegram_enabled());
+        assert_eq!(cfg.system_tenant_slug, "system");
+        assert!(!cfg.system_tenant_rename);
+    }
+
+    #[test]
+    fn system_tenant_settings() {
+        let mut env = base_env();
+        env.insert("SYSTEM_TENANT_SLUG", " config ".into());
+        env.insert("SYSTEM_TENANT_RENAME", "1".into());
+        let cfg = parse(&env).unwrap();
+        assert_eq!(cfg.system_tenant_slug, "config");
+        assert!(cfg.system_tenant_rename);
+        env.insert("SYSTEM_TENANT_RENAME", "FALSE".into());
+        assert!(!parse(&env).unwrap().system_tenant_rename);
+        env.insert("SYSTEM_TENANT_SLUG", "system".into());
+        assert_eq!(parse(&env).unwrap().system_tenant_slug, "system");
+        for bad in ["www", "Config", "ab-", "xn--80ak6aa92e", "a"] {
+            env.insert("SYSTEM_TENANT_SLUG", bad.into());
+            let err = parse(&env).unwrap_err().to_string();
+            assert!(err.contains("SYSTEM_TENANT_SLUG"), "{bad}: {err}");
+        }
+        env.insert("SYSTEM_TENANT_SLUG", "config".into());
+        env.insert("SYSTEM_TENANT_RENAME", "yes".into());
+        assert!(parse(&env).is_err());
     }
 
     #[test]

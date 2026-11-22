@@ -20,13 +20,14 @@ pub struct NewTenant<'a> {
     pub display_name: &'a str,
 }
 
-/// Creates a regular tenant. Reserved slugs (incl. `system`) are rejected.
+/// Creates a regular tenant. Reserved slugs (incl. `system` and the
+/// configured system slug) are rejected.
 pub async fn create_tenant(
     db: &impl TransactionTrait,
     config: &Config,
     new: NewTenant<'_>,
 ) -> Result<tenants::Model, DirectoryError> {
-    slug::validate(new.slug)?;
+    slug::validate(new.slug, &config.system_tenant_slug)?;
     insert_provisioned(db, config, new, false).await
 }
 
@@ -54,22 +55,23 @@ pub async fn insert_tenant(
     new: NewTenant<'_>,
     keys: &TenantKeys,
 ) -> Result<tenants::Model, DirectoryError> {
-    slug::validate(new.slug)?;
+    slug::validate(new.slug, &config.system_tenant_slug)?;
     insert_rows(conn, config, new, false, keys).await
 }
 
-/// Creates the `system` tenant; only `oauth bootstrap` calls this.
+/// Creates the system tenant (slug `SYSTEM_TENANT_SLUG`); only
+/// `oauth bootstrap` calls this.
 pub(crate) async fn create_system_tenant(
     db: &impl TransactionTrait,
     config: &Config,
 ) -> Result<tenants::Model, DirectoryError> {
     let new = NewTenant {
-        slug: slug::SYSTEM_TENANT_SLUG,
+        slug: &config.system_tenant_slug,
         display_name: "System",
     };
-    // Format only: `system` is on the reserved list precisely so that nobody
+    // Not `validate`: the system slug is reserved precisely so that nobody
     // but this path can take it.
-    slug::validate_format(new.slug)?;
+    slug::validate_system(new.slug)?;
     insert_provisioned(db, config, new, true).await
 }
 
@@ -142,7 +144,10 @@ pub async fn find_tenant_by_slug(
 /// Slugs of enabled regular tenants that today's rules reject (created
 /// before the slug became a DNS label: `www`, `ab-`, `xn--…`). They would
 /// still be served on their host, so startup refuses to run with them.
-pub async fn invalid_enabled_slugs(conn: &impl ConnectionTrait) -> anyhow::Result<Vec<String>> {
+pub async fn invalid_enabled_slugs(
+    conn: &impl ConnectionTrait,
+    system_slug: &str,
+) -> anyhow::Result<Vec<String>> {
     let rows = tenants::Entity::find()
         .filter(tenants::Column::IsSystem.eq(false))
         .filter(tenants::Column::Disabled.eq(false))
@@ -152,7 +157,7 @@ pub async fn invalid_enabled_slugs(conn: &impl ConnectionTrait) -> anyhow::Resul
     Ok(rows
         .into_iter()
         .map(|t| t.slug)
-        .filter(|s| slug::validate(s).is_err())
+        .filter(|s| slug::validate(s, system_slug).is_err())
         .collect())
 }
 

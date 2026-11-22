@@ -32,6 +32,7 @@ function mountDialog(email: boolean) {
     directory_roles: ['UserAdmin'],
     mfa: { totp: false, totp_pending: false, recovery_codes_remaining: 0, passkeys: 0, telegram: false },
     features: { email, telegram: false },
+    tenant_is_system: false,
   })
   return mount(CreateUserDialog, { props: { open: true }, global: { plugins: [pinia] } })
 }

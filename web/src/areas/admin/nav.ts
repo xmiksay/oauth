@@ -2,7 +2,7 @@ export interface AdminNavItem {
   name: string
   path: string
   label: string
-  /** Only in the `system` tenant (system Global Admins manage tenants there). */
+  /** Only in the system tenant (`SYSTEM_TENANT_SLUG`; its Global Admins manage tenants there). */
   systemOnly?: boolean
 }
 
@@ -18,5 +18,3 @@ export const adminNav: AdminNavItem[] = [
   { name: 'admin-settings', path: 'settings', label: 'Settings' },
   { name: 'admin-tenants', path: 'tenants', label: 'Tenants', systemOnly: true },
 ]
-
-export const SYSTEM_TENANT = 'system'

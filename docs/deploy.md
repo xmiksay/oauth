@@ -61,11 +61,37 @@ commented list.
 | `SMTP_URL` (with `SMTP_FROM`) | `KEY_ROTATION_DAYS`, `KEY_PREPUBLISH_HOURS`, `SESSION_TTL_HOURS` |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` (with `TELEGRAM_BOT_USERNAME`) | `COOKIE_SECURE`, `TRUSTED_PROXY_HEADER`, `WEB_DIST_DIR` |
 | | `SMTP_FROM`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_API_URL` |
+| | `SYSTEM_TENANT_SLUG` (default `system`), `SYSTEM_TENANT_RENAME` (`1` / `0`, default `0`) |
 
 Email is on only with both `SMTP_URL` and `SMTP_FROM`, Telegram only with all
 three `TELEGRAM_*` above; a partial set fails startup. Back up
 `OAUTH_MASTER_KEY`: it seals the signing keys, TOTP secrets, upstream IdP
 client secrets and queued messages, and losing it makes them unreadable.
+
+<a id="system-tenant-slug"></a>**System tenant slug.** The tenant that manages
+the others lives at `<SYSTEM_TENANT_SLUG>.<PUBLIC_URL host>` (default
+`system`); the apex redirects to its `/admin`. Pick it before the first
+`oauth bootstrap`, which creates the tenant under that slug. It must be a
+valid tenant slug that is not on the reserved list (`www`, `api`, `admin`, …);
+`system` itself stays reserved for regular tenants even after the system
+tenant moved away from it, so nobody can take over its old host. Changing it
+later: a replica (or `oauth bootstrap`) whose `SYSTEM_TENANT_SLUG` differs
+from the stored system tenant's slug refuses to start, naming both. Set
+`SYSTEM_TENANT_RENAME=1` to rename instead: startup renames the system tenant
+in the migration transaction (refused if another tenant already has the slug),
+audits it as `tenant.rename` (actor `system`, details `from`, `to`) and points
+its built-in SPAs' redirect URIs at the new host. **Renaming changes the
+system tenant's host and therefore its issuer**: the old host answers 404,
+tokens it issued name the old issuer and stop validating, its browser
+sessions (host-only cookies) stay behind on the old host, its users' passkeys
+(bound to the host as RP ID) no longer work — users sign in with a password
+or a linked identity and enrol new ones (a passkey-only user needs a password
+reset by another Global Admin) — and relying parties registered in the system
+tenant, and upstream identity providers holding its federation callback URL,
+must be updated to the new host. Roll the
+change out with every replica on the new value (a replica still on the old
+one refuses to start once the rename committed); the flag is a no-op once the
+slugs agree.
 
 **Database.** One PostgreSQL database shared by all replicas; it holds all
 state (sessions, codes, login transactions, rate limits), so the app is

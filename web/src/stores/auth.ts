@@ -39,6 +39,8 @@ export const useAuthStore = defineStore('auth', () => {
   const hasRole = (...wanted: DirectoryRole[]) => roles.value.some((r) => wanted.includes(r))
   const isAdmin = computed(() => roles.value.length > 0)
   const isGlobalAdmin = computed(() => hasRole('GlobalAdmin'))
+  /** A Global Admin of the system tenant: manages tenants (from `me`, not the host label). */
+  const isSystemAdmin = computed(() => isGlobalAdmin.value && me.value?.tenant_is_system === true)
   const canWriteUsers = computed(() => hasRole('GlobalAdmin', 'UserAdmin'))
   const canWriteApps = computed(() => hasRole('GlobalAdmin', 'ApplicationAdmin'))
 
@@ -193,6 +195,7 @@ export const useAuthStore = defineStore('auth', () => {
     roles,
     isAdmin,
     isGlobalAdmin,
+    isSystemAdmin,
     canWriteUsers,
     canWriteApps,
     ensureSignedIn,
