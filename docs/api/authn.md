@@ -178,7 +178,7 @@ existing session). Protocol errors that belong to the client are also a
 `redirect`, to the client's redirect URI with `error`, `error_description`,
 `state`, `iss`: `access_denied` (user declined, or an admin-only scope lacks
 admin consent — "admin approval required for: …"), `login_required` (a
-reused session ended while consent was pending).
+reused or stepped-up session ended while the transaction was pending).
 
 ## Steps
 
@@ -192,7 +192,8 @@ reused session ended while consent was pending).
 | `telegram/send` | `{}` | step `mfa` (user has `telegram`): sends a 6-digit code to the linked chat, replacing an earlier one; `200 { "sent": true, "expires_in": 300 }` (not a step view). `502 delivery_failed` when Telegram didn't take it (retry), `400 invalid_request` when no chat is linked, `503 telegram_unavailable` without a bot |
 | `telegram` | `{ "code": "123456" }` | step `mfa`: the code last sent (5 min, single use, 5 guesses — then send a new one; spaces ignored) |
 | `enroll/totp` | `{}` | step `mfa_enroll`: a new pending TOTP secret (replacing an unconfirmed one), `200 { "secret", "otpauth_uri", "digits", "period", "algorithm" }` (not a step view; show once). `409 conflict` when a TOTP is already confirmed |
-| `enroll/totp/confirm` | `{ "code": "123456" }` | step `mfa_enroll`: a current code of the pending secret activates it; the step view or redirect that follows **plus** `"recovery_codes": [10 codes]` (shown once, before continuing). `401 invalid_code`, `409 conflict` without a pending secret |
+| `enroll/totp/confirm` | `{ "code": "123456" }` | step `mfa_enroll`: a current code of the pending secret activates it and makes the sign-in multi-factor; `200 { "recovery_codes": [10 codes] }` only (not a step view; show once). The transaction stays at `mfa_enroll` (its view's `factors` is then `[]`) until `enroll/continue`, so no code expires while the user saves them. `401 invalid_code`, `409 conflict` without a pending secret |
+| `enroll/continue` | `{}` | step `mfa_enroll` after `enroll/totp/confirm`: the step view or redirect that follows. `409 wrong_step` before a factor was set up (and the enrolment calls answer `409` after) |
 | `enroll/passkey/options` | `{}` | step `mfa_enroll`: `200 { "publicKey": PublicKeyCredentialCreationOptionsJSON }` (not a step view) |
 | `enroll/passkey` | `{ "credential": RegistrationJSON, "name"? }` | step `mfa_enroll`: stores the new passkey; it is this sign-in's second factor |
 | `change-password` | `{ "new_password" }` | step `change_password` (`must_change_password`) |
@@ -209,10 +210,13 @@ client app or the requested resource app requires MFA and the sign-in isn't
 multi-factor yet, the step after the first factor is `mfa` (the user has a
 factor) or `mfa_enroll` (they don't: set up TOTP or a passkey, which then
 counts as the second factor), before `change_password` / `consent`. A user
-who already has a single-factor session is stepped up: `/authorize` starts a
-transaction at `mfa` / `mfa_enroll` for the session's user (no password
-again) and its completion replaces the session; with `prompt=none` it
-answers `interaction_required` instead.
+who already has a single-factor session is stepped up: if they have a
+factor, `/authorize` starts a transaction at `mfa` for the session's user
+(no password again) and its completion replaces the session (`login_required`
+redirect if that session ended meanwhile); if they have none, a fresh
+sign-in at `password` (enrolment always follows a first factor proven in the
+same transaction, never a session alone). With `prompt=none` it answers
+`interaction_required` instead.
 Setting the new password ends the user's other sessions and revokes their
 refresh tokens and opaque access tokens. A completed sign-in replaces any
 earlier session of this browser (e.g. after `prompt=login`).

@@ -7,7 +7,9 @@ use anyhow::Context;
 use axum::http::HeaderMap;
 use chrono::{DateTime, Duration, FixedOffset};
 use entity::{sessions, tenants, users};
-use sea_orm::{ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter};
+use sea_orm::{
+    ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QuerySelect,
+};
 use uuid::Uuid;
 
 use super::cookie::{self, Kind};
@@ -85,6 +87,23 @@ pub async fn find_by_id(
         .one(conn)
         .await
         .context("loading session")?
+        .filter(|s| s.expires_at > now))
+}
+
+/// [`find_by_id`] holding the row `FOR UPDATE`, so a concurrent sign-out
+/// or revocation can't end it while the caller builds on it.
+pub async fn lock_live(
+    conn: &impl ConnectionTrait,
+    tenant_id: Uuid,
+    id: Uuid,
+) -> anyhow::Result<Option<sessions::Model>> {
+    let now = chrono::Utc::now().fixed_offset();
+    Ok(sessions::Entity::find_by_id(id)
+        .filter(sessions::Column::TenantId.eq(tenant_id))
+        .lock_exclusive()
+        .one(conn)
+        .await
+        .context("locking session")?
         .filter(|s| s.expires_at > now))
 }
 

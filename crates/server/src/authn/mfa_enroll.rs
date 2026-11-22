@@ -3,8 +3,10 @@
 //! second one. They set up TOTP (`…/enroll/totp`, `…/enroll/totp/confirm`)
 //! or a passkey (`…/enroll/passkey/options`, `…/enroll/passkey`); the new
 //! factor's successful use makes the sign-in multi-factor, and it goes on
-//! as after the MFA step. TOTP enrolment answers with the new recovery
-//! codes next to the usual step / redirect (shown once).
+//! as after the MFA step. A confirmed TOTP answers with only the new
+//! recovery codes (shown once) and the transaction waits at this stage
+//! until `…/enroll/continue`: the code must not be issued (and expire)
+//! while the user is still saving them.
 
 use axum::{
     Json,
@@ -26,6 +28,7 @@ use super::{
     ctx::Ctx,
     invite_passkey::registration_error,
     ip::ClientIp,
+    mfa_policy,
     password::limit,
     rate_limit,
     tx::{self, LoadedTx},
@@ -55,9 +58,14 @@ fn enroll_error(err: AppError) -> AuthnError {
     }
 }
 
-/// The transaction at `mfa_enroll` and its user.
-async fn load(ctx: &Ctx<'_>, tx_id: &str) -> AuthnResult<(LoadedTx, users::Model)> {
+/// The transaction at `mfa_enroll` and its user; `enrolled` = whether a
+/// factor must already have been set up (`continue`) or must not (the
+/// enrolment calls).
+async fn load(ctx: &Ctx<'_>, tx_id: &str, enrolled: bool) -> AuthnResult<(LoadedTx, users::Model)> {
     let tx = tx::load_at(ctx, tx_id, LoginStage::MfaEnroll).await?;
+    if mfa_policy::is_mfa(&tx.row.amr) != enrolled {
+        return Err(AuthnError::WrongStep);
+    }
     let user = tx::user_of(&ctx.state.db, &tx).await?;
     if user.disabled {
         return Err(AuthnError::AccountDisabled);
@@ -101,14 +109,8 @@ async fn record(
     .await
 }
 
-/// The new factor completed the sign-in's MFA: continue as after `mfa`.
-async fn after_enrolment(
-    ctx: &Ctx<'_>,
-    mut tx: LoadedTx,
-    user: &users::Model,
-    factor: &str,
-) -> AuthnResult<Outcome> {
-    tx.row.amr = tx::with_second_factor(&tx.row.amr, factor);
+/// The sign-in's MFA is complete (`tx.row.amr`): continue as after `mfa`.
+async fn after_enrolment(ctx: &Ctx<'_>, tx: LoadedTx, user: &users::Model) -> AuthnResult<Outcome> {
     let next = user
         .must_change_password
         .then_some(LoginStage::ChangePassword);
@@ -125,7 +127,7 @@ pub async fn begin_totp(
     Path(tx_id): Path<String>,
 ) -> AuthnResult<Response> {
     let ctx = Ctx::new(&state, &tenant, ip, &headers);
-    let (_, user) = load(&ctx, &tx_id).await?;
+    let (_, user) = load(&ctx, &tx_id, false).await?;
     let key = &state.config.master_key;
     let view = me_mfa::start_enrollment(&state.db, key, &tenant.display_name, &user)
         .await
@@ -138,7 +140,9 @@ pub struct CodeBody {
     code: String,
 }
 
-/// `POST …/enroll/totp/confirm`: a current code activates the secret.
+/// `POST …/enroll/totp/confirm`: a current code activates the secret and
+/// makes the sign-in multi-factor; it answers with the recovery codes only
+/// (see the module docs).
 pub async fn confirm_totp(
     State(state): State<AppState>,
     tenant: Tenant,
@@ -148,7 +152,7 @@ pub async fn confirm_totp(
     JsonBody(body): JsonBody<CodeBody>,
 ) -> AuthnResult<Response> {
     let ctx = Ctx::new(&state, &tenant, ip, &headers);
-    let (tx, user) = load(&ctx, &tx_id).await?;
+    let (tx, user) = load(&ctx, &tx_id, false).await?;
     limit(&ctx, &rate_limit::user_key(user.id)).await?;
     let pending = me_mfa::pending_enrollment(&state.db, &user)
         .await
@@ -168,9 +172,25 @@ pub async fn confirm_totp(
     let details = json!({ "via": "sign_in" });
     let what = "authenticator app added";
     record(&txn, &ctx, &user, EventType::MfaTotpEnroll, details, what).await?;
+    let amr = tx::with_second_factor(&tx.row.amr, "otp");
+    tx::set_amr(&txn, tx.row.id, LoginStage::MfaEnroll, amr).await?;
     txn.commit().await?;
-    let outcome = after_enrolment(&ctx, tx, &user, "otp").await?;
-    Ok(outcome.into_response_with("recovery_codes", json!(codes)))
+    let body = json!({ "recovery_codes": codes });
+    Ok(no_store(Json(body).into_response()))
+}
+
+/// `POST …/enroll/continue`: after a TOTP enrolment's recovery codes were
+/// acknowledged, the sign-in goes on.
+pub async fn resume(
+    State(state): State<AppState>,
+    tenant: Tenant,
+    ip: ClientIp,
+    headers: HeaderMap,
+    Path(tx_id): Path<String>,
+) -> AuthnResult<Outcome> {
+    let ctx = Ctx::new(&state, &tenant, ip, &headers);
+    let (tx, user) = load(&ctx, &tx_id, true).await?;
+    after_enrolment(&ctx, tx, &user).await
 }
 
 /// `POST …/enroll/passkey/options`: creation options for a new passkey.
@@ -182,7 +202,7 @@ pub async fn passkey_options(
     Path(tx_id): Path<String>,
 ) -> AuthnResult<Response> {
     let ctx = Ctx::new(&state, &tenant, ip, &headers);
-    let (_, user) = load(&ctx, &tx_id).await?;
+    let (_, user) = load(&ctx, &tx_id, false).await?;
     let handle = store::ensure_handle(&state.db, &user).await?;
     let scope = Scope::User {
         purpose: WebauthnPurpose::Register,
@@ -219,7 +239,7 @@ pub async fn passkey(
     JsonBody(body): JsonBody<PasskeyBody>,
 ) -> AuthnResult<Outcome> {
     let ctx = Ctx::new(&state, &tenant, ip, &headers);
-    let (tx, user) = load(&ctx, &tx_id).await?;
+    let (mut tx, user) = load(&ctx, &tx_id, false).await?;
     limit(&ctx, &rate_limit::user_key(user.id)).await?;
     let registration = body
         .credential
@@ -268,5 +288,6 @@ pub async fn passkey(
     )
     .await?;
     txn.commit().await?;
-    after_enrolment(&ctx, tx, &user, passkey::amr(&credential)).await
+    tx.row.amr = tx::with_second_factor(&tx.row.amr, passkey::amr(&credential));
+    after_enrolment(&ctx, tx, &user).await
 }

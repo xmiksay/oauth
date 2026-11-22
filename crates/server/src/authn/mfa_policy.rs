@@ -78,8 +78,12 @@ pub async fn missing(
     Ok(Some(stage(state, tenant.id, user_id).await?))
 }
 
-/// For an existing session about to be reused: the step-up stage it needs
-/// first, if any.
+/// For an existing session about to be reused: the stage its sign-in must
+/// go through first, if any. `Mfa` continues the session's sign-in with
+/// the user's second factor. A user without one signs in afresh
+/// (`Password`, no session): enrolling a factor needs a first factor proven
+/// in this transaction, never a session cookie alone (My Account asks for
+/// reauthentication too), or a stolen session could add a passkey.
 pub async fn step_up(
     state: &AppState,
     tenant: &tenants::Model,
@@ -87,7 +91,7 @@ pub async fn step_up(
     req: &AuthRequest,
     session: &sessions::Model,
 ) -> anyhow::Result<Option<LoginStage>> {
-    missing(
+    let stage = missing(
         state,
         tenant,
         client_app_id,
@@ -95,7 +99,16 @@ pub async fn step_up(
         session.user_id,
         &session.amr,
     )
-    .await
+    .await?;
+    Ok(stage.map(reuse_stage))
+}
+
+/// Where a step-up of a session starts: see [`step_up`].
+fn reuse_stage(stage: LoginStage) -> LoginStage {
+    match stage {
+        LoginStage::Mfa => LoginStage::Mfa,
+        _ => LoginStage::Password,
+    }
 }
 
 #[cfg(test)]
@@ -110,6 +123,12 @@ mod tests {
         assert!(effective(MfaPolicy::Optional, [Inherit, Required]));
         assert!(effective(MfaPolicy::Required, []));
         assert!(effective(MfaPolicy::Required, [Inherit]));
+    }
+
+    #[test]
+    fn a_session_never_steps_up_into_enrolment() {
+        assert_eq!(reuse_stage(LoginStage::Mfa), LoginStage::Mfa);
+        assert_eq!(reuse_stage(LoginStage::MfaEnroll), LoginStage::Password);
     }
 
     #[test]

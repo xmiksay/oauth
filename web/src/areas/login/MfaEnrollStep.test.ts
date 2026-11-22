@@ -10,11 +10,11 @@ const ENROLLMENT = {
   algorithm: 'SHA1',
 }
 
-function mountStep(passkeys = true) {
+function mountStep(passkeys = true, enrolled = false) {
   const begin = vi.fn(async () => ENROLLMENT)
   const confirm = vi.fn(async () => ['aaaa-bbbb-cccc'])
   const w = mount(MfaEnrollStep, {
-    props: { locked: false, passkeys, begin, confirm },
+    props: { locked: false, enrolled, passkeys, begin, confirm },
     global: { stubs: { QrCode: true, SecretOnceDialog: true } },
   })
   return { w, begin, confirm }
@@ -47,5 +47,13 @@ describe('MfaEnrollStep', () => {
     dialog.vm.$emit('close')
     await flushPromises()
     expect(w.emitted('done')).toHaveLength(1)
+  })
+
+  it('only continues once a factor is already set up', async () => {
+    const { w, begin } = mountStep(true, true)
+    expect(w.findAll('button').map((b) => b.text())).toEqual(['Continue'])
+    await w.find('button').trigger('click')
+    expect(w.emitted('done')).toHaveLength(1)
+    expect(begin).not.toHaveBeenCalled()
   })
 })

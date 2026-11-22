@@ -72,8 +72,9 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   Step `mfa_enroll` ("Set up a second factor", `MfaEnrollStep`; MFA policy, the user has
   no factor): "Use an authenticator app" `POST`s `…/enroll/totp` and shows the QR code /
   secret with a code input (`…/enroll/totp/confirm`); the confirmation's `recovery_codes`
-  are shown in `SecretOnceDialog` and only closing it continues with the step / redirect of
-  the same response (`useLoginFlow.resume`). The secret and the codes live only in the
+  are shown in `SecretOnceDialog` and only closing it continues (`useLoginFlow.resume`
+  `POST`s `…/enroll/continue` for the next step / redirect, so the code is issued only then).
+  A view with no `factors` (reloaded after confirming) shows just "Continue". The secret and the codes live only in the
   step component's local refs. "Create a passkey" (WebAuthn available) runs
   `…/enroll/passkey/options` → `create()` → `…/enroll/passkey`.
 - **Federation (login)**: the password step shows a "Sign in with {name}" button per

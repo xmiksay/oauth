@@ -72,6 +72,7 @@ pub fn router(state: AppState) -> Router<AppState> {
             post(mfa_enroll::passkey_options),
         )
         .route(&format!("{TX}/enroll/passkey"), post(mfa_enroll::passkey))
+        .route(&format!("{TX}/enroll/continue"), post(mfa_enroll::resume))
         .route(&format!("{TX}/change-password"), post(password::change))
         .route(&format!("{TX}/consent"), post(complete::consent))
         .route(&format!("{TX}/federation/{{idp}}"), post(federation::start))
@@ -255,21 +256,6 @@ pub enum Outcome {
         url: String,
         cookies: Vec<HeaderValue>,
     },
-}
-
-impl Outcome {
-    /// The response with one more top-level field next to the step view or
-    /// the redirect (e.g. recovery codes made by the step, shown once).
-    pub fn into_response_with(self, key: &str, value: Value) -> Response {
-        let (mut body, cookies) = match self {
-            Self::Step(view) => (view, Vec::new()),
-            Self::Redirect { url, cookies } => (json!({ "redirect": url }), cookies),
-        };
-        if let Some(map) = body.as_object_mut() {
-            map.insert(key.to_owned(), value);
-        }
-        render(body, cookies)
-    }
 }
 
 fn render(body: Value, cookies: Vec<HeaderValue>) -> Response {

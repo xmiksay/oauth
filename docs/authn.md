@@ -54,13 +54,22 @@ device flow would reuse a session:
   issued as in My Account) or a passkey inside the login transaction; it is
   audited (`user.mfa.totp_enroll` / `user.mfa.passkey_register`, `via:
   sign_in`), the user is notified, and the new factor counts as this sign-in's
-  second factor. Only someone past the first factor gets here, which is the
-  usual trade-off of forced enrolment: the first factor alone lets the user
-  (or whoever holds it) register the first second factor.
-- A single-factor session is stepped up instead of reused: a transaction at
-  `mfa` / `mfa_enroll` for the session's user (keeping its `auth_time`),
-  whose completion replaces the session with a multi-factor one.
-  `prompt=none` gets `interaction_required`.
+  second factor. Only someone who just passed the first factor in this
+  transaction gets here, which is the usual trade-off of forced enrolment:
+  the first factor alone lets the user (or whoever holds it) register the
+  first second factor. A confirmed TOTP answers with the recovery codes
+  only; the transaction waits at `mfa_enroll` until `…/enroll/continue`, so
+  the authorization code (60 s) isn't issued while the user saves them.
+- A single-factor session is stepped up instead of reused. If the user has
+  a factor: a transaction at `mfa` for the session's user (keeping its
+  `amr` / `auth_time`) whose completion replaces the session with a
+  multi-factor one — only if that session is still live then (locked in
+  the completing DB transaction; a session signed out or revoked meanwhile
+  ends the sign-in with `login_required`). If they have none: a fresh
+  sign-in at `password` (as `prompt=login`), never enrolment on the session
+  cookie alone — that would let a stolen session register a passkey, which
+  My Account guards with reauthentication. `prompt=none` gets
+  `interaction_required`.
 - An upstream sign-in counts as MFA only when the IdP is trusted for it
   (`trust_upstream_mfa`, [federation.md](federation.md)).
 

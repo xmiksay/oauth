@@ -29,14 +29,14 @@ describe('useLoginFlow enrolment', () => {
 
   it('returns the recovery codes and continues only on resume', async () => {
     const { d, flow } = await started()
-    d.api.confirmEnrollTotp.mockResolvedValue({
-      redirect: 'https://shop/cb?code=c',
-      recovery_codes: ['aaaa-bbbb-cccc'],
-    })
+    d.api.confirmEnrollTotp.mockResolvedValue({ recovery_codes: ['aaaa-bbbb-cccc'] })
     expect(await flow.confirmTotp(' 123 456 ')).toEqual(['aaaa-bbbb-cccc'])
     expect(d.api.confirmEnrollTotp).toHaveBeenCalledWith('tx-1', '123456')
+    expect(d.api.enrollContinue).not.toHaveBeenCalled()
     expect(d.navigate).not.toHaveBeenCalled()
-    flow.resume()
+    d.api.enrollContinue.mockResolvedValue({ redirect: 'https://shop/cb?code=c' })
+    await flow.resume()
+    expect(d.api.enrollContinue).toHaveBeenCalledWith('tx-1')
     expect(d.navigate).toHaveBeenCalledWith('https://shop/cb?code=c')
   })
 
@@ -45,8 +45,7 @@ describe('useLoginFlow enrolment', () => {
     d.api.confirmEnrollTotp.mockRejectedValue(err(401, 'invalid_code'))
     expect(await flow.confirmTotp('000000')).toBeNull()
     expect(flow.error.value).toBe("That code didn't work. Check it and try again.")
-    flow.resume()
-    expect(d.navigate).not.toHaveBeenCalled()
+    expect(d.api.enrollContinue).not.toHaveBeenCalled()
   })
 
   it('registers a passkey with fresh creation options', async () => {

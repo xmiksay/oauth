@@ -37,7 +37,8 @@ pub struct NewTx<'a> {
     /// and for step-ups of one (see `step_up`).
     pub session: Option<&'a sessions::Model>,
     /// The session's sign-in continues with a further factor (MFA policy)
-    /// and ends in a new session instead of reusing it.
+    /// and ends in a new session replacing it — only while it is still
+    /// live (`complete::finish`).
     pub step_up: bool,
     /// Value of the browser's transaction-binding cookie.
     pub binding: &'a str,
@@ -55,7 +56,8 @@ pub async fn create(conn: &impl ConnectionTrait, new: NewTx<'_>) -> anyhow::Resu
         user_id: Set(new.session.map(|s| s.user_id)),
         amr: Set(new.session.map(|s| s.amr.clone()).unwrap_or_default()),
         auth_time: Set(new.session.map(|s| s.auth_time)),
-        session_id: Set(new.session.filter(|_| !new.step_up).map(|s| s.id)),
+        session_id: Set(new.session.map(|s| s.id)),
+        step_up: Set(new.step_up && new.session.is_some()),
         binding_hash: Set(secret::hash(new.binding)),
         expires_at: Set(now + Duration::minutes(TX_TTL_MINUTES)),
         ..Default::default()
@@ -145,6 +147,27 @@ pub async fn advance(
         )
         .filter(login_transactions::Column::Id.eq(row.id))
         .filter(login_transactions::Column::Stage.eq(from))
+        .exec(conn)
+        .await?;
+    if result.rows_affected == 1 {
+        Ok(())
+    } else {
+        Err(AuthnError::WrongStep)
+    }
+}
+
+/// Records the sign-in's new `amr` without leaving `stage` (a TOTP
+/// enrolment waits there until its recovery codes are acknowledged).
+pub async fn set_amr(
+    conn: &impl ConnectionTrait,
+    id: Uuid,
+    stage: LoginStage,
+    amr: Vec<String>,
+) -> AuthnResult<()> {
+    let result = login_transactions::Entity::update_many()
+        .col_expr(login_transactions::Column::Amr, Expr::value(amr))
+        .filter(login_transactions::Column::Id.eq(id))
+        .filter(login_transactions::Column::Stage.eq(stage))
         .exec(conn)
         .await?;
     if result.rows_affected == 1 {
