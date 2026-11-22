@@ -80,7 +80,10 @@ secret's hint and description and the expiry, with a link to the app's
 secrets page in the admin portal. `client_secrets.expiry_notified_at` is
 set in the same transaction as the queued messages, so a secret is warned
 about once (also one created already inside the window — it is warned about
-on the next run). Disabled tenants and non-expiring secrets get nothing; an
+on the next run). Non-expiring secrets get nothing. A secret of a disabled
+tenant, or of one with no verified, enabled Global / Application Admin, is
+not marked and stays out of the batch: it is warned about once the tenant
+is enabled again or such an admin exists (if not yet expired). An
 undelivered warning expires after 3 days. Secrets that came due while email
 was off are warned about once it is configured (if not yet expired).
 
