@@ -53,7 +53,7 @@ export interface TxView {
    */
   device: boolean
   /**
-   * The OpenID Connect scopes of the request (`openid`, `profile`, `email`, `offline_access`);
+   * The OpenID Connect scopes of the request (`openid`, `profile`, `email`, `offline_access`, `groups`);
    * a device confirmation names them, `offline_access` above all (a long-lived refresh token).
    */
   oidc_scopes: string[]

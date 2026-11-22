@@ -91,7 +91,8 @@ fn insert_amr(claims: &mut Map<String, Value>, amr: &[String]) {
     }
 }
 
-fn insert_groups(claims: &mut Map<String, Value>, groups: &[String]) {
+/// `groups`, or `hasgroups: true` above [`MAX_GROUPS`]; nothing when empty.
+pub fn insert_groups(claims: &mut Map<String, Value>, groups: &[String]) {
     if groups.len() > MAX_GROUPS {
         claims.insert("hasgroups".into(), true.into());
     } else if !groups.is_empty() {
@@ -106,6 +107,8 @@ pub struct IdTokenInput<'a> {
     pub user: UserContext<'a>,
     pub nonce: Option<&'a str>,
     pub oidc_scopes: &'a [String],
+    /// The client's `id_token_groups` selection, rendered (empty = no claim).
+    pub groups: &'a [String],
     pub access_token: &'a str,
     pub iat: i64,
     pub exp: i64,
@@ -126,6 +129,7 @@ pub fn id_token(input: &IdTokenInput<'_>) -> Map<String, Value> {
     claims.insert("auth_time".into(), input.user.auth_time.into());
     claims.insert("ver".into(), TOKEN_VERSION.into());
     claims.insert("at_hash".into(), at_hash(input.access_token).into());
+    insert_groups(&mut claims, input.groups);
     if let Some(nonce) = input.nonce {
         claims.insert("nonce".into(), nonce.into());
     }
@@ -300,6 +304,7 @@ mod tests {
             },
             nonce: Some("n-1"),
             oidc_scopes: &scopes,
+            groups: &["Approvers".to_owned()],
             access_token: "token",
             iat: 10,
             exp: 20,
@@ -312,6 +317,7 @@ mod tests {
         assert_eq!(c["amr"], json!(["pwd", "mfa"]));
         assert_eq!(c["acr"], "mfa");
         assert_eq!(c["at_hash"], at_hash("token"));
+        assert_eq!(c["groups"], json!(["Approvers"]));
         let profile = profile_claims(&u, &["profile".to_owned()]);
         assert_eq!(profile["name"], "Ann");
         assert!(profile.get("email").is_none());

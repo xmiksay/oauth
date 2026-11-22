@@ -27,6 +27,7 @@ function fakeApp(over: Partial<Application> = {}): Application {
     access_token_format: 'jwt',
     signing_alg: 'RS256',
     groups_claim_format: 'id',
+    id_token_groups: 'none',
     assignment_required: false,
     access_token_ttl_secs: 3600,
     refresh_token_ttl_secs: 86400,
@@ -67,6 +68,25 @@ describe('AppTokenConfig', () => {
     await flushPromises()
     expect(applications.update).toHaveBeenCalledWith('a1', { groups_claim_format: 'name' })
     expect(w.text()).toContain('Saved.')
+  })
+
+  it('picks the groups of ID tokens, sending only that change', async () => {
+    const w = await mountForm(fakeApp())
+    const select = w.find('#tc-id-groups')
+    expect((select.element as HTMLSelectElement).value).toBe('none')
+
+    applications.update.mockResolvedValue(fakeApp({ id_token_groups: 'assigned' }))
+    await select.setValue('assigned')
+    await w.find('form').trigger('submit')
+    await flushPromises()
+    expect(applications.update).toHaveBeenCalledWith('a1', { id_token_groups: 'assigned' })
+  })
+
+  it('locks the ID-token groups on built-in apps', async () => {
+    const w = await mountForm(fakeApp({ builtin: true, id_token_groups: 'all' }), ['GlobalAdmin'])
+    const select = w.find('#tc-id-groups')
+    expect((select.element as HTMLSelectElement).value).toBe('all')
+    expect(select.attributes('disabled')).toBeDefined()
   })
 
   it('sends no PATCH (so no mfa_policy) for an untouched form', async () => {

@@ -1,7 +1,8 @@
 //! `GET|POST /oauth2/userinfo` (OIDC Core §5.3). Accepts access tokens
 //! whose audience is this endpoint (i.e. requested with OIDC scopes only, as
 //! Entra's userinfo requires a Graph token) and whose `scp` has `openid`.
-//! The token is read from the `Authorization` header only.
+//! The token is read from the `Authorization` header only. `groups` follow
+//! the token's client app (`id_token_groups`), read at call time.
 
 use anyhow::Context;
 use axum::{
@@ -10,7 +11,7 @@ use axum::{
     http::HeaderMap,
     response::{IntoResponse, Response},
 };
-use entity::users;
+use entity::{applications, users};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
 use super::{
@@ -20,7 +21,7 @@ use super::{
 use crate::{
     app::AppState,
     tenancy::Tenant,
-    tokens::{self, claims},
+    tokens::{self, claims, principal},
 };
 
 pub async fn userinfo(
@@ -75,5 +76,20 @@ async fn handle(
         .context("loading user")?
         .filter(|u| !u.disabled)
         .ok_or_else(|| OAuthError::invalid_token("the user is disabled or no longer exists"))?;
-    Ok(claims::profile_claims(&user, &scopes))
+    let mut body = claims::profile_claims(&user, &scopes);
+    let client_id = token_claims.get("client_id").and_then(|c| c.as_str());
+    let client = applications::Entity::find()
+        .filter(applications::Column::TenantId.eq(tenant.id))
+        .filter(applications::Column::ClientId.eq(client_id.unwrap_or_default()))
+        .one(&state.db)
+        .await
+        .context("loading client app")?;
+    // A client deleted since issuance lists no groups.
+    if let Some(client) = client {
+        let groups = principal::user_groups(&state.db, tenant.id, user.id).await?;
+        let values =
+            principal::id_token_group_values(&state.db, tenant.id, &client, &groups).await?;
+        claims::insert_groups(&mut body, &values);
+    }
+    Ok(body)
 }

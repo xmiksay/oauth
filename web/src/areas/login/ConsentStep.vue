@@ -15,6 +15,7 @@ const OIDC_LINES: Record<string, string> = {
   profile: 'See your name and profile',
   email: 'See your email address',
   offline_access: 'Stay signed in until you sign it out',
+  groups: 'See the groups you belong to',
 }
 const deviceLines = computed(() =>
   props.view.device

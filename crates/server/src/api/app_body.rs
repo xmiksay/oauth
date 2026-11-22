@@ -2,7 +2,9 @@
 
 use entity::{
     applications,
-    enums::{AccessTokenFormat, AppMfaPolicy, ClientType, GroupsClaimFormat, SigningAlg},
+    enums::{
+        AccessTokenFormat, AppMfaPolicy, ClientType, GroupsClaimFormat, IdTokenGroups, SigningAlg,
+    },
 };
 use sea_orm::ActiveEnum;
 use serde::{Deserialize, Deserializer};
@@ -38,6 +40,7 @@ pub struct AppBody {
     access_token_format: Option<String>,
     signing_alg: Option<String>,
     groups_claim_format: Option<String>,
+    id_token_groups: Option<String>,
     assignment_required: Option<bool>,
     access_token_ttl_secs: Option<i32>,
     refresh_token_ttl_secs: Option<i32>,
@@ -124,6 +127,13 @@ pub(super) fn apply(
         mark(
             set_changed(&mut row.groups_claim_format, format),
             "groups_claim_format",
+        );
+    }
+    if let Some(raw) = &body.id_token_groups {
+        let groups: IdTokenGroups = parse(raw, "id_token_groups", "none, all, assigned")?;
+        mark(
+            set_changed(&mut row.id_token_groups, groups),
+            "id_token_groups",
         );
     }
     if let Some(required) = body.assignment_required {

@@ -89,6 +89,7 @@ mod tests {
             access_token_format: AccessTokenFormat::Jwt,
             signing_alg: SigningAlg::Rs256,
             groups_claim_format: GroupsClaimFormat::Id,
+            id_token_groups: entity::enums::IdTokenGroups::None,
             device_code_enabled: false,
             mfa_policy: entity::enums::AppMfaPolicy::Inherit,
             assignment_required: required,

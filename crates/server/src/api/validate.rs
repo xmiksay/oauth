@@ -333,6 +333,8 @@ mod tests {
             "profile",
             "email",
             "offline_access",
+            "groups",
+            "Groups",
             ".default",
             &"x".repeat(121),
         ] {

@@ -4,8 +4,11 @@ import type { AppMfaPolicy } from './types'
 export type ClientType = 'confidential' | 'public'
 export type TokenFormat = 'jwt' | 'opaque'
 export type SigningAlg = 'RS256' | 'ES256'
-/** What the `groups` claim of tokens for an app (as a resource) carries. */
+/** What the `groups` claim carries: in tokens for an app (as a resource), and in its own ID
+ * tokens / userinfo. */
 export type GroupsClaimFormat = 'id' | 'name'
+/** Which groups an app's ID tokens and userinfo list (`assigned`: those holding one of its roles). */
+export type IdTokenGroups = 'none' | 'all' | 'assigned'
 
 export interface Application {
   id: string
@@ -24,6 +27,7 @@ export interface Application {
   access_token_format: TokenFormat
   signing_alg: SigningAlg
   groups_claim_format: GroupsClaimFormat
+  id_token_groups: IdTokenGroups
   /** Only principals holding one of the app's roles get tokens to / for it. */
   assignment_required: boolean
   access_token_ttl_secs: number
@@ -57,6 +61,7 @@ export type ApplicationPatch = Partial<
     | 'access_token_format'
     | 'signing_alg'
     | 'groups_claim_format'
+    | 'id_token_groups'
     | 'assignment_required'
     | 'access_token_ttl_secs'
     | 'refresh_token_ttl_secs'

@@ -2,8 +2,8 @@
 
 use anyhow::Context;
 use entity::{
-    app_role_assignments, app_roles,
-    enums::{GroupsClaimFormat, member_type},
+    app_role_assignments, app_roles, applications,
+    enums::{GroupsClaimFormat, IdTokenGroups, member_type},
     group_members, groups,
 };
 use sea_orm::{
@@ -52,6 +52,68 @@ pub async fn group_claim_values(
         .into_iter()
         .map(|g| g.display_name)
         .collect())
+}
+
+/// The `groups` claim of `client`'s ID tokens and userinfo responses:
+/// which groups its `id_token_groups` picks, rendered in its
+/// `groups_claim_format`. Empty (no claim) for `none`.
+pub async fn id_token_group_values(
+    conn: &impl ConnectionTrait,
+    tenant_id: Uuid,
+    client: &applications::Model,
+    groups: &[Uuid],
+) -> anyhow::Result<Vec<String>> {
+    let picked = match client.id_token_groups {
+        IdTokenGroups::None => return Ok(Vec::new()),
+        IdTokenGroups::All => groups.to_vec(),
+        IdTokenGroups::Assigned => assigned_groups(conn, tenant_id, client.id, groups).await?,
+    };
+    group_claim_values(conn, tenant_id, &picked, client.groups_claim_format).await
+}
+
+/// The groups among `groups` holding one of `app_id`'s roles. Only roles
+/// open to users count (the set that becomes `roles`, and that "assignment
+/// required" checks).
+async fn assigned_groups(
+    conn: &impl ConnectionTrait,
+    tenant_id: Uuid,
+    app_id: Uuid,
+    groups: &[Uuid],
+) -> anyhow::Result<Vec<Uuid>> {
+    if groups.is_empty() {
+        return Ok(Vec::new());
+    }
+    let assignments = app_role_assignments::Entity::find()
+        .filter(app_role_assignments::Column::TenantId.eq(tenant_id))
+        .filter(app_role_assignments::Column::ResourceApplicationId.eq(app_id))
+        .filter(app_role_assignments::Column::GroupId.is_in(groups.to_vec()))
+        .all(conn)
+        .await
+        .context("loading group role assignments")?;
+    if assignments.is_empty() {
+        return Ok(Vec::new());
+    }
+    let user_roles: Vec<Uuid> = app_roles::Entity::find()
+        .filter(app_roles::Column::ApplicationId.eq(app_id))
+        .all(conn)
+        .await
+        .context("loading app roles")?
+        .into_iter()
+        .filter(|r| {
+            r.allowed_member_types
+                .iter()
+                .any(|m| m == member_type::USER)
+        })
+        .map(|r| r.id)
+        .collect();
+    let mut out: Vec<Uuid> = assignments
+        .into_iter()
+        .filter(|a| user_roles.contains(&a.app_role_id))
+        .filter_map(|a| a.group_id)
+        .collect();
+    out.sort_unstable();
+    out.dedup();
+    Ok(out)
 }
 
 /// Roles of `resource_id` assigned to the user directly or via a group

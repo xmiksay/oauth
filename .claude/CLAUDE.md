@@ -197,7 +197,7 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   `assignment::app_may_use` → `invalid_grant`. A new grant (device code)
   must do the same.
 - Resource apps must not expose scope values named like OIDC scopes
-  (`openid profile email offline_access`, any case) or `.default`: stored
+  (`openid profile email offline_access groups`, any case) or `.default`: stored
   grants keep both in one list (`oidc::scope::split_stored`);
   `api::validate::scope_value` rejects them.
 - `identifier_uri` `api://X` is only valid when X is the app's own

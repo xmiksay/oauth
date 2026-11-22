@@ -2,7 +2,9 @@
 
 use sea_orm::entity::prelude::*;
 
-use crate::enums::{AccessTokenFormat, AppMfaPolicy, ClientType, GroupsClaimFormat, SigningAlg};
+use crate::enums::{
+    AccessTokenFormat, AppMfaPolicy, ClientType, GroupsClaimFormat, IdTokenGroups, SigningAlg,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq, DeriveEntityModel)]
 #[sea_orm(table_name = "applications")]
@@ -23,8 +25,11 @@ pub struct Model {
     pub identifier_uri: Option<String>,
     pub access_token_format: AccessTokenFormat,
     pub signing_alg: SigningAlg,
-    /// What the `groups` claim of access tokens for this (resource) app carries.
+    /// What the `groups` claim carries: in access tokens for this (resource)
+    /// app, and in its own ID tokens / userinfo responses (as client).
     pub groups_claim_format: GroupsClaimFormat,
+    /// Which groups this (client) app's ID tokens and userinfo list.
+    pub id_token_groups: IdTokenGroups,
     /// Only principals holding one of this app's roles (user: directly or
     /// via a group; app: an application permission) get tokens to / for it.
     pub assignment_required: bool,

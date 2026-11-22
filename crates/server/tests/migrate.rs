@@ -139,3 +139,55 @@ async fn duplicate_group_names_abort_the_migration() {
         .await;
     assert!(dup.is_err(), "the index enforces it from now on");
 }
+
+const ID_TOKEN_GROUPS: &str = "m20261122_000018_id_token_groups";
+
+/// `groups` becoming an OIDC scope refuses an existing resource scope of
+/// that name (any case), naming it, and applies once it's renamed.
+#[tokio::test]
+async fn groups_resource_scope_aborts_the_migration() {
+    let pg = common::start_postgres().await;
+    let conn = db::connect(&pg.url).await.unwrap();
+    db::migrate(&conn).await.unwrap();
+    let all = Migrator::migrations();
+    let pos = all
+        .iter()
+        .position(|m| m.name() == ID_TOKEN_GROUPS)
+        .expect("the migration is registered");
+    let rolled_back = u32::try_from(all.len() - pos).unwrap();
+    Migrator::down(&conn, Some(rolled_back)).await.unwrap();
+    let (tenant, app, scope) = (
+        uuid::Uuid::now_v7(),
+        uuid::Uuid::now_v7(),
+        uuid::Uuid::now_v7(),
+    );
+    conn.execute_unprepared(&format!(
+        "INSERT INTO tenants (id, slug, display_name) VALUES ('{tenant}', 'fabrikam', 'F');
+         INSERT INTO applications (id, tenant_id, client_id, display_name, client_type)
+             VALUES ('{app}', '{tenant}', 'dir-api', 'Dir', 'confidential');
+         INSERT INTO app_scopes (id, tenant_id, application_id, value) VALUES
+             ('{scope}', '{tenant}', '{app}', 'Groups'),
+             ('{}', '{tenant}', '{app}', 'Groups.Read');",
+        uuid::Uuid::now_v7()
+    ))
+    .await
+    .unwrap();
+
+    let err = db::migrate(&conn).await.unwrap_err();
+    let msg = format!("{err:#}");
+    assert!(msg.contains("is now an OIDC scope"), "{msg}");
+    assert!(
+        msg.contains("fabrikam") && msg.contains("dir-api") && msg.contains(&scope.to_string()),
+        "{msg}"
+    );
+    assert!(!msg.contains("Groups.Read"), "{msg}");
+    assert_eq!(pending(&conn).await, all.len() - pos, "nothing applied");
+
+    conn.execute_unprepared(&format!(
+        "UPDATE app_scopes SET value = 'Groups.All' WHERE id = '{scope}'"
+    ))
+    .await
+    .unwrap();
+    db::migrate(&conn).await.unwrap();
+    assert_eq!(pending(&conn).await, 0);
+}

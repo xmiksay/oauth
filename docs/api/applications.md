@@ -7,7 +7,7 @@ GlobalAdmin, ApplicationAdmin, `ReadWrite.All`.
 | Method & path | Body | Response |
 |---|---|---|
 | `GET applications` *paged* `?search=` (name, client_id) | – | `Application`s |
-| `POST applications` | `{ display_name, client_id?, client_type? (confidential), redirect_uris?, post_logout_redirect_uris?, web_origins?, identifier_uri?, access_token_format?, signing_alg?, groups_claim_format?, assignment_required? (false), access_token_ttl_secs?, refresh_token_ttl_secs?, device_code_enabled? (false), mfa_policy? (inherit), backchannel_logout_uri? (null), backchannel_logout_session_required? (false) }` | 201 `Application` |
+| `POST applications` | `{ display_name, client_id?, client_type? (confidential), redirect_uris?, post_logout_redirect_uris?, web_origins?, identifier_uri?, access_token_format?, signing_alg?, groups_claim_format?, id_token_groups? (none), assignment_required? (false), access_token_ttl_secs?, refresh_token_ttl_secs?, device_code_enabled? (false), mfa_policy? (inherit), backchannel_logout_uri? (null), backchannel_logout_session_required? (false) }` | 201 `Application` |
 | `GET applications/{id}` | – | `Application` |
 | `PATCH applications/{id}` | same fields except `client_id`, `client_type` (immutable → 400); `identifier_uri: null` clears it | `Application` |
 | `DELETE applications/{id}` | – | 204 (everything of the app cascades) |
@@ -43,7 +43,18 @@ Validation:
   tenant, case-insensitively, but a rename changes the claim and a deleted
   group's name can be reused — bind authorization to names only where
   that's acceptable). The overage rule is the same for both: more than 200
-  groups → no `groups`, `hasgroups: true`.
+  groups → no `groups`, `hasgroups: true`. The same format applies to the
+  `groups` of ID tokens and userinfo **issued to** this app.
+- `id_token_groups` `none|all|assigned` (default `none`; not editable on
+  built-in apps): whether ID tokens and userinfo responses **issued to** this
+  app as a client carry a `groups` claim — every group of the user (`all`)
+  or only the groups holding one of this app's roles open to users
+  (`assigned`), in this app's `groups_claim_format`, with the overage rule
+  above (counted after the `assigned` filter). For sign-in clients that
+  authorize by the ID token (Headlamp → kube-apiserver, Grafana, ArgoCD).
+  Only this field decides: the `groups` scope is accepted but releases
+  nothing by itself, and an app with `none` gets no claim even when it asks
+  for it.
 - `device_code_enabled` (boolean): the app may use the device authorization
   grant (`/oauth2/devicecode` + the `device_code` token grant, see
   [../device_code.md](../device_code.md)).
@@ -97,7 +108,7 @@ Public clients can't have secrets (400).
 
 `value`: 1–120 printable ASCII without space, `"`, `\` or `/`; unique per
 app (409); immutable (`value` in PATCH → 400). Scope values must not be
-`openid`, `profile`, `email`, `offline_access` or `.default` in any case
+`openid`, `profile`, `email`, `offline_access`, `groups` or `.default` in any case
 (400). `allowed_member_types` is a non-empty set ⊆ {`user`, `application`}:
 duplicates collapse and it is stored and returned in canonical order
 (`["user","application"]`), so a reordered PATCH is no change.
