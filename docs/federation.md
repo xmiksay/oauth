@@ -191,32 +191,47 @@ half of it. Every membership added or removed is audited
 (`group.member_add` / `group.member_remove`, user → group, `via:
 "federation"`, `idp_id`).
 
+For a linked identity and at JIT the mappings apply as soon as the
+upstream identity is resolved, before any local stage (MFA, password
+change) that follows: the upstream is authoritative for what its claims
+say, whether or not this sign-in ends in a local session, and the next
+sign-in re-decides anyway. A sign-in abandoned at a local stage keeps
+the membership changes. (Stage `link` applies them when it completes,
+since the identity isn't linked before.)
+
 Each membership records its source: `manual` (an administrator added it)
 and `idp_id` (this provider's mappings keep it). A sign-in only removes
 rows its own provider keeps, so manual memberships and those of other
 providers are never touched:
 
-- A mapping finding an existing membership (manual, or another
-  provider's) leaves it as it is — it doesn't depend on the mapping.
+- A mapping finding a manual membership no provider keeps marks it as
+  kept by this provider too (no audit event — the membership doesn't
+  change), so the source reads the same whichever came first; when the
+  claim value goes, only the mark goes. Another provider's membership is
+  left as it is.
 - An administrator adding a user to a group a mapping put them in makes
   the row manual as well; when the claim value goes, only the mapping mark
   goes and the membership stays.
 - An administrator removing a mapped membership removes it; the mapping
   adds it again at the next sign-in while the claim value is there.
 
-Claim values are bounded before use: at most 256 entries per claim (the
-rest ignored; Entra caps its `groups` claim at 200), each 1–256 bytes
-without control characters (others skipped); only the claims the
-provider's mappings name are read. Entra's group overage (`_claim_names`
-pointing at Graph) is not followed — the claim then counts as absent.
+Claim values are bounded before use: each 1–256 bytes without control
+characters (others skipped), and only the `(claim, value)` pairs the
+provider's mappings name are looked for — nothing else of the token is
+kept, so a parked identity stays small. A claim the token doesn't state
+in full decides nothing: an array of more than 256 entries (Entra caps
+its `groups` claim at 200), or a claim named in `_claim_names` (Entra's
+group overage, pointing at Graph, which is not followed). The
+memberships its mappings grant are then neither added nor removed; a
+missing claim, in contrast, carries none of its values.
 
-The claim names are taken from the mappings when the token is verified,
-before the writing transaction; a parked identity keeps the bounded
-values (and which claims were read) until stage `link` completes. If the
-mappings change in between, a mapping on a claim that wasn't read can't
-be decided: the membership of its group is neither added nor removed by
-this sign-in (the next one decides), so a mapping moved to another claim
-never drops a membership it still grants.
+The pairs are taken from the mappings when the token is verified,
+before the writing transaction; a parked identity keeps which pairs were
+decided and which the token carried until stage `link` completes. If the
+mappings change in between, a mapping whose pair wasn't decided can't
+be: the membership of its group is neither added nor removed by this
+sign-in (the next one decides), so a mapping moved to another claim or
+value never drops a membership it still grants.
 
 Not a sign-in, so no mapping is applied: linking an identity from My
 Account (the next sign-in through the provider applies them). A new
@@ -248,7 +263,7 @@ provider doesn't count as one.
 |---|---|
 | `identity_providers` | `name` unique per tenant, `kind` oidc, `enabled`, `visible`, `issuer`, `discovery_url`, `client_id`, `client_secret_sealed`, `client_auth` post\|basic, `scopes[]`, `policy` jit\|link_only\|deny, `trust_upstream_mfa`, `mfa_acr`, `email_domains[]`, `generation` (bumped by a repoint) |
 | `user_identities` | (tenant, IdP, `subject`) unique, (tenant, user, IdP) unique, `email` (as last seen upstream, informational), `linked_at`, `last_used_at`; cascades with the user or the IdP |
-| `idp_group_mappings` | `(tenant, IdP, claim, value, group)` unique, composite FKs to the IdP and the group (cascade); `claim` `^[A-Za-z0-9_.:/-]{1,64}$`, `value` 1–256 characters |
+| `idp_group_mappings` | `(tenant, IdP, claim, value, group)` unique, composite FKs to the IdP and the group (cascade); `claim` `^[A-Za-z0-9_.:/-]{1,64}$`, `value` 1–256 bytes |
 | `group_members.manual` / `.idp_id` | source of a membership: added by an administrator and/or kept by that IdP's mappings (`CHECK (manual OR idp_id IS NOT NULL)`, composite FK to the IdP `ON DELETE SET NULL (idp_id)`) |
 | `federation_states` | `state_hash` (unique), `binding_hash`, `nonce`, `pkce_verifier_sealed`, `purpose` login (with `tx_id`) \| link (with `user_id` and the starting `session_id`), `idp_generation`, `expires_at` = 10 min; swept |
 

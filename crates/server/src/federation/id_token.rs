@@ -27,9 +27,9 @@ pub struct Expected<'a> {
     /// token's `auth_time` must be present and no earlier than this (unix
     /// seconds, minus the skew).
     pub min_auth_time: Option<i64>,
-    /// Claims the provider's group mappings read; their bounded values come
-    /// back in [`Claims::mapped`].
-    pub mapped_claims: &'a [String],
+    /// The `(claim, value)` pairs the provider's group mappings name; the
+    /// token is decided against them in [`Claims::mapped`].
+    pub mapped_claims: &'a [group_map::Pair],
 }
 
 /// The claims we use from a verified token.
@@ -43,7 +43,7 @@ pub struct Claims {
     pub acr: Option<String>,
     /// The upstream `auth_time`, never later than now.
     pub auth_time: Option<i64>,
-    /// Values of the claims group mappings read (`group_map::extract`).
+    /// The mapped pairs the token decided and carried (`group_map::extract`).
     pub mapped: group_map::Mapped,
 }
 

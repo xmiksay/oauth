@@ -95,14 +95,46 @@ async fn sign_ins_keep_mapped_memberships_only() {
         memberships(&fed, user.id).await,
         sorted(vec![(both, true, false), (manual, true, false)])
     );
-    // A membership of the user that existed before the mapping isn't taken over.
+    // A manual membership a mapping grants records the mapping too (not an
+    // add), and only loses that mark when the value goes.
     sign_in_with(&fed, &idp, json!({ "groups": "x" })).await;
+    assert!(
+        memberships(&fed, user.id)
+            .await
+            .contains(&(both, true, true))
+    );
+    assert_eq!(audited(&fed.f.db, "group.member_add", both).await.len(), 2);
     sign_in_with(&fed, &idp, json!({})).await;
     assert!(
         memberships(&fed, user.id)
             .await
             .contains(&(both, true, false))
     );
+    assert!(mapped_removals(&fed, both).await.is_empty());
+}
+
+#[tokio::test]
+async fn claims_not_stated_in_full_keep_mapped_memberships() {
+    let fed = Fed::new().await;
+    let idp = fed.idp(json!({})).await;
+    let (eng, ops) = (group(&fed, "Eng").await, group(&fed, "Ops").await);
+    mapped(&fed, &idp, "groups", "eng", eng).await;
+    mapped(&fed, &idp, "roles", "g299", ops).await;
+    let many: Vec<String> = (0..300).map(|i| format!("g{i}")).collect();
+    let user = sign_in_with(&fed, &idp, json!({ "groups": "eng", "roles": ["g299"] })).await;
+    let both = sorted(vec![(eng, false, true), (ops, false, true)]);
+    assert_eq!(memberships(&fed, user.id).await, both);
+    // Group overage moves `groups` out of the token; an over-long array is
+    // the upstream's truncation: neither decides, both memberships stay.
+    let overage = json!({
+        "_claim_names": { "groups": "src1" },
+        "_claim_sources": { "src1": { "endpoint": "https://graph.example/x" } },
+        "roles": many,
+    });
+    sign_in_with(&fed, &idp, overage).await;
+    assert_eq!(memberships(&fed, user.id).await, both);
+    assert!(mapped_removals(&fed, eng).await.is_empty());
+    assert!(mapped_removals(&fed, ops).await.is_empty());
 }
 
 #[tokio::test]
@@ -205,9 +237,10 @@ async fn repoint_unlink_and_delete_drop_mapped_memberships() {
         link.insert(&fed.f.db).await.unwrap();
         sign_in_with(&fed, &idp, claims.clone()).await
     };
+    // The manual ops membership the mapping grants is marked as well.
     assert_eq!(
         memberships(&fed, user.id).await,
-        sorted(vec![(eng, false, true), (ops, true, false)])
+        sorted(vec![(eng, false, true), (ops, true, true)])
     );
     let mut row: users::ActiveModel = user.clone().into();
     row.password_hash = Set(Some("$argon2id$placeholder".into()));

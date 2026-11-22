@@ -1,14 +1,7 @@
-//! Group mappings of an identity provider: an upstream claim value puts
-//! the signed-in user into a local group. A membership a provider's
-//! mappings created carries its `idp_id`; a sign-in through that provider
-//! adds and removes only such rows, so manual memberships (and those of
-//! other providers) are never touched. A row both manual and mapped loses
-//! only the mapping mark when the claim value goes.
+//! The writing half of group mappings: memberships a provider's mappings
+//! keep, brought in line with a sign-in's [`Mapped`] or dropped.
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    net::IpAddr,
-};
+use std::net::IpAddr;
 
 use anyhow::Context;
 use entity::{enums::Outcome, group_members, idp_group_mappings};
@@ -16,77 +9,11 @@ use sea_orm::{
     ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder,
     QuerySelect, sea_query::Expr,
 };
-use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value, json};
+use serde_json::json;
 use uuid::Uuid;
 
-use super::profile;
+use super::{Mapped, Pair, wanted};
 use crate::audit::{self, EventType};
-
-/// Values read from one claim; Entra, for one, caps its `groups` claim at
-/// 200 entries, anything beyond this is ignored.
-pub const MAX_CLAIM_VALUES: usize = 256;
-/// Mappings per identity provider.
-pub const MAX_MAPPINGS: u64 = 100;
-
-/// What a verified token said for a provider's mappings: the claim names
-/// that were read (those the mappings named when the token was checked)
-/// and their string values. Kept with a parked identity until stage `link`
-/// completes the sign-in.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Mapped {
-    pub read: BTreeSet<String>,
-    pub values: BTreeMap<String, BTreeSet<String>>,
-}
-
-/// The values of `names` in a verified token's `claims`: a string or an
-/// array of strings, at most [`MAX_CLAIM_VALUES`] entries, each 1–256 bytes
-/// without control characters (others are skipped).
-pub fn extract(claims: &Map<String, Value>, names: &[String]) -> Mapped {
-    let mut out = Mapped {
-        read: names.iter().cloned().collect(),
-        values: BTreeMap::new(),
-    };
-    for name in names {
-        let values: BTreeSet<String> = match claims.get(name) {
-            Some(Value::String(v)) => profile::clean_token(v).into_iter().collect(),
-            Some(Value::Array(list)) => list
-                .iter()
-                .take(MAX_CLAIM_VALUES)
-                .filter_map(Value::as_str)
-                .filter_map(profile::clean_token)
-                .collect(),
-            _ => continue,
-        };
-        if !values.is_empty() {
-            out.values.insert(name.clone(), values);
-        }
-    }
-    out
-}
-
-/// The groups `mappings` grant for `mapped` and, apart, those a mapping on
-/// a claim that wasn't read could grant (mappings changed after the token
-/// was checked): their memberships are left for the next sign-in.
-pub fn wanted(
-    mappings: &[idp_group_mappings::Model],
-    mapped: &Mapped,
-) -> (BTreeSet<Uuid>, BTreeSet<Uuid>) {
-    let mut wanted = BTreeSet::new();
-    let mut undecided = BTreeSet::new();
-    for m in mappings {
-        if !mapped.read.contains(&m.claim) {
-            undecided.insert(m.group_id);
-        } else if mapped
-            .values
-            .get(&m.claim)
-            .is_some_and(|v| v.contains(&m.value))
-        {
-            wanted.insert(m.group_id);
-        }
-    }
-    (wanted, undecided)
-}
 
 pub async fn list(
     conn: &impl ConnectionTrait,
@@ -102,23 +29,24 @@ pub async fn list(
         .context("loading group mappings")
 }
 
-/// The claim names the provider's mappings read (what the ID token check
-/// keeps).
-pub async fn claim_names(
+/// The `(claim, value)` pairs the provider's mappings name: all the ID
+/// token check keeps of the token for them.
+pub async fn pairs(
     conn: &impl ConnectionTrait,
     tenant_id: Uuid,
     idp_id: Uuid,
-) -> anyhow::Result<Vec<String>> {
+) -> anyhow::Result<Vec<Pair>> {
     idp_group_mappings::Entity::find()
         .select_only()
         .column(idp_group_mappings::Column::Claim)
+        .column(idp_group_mappings::Column::Value)
         .distinct()
         .filter(idp_group_mappings::Column::TenantId.eq(tenant_id))
         .filter(idp_group_mappings::Column::IdpId.eq(idp_id))
         .into_tuple()
         .all(conn)
         .await
-        .context("loading mapped claim names")
+        .context("loading mapped claim values")
 }
 
 /// Memberships a sync added and removed (group ids).
@@ -208,6 +136,9 @@ pub async fn apply(
         .iter()
         .filter(|g| !owned.iter().any(|m| m.group_id == **g))
     {
+        if mark(conn, tenant_id, idp_id, user_id, *group_id).await? {
+            continue;
+        }
         let row = group_members::ActiveModel {
             tenant_id: Set(tenant_id),
             group_id: Set(*group_id),
@@ -216,8 +147,7 @@ pub async fn apply(
             idp_id: Set(Some(idp_id)),
             ..Default::default()
         };
-        // An existing membership (manual, or another provider's) stays as
-        // it is: it doesn't need this provider to exist.
+        // Another provider's membership stays its own.
         let inserted = group_members::Entity::insert(row)
             .on_conflict(
                 sea_orm::sea_query::OnConflict::columns([
@@ -235,6 +165,27 @@ pub async fn apply(
         }
     }
     Ok(changes)
+}
+
+/// Marks a manual membership (no provider's yet) as kept by `idp_id` too,
+/// so the source shows whichever came first; returns whether there was one.
+async fn mark(
+    conn: &impl ConnectionTrait,
+    tenant_id: Uuid,
+    idp_id: Uuid,
+    user_id: Uuid,
+    group_id: Uuid,
+) -> anyhow::Result<bool> {
+    let done = group_members::Entity::update_many()
+        .col_expr(group_members::Column::IdpId, Expr::value(Some(idp_id)))
+        .filter(group_members::Column::TenantId.eq(tenant_id))
+        .filter(group_members::Column::GroupId.eq(group_id))
+        .filter(group_members::Column::UserId.eq(user_id))
+        .filter(group_members::Column::IdpId.is_null())
+        .exec(conn)
+        .await
+        .context("marking a manual membership as mapped")?;
+    Ok(done.rows_affected > 0)
 }
 
 async fn unmark(conn: &impl ConnectionTrait, filter: sea_orm::Condition) -> anyhow::Result<()> {
@@ -292,95 +243,4 @@ pub async fn drop_owned(
         audit::record(conn, event).await?;
     }
     Ok(u64::try_from(removed.len()).unwrap_or(u64::MAX))
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::*;
-
-    fn mapping(claim: &str, value: &str, group_id: Uuid) -> idp_group_mappings::Model {
-        idp_group_mappings::Model {
-            id: Uuid::now_v7(),
-            tenant_id: Uuid::nil(),
-            idp_id: Uuid::nil(),
-            claim: claim.into(),
-            value: value.into(),
-            group_id,
-            created_at: chrono::Utc::now().fixed_offset(),
-        }
-    }
-
-    fn names(list: &[&str]) -> Vec<String> {
-        list.iter().map(|n| (*n).to_owned()).collect()
-    }
-
-    #[test]
-    fn extract_bounds_values() {
-        let many: Vec<String> = (0..300).map(|i| format!("g{i}")).collect();
-        let claims = json!({
-            "groups": ["a", "b", "a", 7, "", "x\u{0}", "y".repeat(257)],
-            "roles": "admin",
-            "big": many,
-            "obj": {"a": 1},
-            "unasked": ["z"],
-        });
-        let claims = claims.as_object().unwrap();
-        let got = extract(
-            claims,
-            &names(&["groups", "roles", "big", "obj", "missing"]),
-        );
-        assert_eq!(got.read.len(), 5);
-        let got = got.values;
-        assert_eq!(got["groups"], BTreeSet::from(["a".into(), "b".into()]));
-        assert_eq!(got["roles"], BTreeSet::from(["admin".into()]));
-        assert_eq!(got["big"].len(), MAX_CLAIM_VALUES);
-        assert!(!got.contains_key("obj"));
-        assert!(!got.contains_key("missing"));
-        assert!(!got.contains_key("unasked"));
-    }
-
-    #[test]
-    fn wanted_matches_claim_and_value_exactly() {
-        let (g1, g2, g3) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
-        let mappings = [
-            mapping("groups", "eng", g1),
-            mapping("roles", "eng", g2),
-            mapping("groups", "Ops", g3),
-            mapping("groups", "dev", g1),
-        ];
-        let claims = json!({ "groups": ["eng", "dev", "ops"] });
-        let values = extract(claims.as_object().unwrap(), &names(&["groups", "roles"]));
-        assert_eq!(
-            wanted(&mappings, &values),
-            (BTreeSet::from([g1]), BTreeSet::new())
-        );
-        let none = extract(
-            claims.as_object().unwrap(),
-            &names(&["groups", "roles", "x"]),
-        );
-        let none = Mapped {
-            values: BTreeMap::new(),
-            ..none
-        };
-        assert!(wanted(&mappings, &none).0.is_empty());
-    }
-
-    #[test]
-    fn mappings_on_claims_not_read_leave_their_groups_undecided() {
-        let (g1, g2) = (Uuid::now_v7(), Uuid::now_v7());
-        let mappings = [mapping("groups", "eng", g1), mapping("roles", "ops", g2)];
-        let claims = json!({ "groups": ["eng"], "roles": ["ops"] });
-        let values = extract(claims.as_object().unwrap(), &names(&["groups"]));
-        assert_eq!(
-            wanted(&mappings, &values),
-            (BTreeSet::from([g1]), BTreeSet::from([g2]))
-        );
-        // A parked identity from before group mappings read nothing.
-        assert_eq!(
-            wanted(&mappings, &Mapped::default()),
-            (BTreeSet::new(), BTreeSet::from([g1, g2]))
-        );
-    }
 }
