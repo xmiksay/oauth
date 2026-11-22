@@ -60,10 +60,46 @@ pub fn evaluate(
 }
 
 /// Union of the user's own grant and the tenant-wide admin grant.
-/// `lock` = `FOR SHARE` on the grant rows (inside a transaction): a
-/// concurrent withdrawal then waits for that transaction to commit, so its
-/// token revocation sees whatever the transaction issued on the grant.
 pub async fn granted_scopes(
+    conn: &impl ConnectionTrait,
+    tenant_id: Uuid,
+    client_app_id: Uuid,
+    resource_app_id: Uuid,
+    user_id: Uuid,
+) -> anyhow::Result<HashSet<String>> {
+    load_granted(
+        conn,
+        tenant_id,
+        client_app_id,
+        resource_app_id,
+        user_id,
+        false,
+    )
+    .await
+}
+
+/// [`granted_scopes`] with the grant rows locked `FOR SHARE` (inside a
+/// transaction): a concurrent withdrawal then waits for that transaction to
+/// commit, so its token revocation sees whatever the transaction issued.
+pub async fn granted_scopes_for_share(
+    conn: &impl ConnectionTrait,
+    tenant_id: Uuid,
+    client_app_id: Uuid,
+    resource_app_id: Uuid,
+    user_id: Uuid,
+) -> anyhow::Result<HashSet<String>> {
+    load_granted(
+        conn,
+        tenant_id,
+        client_app_id,
+        resource_app_id,
+        user_id,
+        true,
+    )
+    .await
+}
+
+async fn load_granted(
     conn: &impl ConnectionTrait,
     tenant_id: Uuid,
     client_app_id: Uuid,

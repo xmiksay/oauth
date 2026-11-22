@@ -79,15 +79,9 @@ pub async fn evaluate_consent(
     let decision = if client.builtin {
         Decision::Granted
     } else {
-        let granted = consent::granted_scopes(
-            conn,
-            client.tenant_id,
-            client.id,
-            resource_id,
-            user_id,
-            false,
-        )
-        .await?;
+        let granted =
+            consent::granted_scopes(conn, client.tenant_id, client.id, resource_id, user_id)
+                .await?;
         consent::evaluate(&scopes, &granted, force)
     };
     Ok(ConsentEval {

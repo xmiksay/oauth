@@ -7,8 +7,9 @@
     clippy::indexing_slicing
 )]
 
-//! Multi-resource refresh: MFA policies, built-in clients and a deleted
-//! scope reaching the opaque tokens minted for another resource.
+//! Multi-resource refresh: MFA policies, built-in clients, more of the
+//! grant's own resource, and a deleted scope reaching the opaque tokens
+//! minted for another resource.
 mod common;
 
 use axum::http::{Method, StatusCode};
@@ -25,6 +26,7 @@ use entity::{
     enums::{AppMfaPolicy, MfaPolicy},
     tenants,
 };
+use oauth_server::consent;
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
 use serde_json::json;
 
@@ -38,6 +40,30 @@ async fn multi_factor_sign_in_reaches_an_mfa_resource() {
     set_mfa(&f, &f.ledger, AppMfaPolicy::Required).await;
     let (_, body) = redeem_ok(&f, &rt, LEDGER).await;
     assert_eq!(body["scope"], LEDGER);
+}
+
+#[tokio::test]
+async fn own_resource_widens_only_on_live_consent() {
+    let f = Fixture::new().await;
+    let rt = orders_refresh_token(&f).await;
+    let both = "api://orders/Orders.Read api://orders/Orders.Write";
+    refused(&f, &rt, both, "invalid_grant").await;
+    let values = ["Orders.Write".to_owned()];
+    consent::store_grant(
+        &f.db,
+        f.tenant.id,
+        f.web.id,
+        f.orders.id,
+        Some(f.user.id),
+        &values,
+    )
+    .await
+    .unwrap();
+    let (rt, body) = redeem_ok(&f, &rt, both).await;
+    assert_eq!(body["scope"], both);
+    // The family's grant itself never widens.
+    let (_, body) = redeem_ok(&f, &rt, "api://orders/.default").await;
+    assert_eq!(body["scope"], "api://orders/Orders.Read");
 }
 
 #[tokio::test]

@@ -1,6 +1,6 @@
 //! Multi-resource refresh tokens (Entra-style): a refresh token redeemed with
-//! scopes of a resource other than its grant's mints an access token for
-//! that resource — when the user (or an admin, tenant-wide) has consented
+//! scopes of a resource other than its grant's (or more of its own resource
+//! than the family's grant holds) mints an access token for that resource — when the user (or an admin, tenant-wide) has consented
 //! to every requested scope for this client now, and the sign-in behind the
 //! token satisfies the MFA policy of the tenant, client and that resource.
 //! Nothing is stored: the rotated refresh token keeps the family's original
@@ -59,7 +59,10 @@ impl From<Refusal> for OAuthError {
 /// other tenants are never found: `scope::find_resource` filters by tenant).
 /// `txn` must be the transaction that issues the token: the consent rows
 /// are read `FOR SHARE`, so a withdrawal racing this redemption waits for
-/// its commit and then revokes the opaque token it issued.
+/// its commit and then revokes the opaque token it issued. Built-in clients
+/// have no consent row to serialise against: a scope deletion racing their
+/// redemption may miss the one opaque token it issues (accepted — it expires
+/// with its short lifetime, like any JWT).
 pub(super) async fn resolve(
     txn: &DatabaseTransaction,
     tenant: &Tenant,
@@ -78,7 +81,7 @@ pub(super) async fn resolve(
     } else {
         // Locked: see `refresh_grant::grant` (the caller's transaction).
         let granted =
-            consent::granted_scopes(txn, tenant.id, client.id, resource.id, row.user_id, true)
+            consent::granted_scopes_for_share(txn, tenant.id, client.id, resource.id, row.user_id)
                 .await?;
         consent::evaluate(&scopes, &granted, false)
     };
