@@ -244,8 +244,9 @@ async fn federated_sign_in_refuses_a_user_disabled_while_it_waited() {
 }
 
 /// Denying a device request writes the user into its row: it takes the
-/// user lock first, so a deletion meanwhile leaves the request untouched
-/// instead of failing the row's FK.
+/// user lock first, so a deletion meanwhile drops the pending request
+/// (as the deletion's cascade would) instead of failing the row's FK, and
+/// the device stops polling at once.
 #[tokio::test]
 async fn device_deny_waits_for_a_user_deletion() {
     let f = Fixture::new().await;
@@ -264,6 +265,7 @@ async fn device_deny_waits_for_a_user_deletion() {
         .unwrap();
     let (_, started) = start(&f, &f.spa, None, "openid api://orders/Orders.Read").await;
     let user_code = started["user_code"].as_str().unwrap();
+    let device_code = started["device_code"].as_str().unwrap();
     let txn = admin_holding_user(&f).await;
     let ((status, body), ()) = tokio::join!(enter(&mut browser, user_code), async {
         wait_for_lock_waiter(&f.db).await;
@@ -278,5 +280,8 @@ async fn device_deny_waits_for_a_user_deletion() {
         body["redirect"],
         format!("{ORIGIN}/device?error=not_assigned")
     );
-    assert_eq!(rows(&f).await[0].status, DeviceStatus::Pending);
+    assert!(rows(&f).await.is_empty());
+    let (status, body) = poll(&f, &f.spa, None, device_code).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"], "invalid_grant");
 }

@@ -7,7 +7,7 @@ use entity::{
     enums::{LoginStage, Outcome as AuditOutcome},
     users,
 };
-use sea_orm::TransactionTrait;
+use sea_orm::{DatabaseTransaction, TransactionTrait};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -71,19 +71,23 @@ pub(super) async fn refuse_unassigned(
 /// `finish` found the user disabled (or deleted) once it held their lock:
 /// the disable committed while it waited. Closes the transaction (so a
 /// device request gets `access_denied` instead of polling until it
-/// expires) and records the refusal as the password step does. Call it
-/// after dropping `finish`'s DB transaction.
+/// expires) and records the refusal as the password step does — both in
+/// one DB transaction, so a failed audit write leaves the login
+/// transaction usable instead of burnt without a trace. Call it after
+/// dropping `finish`'s DB transaction.
 pub(super) async fn refuse_disabled(
     ctx: &Ctx<'_>,
     tx: &LoadedTx,
     from: LoginStage,
     user_id: Uuid,
 ) -> AuthnResult<Outcome> {
-    close(ctx, tx, from, user_id, "account_disabled").await?;
-    metrics::login("disabled");
+    let txn = ctx.state.db.begin().await?;
+    claim(&txn, ctx, tx, from, user_id, "account_disabled").await?;
     let details = json!({ "reason": "disabled" });
-    ctx.audit_sign_in(&ctx.state.db, Some(user_id), AuditOutcome::Failure, details)
+    ctx.audit_sign_in(&txn, Some(user_id), AuditOutcome::Failure, details)
         .await?;
+    txn.commit().await?;
+    metrics::login("disabled");
     Err(AuthnError::AccountDisabled)
 }
 
@@ -99,12 +103,25 @@ pub(super) async fn close(
     reason: &'static str,
 ) -> AuthnResult<()> {
     let txn = ctx.state.db.begin().await?;
+    claim(&txn, ctx, tx, from, user_id, reason).await?;
+    txn.commit().await?;
+    Ok(())
+}
+
+/// [`close`]'s work on the caller's DB transaction.
+async fn claim(
+    txn: &DatabaseTransaction,
+    ctx: &Ctx<'_>,
+    tx: &LoadedTx,
+    from: LoginStage,
+    user_id: Uuid,
+    reason: &'static str,
+) -> anyhow::Result<()> {
     // The user before the transaction row (deleting the user locks it, then
     // cascades to the row); `deny_for` writes the user into the device row.
-    crate::backchannel::lock_user(&txn, ctx.tenant.id, user_id).await?;
-    if super::tx::take(&txn, tx.row.id, from).await? {
-        device_code::deny_for(&txn, ctx, tx, user_id, reason).await?;
+    crate::backchannel::lock_user(txn, ctx.tenant.id, user_id).await?;
+    if super::tx::take(txn, tx.row.id, from).await? {
+        device_code::deny_for(txn, ctx, tx, user_id, reason).await?;
     }
-    txn.commit().await?;
     Ok(())
 }

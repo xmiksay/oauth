@@ -63,7 +63,9 @@ GlobalAdmin, like its redirect URIs; never on built-in apps). Others get
   lock (`account_disabled`). Denying takes the user lock
   (`backchannel::lock_user`) before the request row, the order a user's
   deletion takes them; a user deleted meanwhile can't be written into the
-  row, so the request stays `pending` until it expires. Redemption re-reads
+  row, so the pending request is deleted instead (as the user's deletion
+  cascades to the requests they decided) and the next poll gets
+  `invalid_grant`. Redemption re-reads
   the user after `lock_request` took that lock: one disabled or deleted
   while the poll waited gets `invalid_grant`.
 

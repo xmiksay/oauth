@@ -193,7 +193,9 @@ async fn authorization_code(
     // revokes what we issued — no token of a replayed code survives.
     let txn = conn.begin().await?;
     // `user` was read before the lock: a disable that committed meanwhile
-    // shows only here (it also ends the session `record_client` checks).
+    // shows only here. `record_client` below takes the same lock and would
+    // refuse too, but as "session ended"; this extra round trip is there
+    // only for the precise error.
     if !backchannel::lock_user(&txn, tenant.id, row.user_id)
         .await?
         .is_active()
