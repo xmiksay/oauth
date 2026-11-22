@@ -96,23 +96,14 @@ Public clients can't have secrets (400).
 - **Caller-supplied value** (`secret`, config as code / GitOps): the
   automation registers a value it already holds in its secret manager
   instead of copying a generated one. It must be **32+ random bytes,
-  base64 or hex encoded**: base64 (standard or URL-safe alphabet, not
-  mixed; padding optional) or an even number of hex digits (either case),
-  at most 256 characters, decoding to at least 32 bytes — else 400 (the
-  message never repeats the value). `openssl rand -base64 32` or
-  `openssl rand -hex 32` pass. The server can't prove a value random, so it
-  also refuses the shapes a hand-picked one takes: decoded bytes, or the
-  text itself with ASCII case folded, that repeat a unit of half their
-  length or less (`"password"` × 8 is valid base64 of a 6-byte period;
-  `"MyCompanySecretKey2026"` × 2 repeats only in the text, since base64
-  turns 4 characters into 3 bytes), a run of 8+ consecutive ascending or
-  descending characters (`abcdefgh`, `0123456789`), and text under 128 bits
-  of *estimated* entropy (length × the Shannon entropy of its character
-  distribution: small-alphabet or skewed values). 32 hex digits (16 bytes),
-  passphrases with spaces or punctuation (`CompanyNameProductionSecret2026!`)
-  and the examples above don't pass; a long run of words in the base64
-  alphabet still can, which is why the value must come from a random
-  generator. It is stored exactly like a generated
+  base64 or hex encoded** (standard or URL-safe base64, alphabets not mixed, padding optional;
+  or hex, either case; at most 256 characters) — else 400, and the message
+  never repeats the value. `openssl rand -base64 32` or `openssl rand -hex 32`
+  pass. The server can't prove a value random, so it also refuses
+  predictable shapes — repeated substrings, character runs (`abcdefgh`),
+  low-variety values — which rules out repeated words and passphrases; the
+  value must still come from a random generator (the exact heuristics are in
+  `crates/server/src/api/secret_value.rs`). It is stored exactly like a generated
   one (SHA-256 + 3-character `hint`) and never echoed: the response has no
   `"secret"`. Its `hint` is the first 3 hex digits of that SHA-256, not of
   the value (the server can't tell how much of a supplied value is really

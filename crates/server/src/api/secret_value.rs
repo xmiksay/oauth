@@ -5,10 +5,17 @@
 //! random; the checks below reject the predictable shapes a human or a
 //! template produces when it picks a "strong looking" string instead
 //! (repeated units, alphabet runs, small alphabets, words with punctuation).
-//! A repeated unit is looked for twice: in the decoded bytes, and in the text
-//! itself with ASCII case folded, because base64 maps 4 characters to 3 bytes
-//! and so hides a repeated word whose length isn't a multiple of 4
-//! (`"password1"` × 5 has no short byte period).
+//! Repetition is any substring occurring twice, not only a whole-value
+//! period: a repeated word followed by a short random tail has no period but
+//! still repeats its word. It is looked for twice: as a repeated 4-byte
+//! window in the decoded bytes, and as a repeated 7-character (8 for hex)
+//! window in the text with ASCII case folded, because base64 maps 4
+//! characters to 3 bytes and so hides a repeated word whose length isn't a
+//! multiple of 4 (`"password1"` × 5 repeats no byte window at offset 9).
+//! Window sizes keep a random value's false-reject chance below ~1e-5 even
+//! at the 256-character maximum (about 1e-6 for 32 bytes).
+
+use std::collections::HashSet;
 
 use base64::{
     Engine,
@@ -25,6 +32,11 @@ pub const MIN_BITS: f64 = 128.0;
 /// Ascending / descending character runs this long (`abcdefgh`, `98765432`)
 /// are rejected; a random value has one with probability below 1e-6.
 const MAX_RUN: usize = 8;
+/// Repeated-window lengths (see the module doc): decoded bytes, case-folded
+/// base64 text, case-folded hex text.
+const BYTE_WINDOW: usize = 4;
+const BASE64_TEXT_WINDOW: usize = 7;
+const HEX_TEXT_WINDOW: usize = 8;
 
 const FORMAT: &str = "secret must be base64, base64url or hex encoding of at least 32 random \
      bytes (e.g. `openssl rand -base64 32`)";
@@ -52,7 +64,7 @@ pub fn estimated_bits(value: &str) -> f64 {
 /// The bytes `value` encodes: hex when it is an even number of hex digits,
 /// else base64 or base64url (padding optional, alphabets not mixed).
 pub fn decode(value: &str) -> Option<Zeroizing<Vec<u8>>> {
-    if value.len().is_multiple_of(2) && value.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if is_hex(value) {
         return decode_hex(value);
     }
     STANDARD_PAD_INDIFFERENT
@@ -60,6 +72,10 @@ pub fn decode(value: &str) -> Option<Zeroizing<Vec<u8>>> {
         .or_else(|_| URL_SAFE_PAD_INDIFFERENT.decode(value))
         .ok()
         .map(Zeroizing::new)
+}
+
+fn is_hex(value: &str) -> bool {
+    value.len().is_multiple_of(2) && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 fn decode_hex(value: &str) -> Option<Zeroizing<Vec<u8>>> {
@@ -78,12 +94,11 @@ fn decode_hex(value: &str) -> Option<Zeroizing<Vec<u8>>> {
     ))
 }
 
-/// The shortest `p` with `bytes[i] == bytes[i + p]` for every `i`: the length
-/// of the unit `bytes` repeats (`bytes.len()` when it repeats nothing).
-pub fn shortest_period(bytes: &[u8]) -> usize {
-    (1..bytes.len())
-        .find(|&p| bytes.iter().zip(bytes.iter().skip(p)).all(|(a, b)| a == b))
-        .unwrap_or(bytes.len())
+/// Whether some `window`-long substring of `bytes` occurs twice (overlaps
+/// count: `aaaaa` repeats `aaaa`).
+pub fn has_repeated_window(bytes: &[u8], window: usize) -> bool {
+    let mut seen = HashSet::new();
+    bytes.windows(window).any(|w| !seen.insert(w))
 }
 
 /// The longest run of characters each one above (or each one below) the
@@ -107,15 +122,21 @@ pub fn longest_sequential_run(value: &str) -> usize {
     longest
 }
 
-/// Whether `bytes` repeat a unit of at most half their length (`abab`, `abcabca`).
-fn repeats(bytes: &[u8]) -> bool {
-    shortest_period(bytes) <= bytes.len() / 2
+/// Whether the decoded bytes or the case-folded text repeat a substring.
+fn repeats(value: &str, bytes: &[u8]) -> bool {
+    let folded = Zeroizing::new(value.to_ascii_lowercase());
+    let text_window = if is_hex(value) {
+        HEX_TEXT_WINDOW
+    } else {
+        BASE64_TEXT_WINDOW
+    };
+    has_repeated_window(bytes, BYTE_WINDOW) || has_repeated_window(folded.as_bytes(), text_window)
 }
 
 /// 400 unless `value` is base64 / base64url / hex of at least 32 bytes,
-/// neither those bytes nor the case-folded text repeat a unit of half their
-/// length or less, with no long alphabet run and at least 128 estimated
-/// bits. The message never contains the value.
+/// neither those bytes nor the case-folded text repeat a substring, with no
+/// long alphabet run and at least 128 estimated bits. The message never
+/// contains the value.
 pub fn validate(value: &str) -> AppResult<()> {
     if value.len() > MAX_LEN {
         return Err(AppError::BadRequest(format!(
@@ -126,9 +147,7 @@ pub fn validate(value: &str) -> AppResult<()> {
     if bytes.len() < MIN_BYTES {
         return Err(AppError::BadRequest(FORMAT.into()));
     }
-    let folded = Zeroizing::new(value.to_ascii_lowercase());
-    if repeats(&bytes)
-        || repeats(folded.as_bytes())
+    if repeats(value, &bytes)
         || longest_sequential_run(value) >= MAX_RUN
         || estimated_bits(value) < MIN_BITS
     {
@@ -172,9 +191,10 @@ mod tests {
             assert!(estimated_bits(value) >= MIN_BITS, "{value}");
             assert!(validate(value).is_err(), "{value}");
         }
-        // Valid base64 of 48 bytes, but with a 6-byte period.
+        // Valid base64 of 48 bytes, but repeating every 6 bytes.
         let decoded = decode(&password).unwrap();
-        assert_eq!((decoded.len(), shortest_period(&decoded)), (48, 6));
+        assert_eq!(decoded.len(), 48);
+        assert!(has_repeated_window(&decoded, BYTE_WINDOW));
         // Longer variants that decode to 32+ bytes are still caught.
         let long_alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         assert!(decode(long_alphabet).unwrap().len() >= MIN_BYTES);
@@ -184,22 +204,34 @@ mod tests {
     }
 
     #[test]
-    fn repeated_words_off_the_base64_grid_fail() {
+    fn repeated_words_fail_whatever_follows_them() {
         let probes = [
             format!("{}pas", "password1".repeat(5)),
             "passwordpassword1".repeat(4),
+            // #81 review: a short tail leaves no whole-value period.
+            format!("{}AbCd", "password".repeat(5)),
+            format!("{}Xq9z", "MyCompanySecretKey2026".repeat(2)),
             "MyCompanySecretKey2026".repeat(2),
             // Case changes don't hide the repetition.
             format!("{}{}", "MyCompanySecretKey2026", "mycompanysecretkey2026"),
         ];
         for value in &probes {
-            // Valid base64 of 32+ bytes whose bytes don't repeat: only the
-            // text-level check catches them.
+            // Valid base64 of 32+ bytes, enough estimated bits and no long
+            // run: only the repetition check catches them.
             let bytes = decode(value).unwrap();
             assert!(bytes.len() >= MIN_BYTES, "{value}");
-            assert!(!repeats(&bytes), "{value}");
+            assert!(estimated_bits(value) >= MIN_BITS, "{value}");
+            assert!(longest_sequential_run(value) < MAX_RUN, "{value}");
+            assert!(repeats(value, &bytes), "{value}");
             assert!(validate(value).is_err(), "{value}");
         }
+        // A word repeated off the 4-character grid repeats no byte window:
+        // the case-folded text check is what finds it.
+        let company = format!("{}Xq9z", "MyCompanySecretKey2026".repeat(2));
+        assert!(!has_repeated_window(
+            &decode(&company).unwrap(),
+            BYTE_WINDOW
+        ));
     }
 
     #[test]
@@ -233,12 +265,17 @@ mod tests {
     }
 
     #[test]
-    fn periods_and_runs() {
-        assert_eq!(shortest_period(b""), 0);
-        assert_eq!(shortest_period(b"aaaa"), 1);
-        assert_eq!(shortest_period(b"abcabcab"), 3);
-        assert_eq!(shortest_period(b"abcd"), 4);
-        assert!(repeats(b"abab") && repeats(b"abcabca") && !repeats(b"abcabd"));
+    fn windows_and_runs() {
+        assert!(!has_repeated_window(b"", 4));
+        assert!(!has_repeated_window(b"abc", 4));
+        assert!(has_repeated_window(b"aaaaa", 4));
+        assert!(has_repeated_window(b"xabcdyabcdz", 4));
+        assert!(!has_repeated_window(b"xabcdyabcez", 4));
+        // Hex text gets the longer window: 7 repeated hex digits are fine.
+        // (`5e59485` occurs twice, at an odd offset.)
+        let hex = "5e59485c1bab61984690ba25a4682f511363b54b75e59485f25679b8104eb547";
+        assert!(is_hex(hex) && !repeats(hex, &decode(hex).unwrap()));
+        assert!(validate(hex).is_ok());
         assert_eq!(longest_sequential_run(""), 0);
         assert_eq!(longest_sequential_run("z"), 1);
         assert_eq!(longest_sequential_run("xabcdy"), 4);
