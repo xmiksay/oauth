@@ -10,7 +10,7 @@ use axum::{
 };
 use entity::{
     applications,
-    enums::{AccessTokenFormat, ClientType, GroupsClaimFormat, SigningAlg},
+    enums::{AccessTokenFormat, ClientType, GroupsClaimFormat, IdTokenGroups, SigningAlg},
 };
 use sea_orm::{
     ActiveEnum, ActiveModelTrait, ActiveValue::Set, ColumnTrait, DbErr, EntityTrait, QueryFilter,
@@ -54,6 +54,7 @@ pub fn view(a: &applications::Model) -> Value {
         "access_token_format": a.access_token_format.to_value(),
         "signing_alg": a.signing_alg.to_value(),
         "groups_claim_format": a.groups_claim_format.to_value(),
+        "id_token_groups": a.id_token_groups.to_value(),
         "assignment_required": a.assignment_required,
         "access_token_ttl_secs": a.access_token_ttl_secs,
         "refresh_token_ttl_secs": a.refresh_token_ttl_secs,
@@ -156,6 +157,7 @@ pub async fn create(
         access_token_format: Set(AccessTokenFormat::Jwt),
         signing_alg: Set(SigningAlg::Rs256),
         groups_claim_format: Set(GroupsClaimFormat::Id),
+        id_token_groups: Set(IdTokenGroups::None),
         ..Default::default()
     };
     if client_type == ClientType::Public {

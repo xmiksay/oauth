@@ -27,6 +27,7 @@ function fakeApp(over: Partial<Application> = {}): Application {
     access_token_format: 'jwt',
     signing_alg: 'RS256',
     groups_claim_format: 'id',
+    id_token_groups: 'none',
     assignment_required: false,
     device_code_enabled: false,
     mfa_policy: 'inherit',

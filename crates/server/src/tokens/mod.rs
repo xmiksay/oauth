@@ -2,6 +2,8 @@
 //! (`access_token_format`, `signing_alg`, `access_token_ttl_secs`); the ID
 //! token follows the CLIENT app's `signing_alg`. The resource's
 //! `groups_claim_format` picks group ids or names for the `groups` claim.
+//! The ID token's `groups` follow the CLIENT app (`id_token_groups`, in its
+//! own `groups_claim_format`).
 //! Requests with OIDC scopes only get a JWT (RS256, 1 h, group ids) whose
 //! audience is the userinfo endpoint.
 
@@ -239,6 +241,8 @@ pub async fn issue_delegated(
     .await?;
 
     let id_token = if d.oidc_scopes.iter().any(|s| s == "openid") {
+        let id_groups =
+            principal::id_token_group_values(conn, d.tenant.id, d.client, &groups).await?;
         let id_claims = claims::id_token(&IdTokenInput {
             issuer: d.issuer,
             tenant_id: d.tenant.id,
@@ -246,6 +250,7 @@ pub async fn issue_delegated(
             user: user_ctx(),
             nonce: d.nonce,
             oidc_scopes: d.oidc_scopes,
+            groups: &id_groups,
             access_token: &access_token,
             iat: now.timestamp(),
             exp: (now + Duration::seconds(DEFAULT_TTL_SECS)).timestamp(),

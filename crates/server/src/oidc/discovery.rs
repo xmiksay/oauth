@@ -46,7 +46,7 @@ pub async fn configuration(
         "claims_supported": [
             "iss", "sub", "aud", "exp", "iat", "auth_time", "nonce", "amr", "acr", "sid", "azp",
             "at_hash", "oid", "tid", "ver", "name", "preferred_username", "email",
-            "email_verified",
+            "email_verified", "groups", "hasgroups",
         ],
         "claims_parameter_supported": false,
         "request_parameter_supported": false,

@@ -66,7 +66,7 @@ pub struct AuthRequest {
     pub state: Option<String>,
     pub nonce: Option<String>,
     pub code_challenge: String,
-    /// Subset of `openid profile email offline_access`.
+    /// Subset of `openid profile email offline_access groups`.
     pub oidc_scopes: Vec<String>,
     pub resource_id: Option<Uuid>,
     /// Scope values of the resource (never `.default`; already expanded).

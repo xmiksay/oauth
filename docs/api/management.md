@@ -151,7 +151,8 @@ Additional rules:
   "effective_web_origins": [],              // read-only: web_origins ∪ (public clients) redirect-URI origins
   "audience": "api://<client_id>",          // identifier_uri, else api://{client_id}
   "access_token_format": "jwt|opaque", "signing_alg": "RS256|ES256",
-  "groups_claim_format": "id|name",         // what the groups claim of tokens for this resource carries
+  "groups_claim_format": "id|name",         // what the groups claim of tokens for this resource (and of its ID tokens) carries
+  "id_token_groups": "none|all|assigned",   // groups in ID tokens / userinfo issued to it
   "assignment_required": false,             // only principals holding one of its roles get tokens
   "access_token_ttl_secs": 3600, "refresh_token_ttl_secs": 1209600,
   "device_code_enabled": false,             // RFC 8628 device code grant opt-in

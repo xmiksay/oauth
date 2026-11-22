@@ -165,7 +165,7 @@ migration transaction). Deleting a tenant cascades to everything it owns.
 | `user_totp` · `user_recovery_codes` | sealed TOTP secret + `confirmed_at`; SHA-256 code hashes + `used_at` |
 | `groups` · `group_members` | static groups; members are users; `display_name` unique per tenant case-insensitively (index on `(tenant_id, lower(display_name))`); a membership is `manual` (an admin added it) and/or kept by an IdP's group mappings (`idp_id`) — [federation.md](federation.md#group-mappings) |
 | `directory_role_assignments` | (user, role) unique; role GlobalAdmin\|ApplicationAdmin\|UserAdmin |
-| `applications` | `client_id` unique per tenant, `client_type` confidential\|public, `builtin`, `redirect_uris[]`, `post_logout_redirect_uris[]`, `web_origins[]` (explicit CORS origins, ≤ 32), `identifier_uri` (unique per tenant), `access_token_format` jwt\|opaque, `signing_alg` RS256\|ES256, `groups_claim_format` id\|name, `assignment_required`, access TTL 300–86400 s, refresh TTL, `device_code_enabled` (RFC 8628 opt-in), `mfa_policy` inherit\|required, `backchannel_logout_uri` (https; [backchannel_logout.md](backchannel_logout.md)), `backchannel_logout_session_required` |
+| `applications` | `client_id` unique per tenant, `client_type` confidential\|public, `builtin`, `redirect_uris[]`, `post_logout_redirect_uris[]`, `web_origins[]` (explicit CORS origins, ≤ 32), `identifier_uri` (unique per tenant), `access_token_format` jwt\|opaque, `signing_alg` RS256\|ES256, `groups_claim_format` id\|name, `id_token_groups` none\|all\|assigned, `assignment_required`, access TTL 300–86400 s, refresh TTL, `device_code_enabled` (RFC 8628 opt-in), `mfa_policy` inherit\|required, `backchannel_logout_uri` (https; [backchannel_logout.md](backchannel_logout.md)), `backchannel_logout_session_required` |
 | `client_secrets` | SHA-256 hash, display `hint`, optional `expires_at`; many per app for rotation |
 | `app_scopes` · `app_roles` | delegated scopes (`admin_consent_required`) and app roles (`allowed_member_types` ⊆ {user, application}); `value` unique per app |
 | `app_required_permissions` | client app → resource app, exactly one of `scope_id` / `app_role_id` (FK’d through the resource app) |
@@ -207,11 +207,16 @@ FKs: sessions and codes are swept while the tokens they produced live on.
   `redirect_uri` are validated, errors are 400 JSON, never redirects; after
   that, errors redirect with `error`, `error_description`, `state` and `iss`
   (RFC 9207, also on success).
-- Scopes: `openid profile email offline_access` plus scopes of at most one
+- Scopes: `openid profile email offline_access groups` plus scopes of at most one
   resource app per request (one refresh token still spans resources, see
   the token endpoint), `{identifier_uri}/{value}` or `api://{client_id}/{value}`;
   `{resource}/.default` = the client's registered required delegated
-  permissions on it. At least one scope is required.
+  permissions on it. At least one scope is required. `groups` is known so
+  clients that always request it (Headlamp, Grafana, ArgoCD) aren't refused,
+  but releases nothing by itself: the client's `id_token_groups` alone
+  decides whether ID tokens / userinfo carry groups. Like every OIDC scope it
+  is kept in the grant and can be narrowed away, never added, on refresh;
+  resource apps may not expose it. Unknown scopes stay `invalid_scope`.
 - `prompt=none|login|consent` (`none` alone), `max_age`. With a valid session
   (and no `prompt=login` / `max_age` violation) and consent satisfied, the
   code is issued immediately; otherwise a login transaction is created.
@@ -329,7 +334,7 @@ must filter with `oidc::assignment::user_may_use`.
 | Access (delegated) | The **resource** app's `access_token_format` (JWT RFC 9068, header `typ: at+jwt`, or opaque) and `signing_alg`, TTL `access_token_ttl_secs` | `iss sub aud exp iat nbf jti client_id azp tid oid sid amr acr auth_time scp roles groups ver idtyp=user` (`acr: "mfa"` only after a multi-factor sign-in); `aud` = resource `identifier_uri` or `api://{client_id}`; `scp` = resource scope values; `roles` = user's and user's groups' app roles of the resource; `groups` = group ids, or display names when the resource's `groups_claim_format` is `name` (read at issuance, so a rename shows on the next token); more than 200 → omitted and `hasgroups: true` (either format) |
 | Access (OIDC scopes only) | JWT RS256, 1 h | as above (`groups` always ids) with `aud = {issuer}/oauth2/userinfo`, `scp` = the OIDC scopes — the only tokens userinfo accepts |
 | Access (app-only) | resource settings | `sub = oid =` client app id, `idtyp=app`, `roles`, no `scp` |
-| ID token | JWT signed with the **client** app's `signing_alg`, `typ: JWT`, 1 h | `aud = client_id`, `azp`, `nonce`, `auth_time`, `amr`, `acr` (`mfa`, multi-factor sign-ins only), `sid`, `oid`, `tid`, `at_hash`, `ver`, plus `name preferred_username` (profile) and `email email_verified` (email) |
+| ID token | JWT signed with the **client** app's `signing_alg`, `typ: JWT`, 1 h | `aud = client_id`, `azp`, `nonce`, `auth_time`, `amr`, `acr` (`mfa`, multi-factor sign-ins only), `sid`, `oid`, `tid`, `at_hash`, `ver`, plus `name preferred_username` (profile) and `email email_verified` (email), and `groups` / `hasgroups` per the client's `id_token_groups` (`all` = every group, `assigned` = groups holding one of the client's user roles) in the client's `groups_claim_format`, overage rule as for access tokens |
 | Refresh | opaque, rotating | — |
 
 `amr` values per sign-in method: [authn.md](authn.md#login-transactions).
@@ -337,17 +342,21 @@ Opaque access tokens store the same claim set as `claims` jsonb. JWT
 verification (userinfo, introspection, `id_token_hint`) accepts only keys the
 tenant still publishes and checks `typ`, so ID tokens can't pose as access
 tokens.
-Discovery's `claims_supported` lists ID token / userinfo claims only, so the
-access-token-only `scp`, `roles`, `groups` and `hasgroups` aren't in it.
-Consumers binding to group names (e.g. Kubernetes structured authentication,
-Grafana) register a resource app with `groups_claim_format: name` and
-validate access tokens for its audience.
+Discovery's `claims_supported` lists ID token / userinfo claims only (incl.
+`groups` / `hasgroups`, which `id_token_groups` can add), so the
+access-token-only `scp` and `roles` aren't in it. Consumers binding to group
+names either validate access tokens for a resource app with
+`groups_claim_format: name`, or (Kubernetes structured authentication fed the
+ID token by Headlamp, Grafana) read the ID token of a client app with
+`id_token_groups: all|assigned` and `groups_claim_format: name`.
 
 ### Userinfo, introspection, revocation, logout
 
 - **userinfo** (`Authorization: Bearer` only): token must be valid, `aud` =
   the userinfo audience and `scp` ∋ `openid`; returns `sub` + profile/email
-  claims per granted scope. Resource tokens are refused (Entra behaviour:
+  claims per granted scope, plus `groups` / `hasgroups` per the token's
+  client's `id_token_groups` (option and memberships read at call time).
+  Resource tokens are refused (Entra behaviour:
   userinfo needs a token for the userinfo audience).
 - **introspect**: confidential clients only. Refresh tokens are reported
   active only to their client (scope qualified as in token responses);

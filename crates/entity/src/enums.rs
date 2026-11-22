@@ -53,6 +53,21 @@ pub enum GroupsClaimFormat {
     Name,
 }
 
+/// Which groups an app's ID tokens and userinfo responses list.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter, DeriveActiveEnum)]
+#[sea_orm(rs_type = "String", db_type = "Text")]
+pub enum IdTokenGroups {
+    /// No `groups` claim.
+    #[sea_orm(string_value = "none")]
+    None,
+    /// Every group the user is a member of.
+    #[sea_orm(string_value = "all")]
+    All,
+    /// Only groups holding an app-role assignment on this app.
+    #[sea_orm(string_value = "assigned")]
+    Assigned,
+}
+
 /// A tenant's MFA policy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter, DeriveActiveEnum)]
 #[sea_orm(rs_type = "String", db_type = "Text")]

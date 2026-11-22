@@ -3,7 +3,7 @@
 //! for (client, resource) lists it. Scopes marked `admin_consent_required`
 //! can only be covered by an admin; users are never offered them.
 //!
-//! OIDC scopes (`openid profile email offline_access`) need no consent here:
+//! OIDC scopes (`openid profile email offline_access groups`) need no consent here:
 //! `consent_grants` is keyed by a resource app and these belong to none.
 
 use std::collections::HashSet;

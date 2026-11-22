@@ -9,7 +9,10 @@ use entity::{app_required_permissions, app_scopes, applications};
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter};
 use uuid::Uuid;
 
-pub const OIDC_SCOPES: [&str; 4] = ["openid", "profile", "email", "offline_access"];
+/// `groups` releases nothing by itself: whether ID tokens / userinfo carry
+/// groups is the client app's `id_token_groups`. It is known so clients
+/// that always ask for it (Headlamp, Grafana, ArgoCD) aren't refused.
+pub const OIDC_SCOPES: [&str; 5] = ["openid", "profile", "email", "offline_access", "groups"];
 pub const DEFAULT: &str = ".default";
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -233,8 +236,11 @@ mod tests {
 
     #[test]
     fn oidc_only() {
-        let p = parse("openid  profile openid email offline_access").unwrap();
-        assert_eq!(p.oidc, s(&["openid", "profile", "email", "offline_access"]));
+        let p = parse("openid  profile openid email offline_access groups").unwrap();
+        assert_eq!(
+            p.oidc,
+            s(&["openid", "profile", "email", "offline_access", "groups"])
+        );
         assert_eq!(p.resource, None);
         assert_eq!(parse("").unwrap(), RequestedScopes::default());
     }
@@ -271,6 +277,13 @@ mod tests {
         ] {
             assert!(parse(bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn stored_groups_scope_is_oidc() {
+        let (oidc, values) = split_stored(&s(&["openid", "groups", "Orders.Read"]));
+        assert_eq!(oidc, s(&["openid", "groups"]));
+        assert_eq!(values, s(&["Orders.Read"]));
     }
 
     #[test]
