@@ -234,6 +234,7 @@ const subtitle = computed(() => {
       <MfaEnrollStep
         v-else-if="view.step === 'mfa_enroll'"
         :locked="locked"
+        :enrolled="view.factors.length === 0"
         :passkeys="canUsePasskeys"
         :begin="flow.beginTotp"
         :confirm="flow.confirmTotp"

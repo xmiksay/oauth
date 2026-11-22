@@ -299,9 +299,6 @@ export function useLoginFlow(
     )
   }
 
-  // A TOTP enrolment's next step, held while the step shows the recovery codes.
-  let held: StepResult | null = null
-
   /** `mfa_enroll`: a pending TOTP secret, returned for the step to keep (secret-once). */
   async function beginTotp(): Promise<TotpEnrollment | null> {
     let out: TotpEnrollment | null = null
@@ -311,23 +308,20 @@ export function useLoginFlow(
     return out
   }
 
-  /** Activates the pending secret; returns the new recovery codes for the step to show once. */
+  /**
+   * Activates the pending secret; returns the new recovery codes for the step to show once.
+   * The sign-in stays at this step until `resume`.
+   */
   async function confirmTotp(code: string): Promise<string[] | null> {
     let codes: string[] | null = null
     await guarded(async (id) => {
-      const { recovery_codes, ...next } = await a.confirmEnrollTotp(id, code.replace(/\s/g, ''))
-      held = next as StepResult
-      codes = recovery_codes
+      codes = (await a.confirmEnrollTotp(id, code.replace(/\s/g, ''))).recovery_codes
     })
     return codes
   }
 
-  /** Continues once the recovery codes were dismissed. */
-  function resume() {
-    const next = held
-    held = null
-    if (next) apply(next)
-  }
+  /** Continues once the recovery codes were dismissed (or after a reload past enrolment). */
+  const resume = () => run((id) => a.enrollContinue(id))
 
   return {
     phase,

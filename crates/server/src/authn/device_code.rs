@@ -103,12 +103,16 @@ pub async fn enter(
                     cookies: Vec::new(),
                 });
             }
-            let step_up = mfa_policy::step_up(&state, &tenant, client.id, &req, session).await?;
-            (step_up.unwrap_or(LoginStage::Consent), Some(session))
+            match mfa_policy::step_up(&state, &tenant, client.id, &req, session).await? {
+                None => (LoginStage::Consent, Some(session)),
+                Some(LoginStage::Mfa) => (LoginStage::Mfa, Some(session)),
+                // A fresh sign-in (see `mfa_policy::step_up`).
+                Some(stage) => (stage, None),
+            }
         }
         None => (LoginStage::Password, None),
     };
-    let step_up = !matches!(stage, LoginStage::Password | LoginStage::Consent);
+    let step_up = stage == LoginStage::Mfa;
     let binding = tx::browser_binding(&headers, &state.config)?;
     let id = tx::create(
         conn,

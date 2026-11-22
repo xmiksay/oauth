@@ -69,8 +69,13 @@ export interface Redirect {
 
 export type StepResult = TxView | Redirect
 
-/** Confirming a TOTP enrolment: the next step plus the new recovery codes (shown once). */
-export type EnrolledResult = StepResult & { recovery_codes: string[] }
+/**
+ * Confirming a TOTP enrolment: only the new recovery codes (shown once). The sign-in waits at
+ * `mfa_enroll` until `enrollContinue`, so no code expires while the user saves them.
+ */
+export interface EnrolledResult {
+  recovery_codes: string[]
+}
 
 export function isRedirect(r: StepResult): r is Redirect {
   return typeof (r as Redirect).redirect === 'string'
@@ -107,6 +112,8 @@ export const authn = {
   enrollTotp: (tx: string) => api.post<TotpEnrollment>(txPath(tx, 'enroll/totp'), {}),
   confirmEnrollTotp: (tx: string, code: string) =>
     api.post<EnrolledResult>(txPath(tx, 'enroll/totp/confirm'), { code }),
+  /** After a TOTP enrolment's recovery codes were acknowledged: the next step / redirect. */
+  enrollContinue: (tx: string) => api.post<StepResult>(txPath(tx, 'enroll/continue'), {}),
   enrollPasskeyOptions: (tx: string) =>
     api.post<PasskeyCreationOptions>(txPath(tx, 'enroll/passkey/options'), {}),
   enrollPasskey: (tx: string, credential: PasskeyRegistration) =>

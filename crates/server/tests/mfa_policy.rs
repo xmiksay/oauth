@@ -21,10 +21,12 @@ use common::{
 use entity::{
     applications,
     enums::{AppMfaPolicy, MfaPolicy},
-    tenants,
+    sessions, tenants,
 };
 use oauth_server::authn::totp;
-use sea_orm::{ActiveModelTrait, ActiveValue::Set};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter,
+};
 use serde_json::{Value, json};
 
 const OPENID: &str = "openid";
@@ -54,13 +56,25 @@ async fn password(browser: &mut Browser, scope: &str) -> (String, Value) {
     (tx, resp)
 }
 
-/// Redeems the code of `redirect`; returns the ID token's claims.
-async fn id_claims(f: &Fixture, redirect: &str) -> serde_json::Map<String, Value> {
+type Claims = serde_json::Map<String, Value>;
+
+/// Redeems the code of `redirect`; returns the ID and access tokens' claims.
+async fn token_claims(f: &Fixture, redirect: &str) -> (Claims, Claims) {
     let code = query_of(redirect)["code"].clone();
     let (status, tokens) = f.redeem(&f.web, Some(&f.web_secret), &code, WEB_CB).await;
     assert_eq!(status, StatusCode::OK, "{tokens}");
-    f.verify_jwt(tokens["id_token"].as_str().unwrap(), "web-app")
-        .await
+    let id = f
+        .verify_jwt(tokens["id_token"].as_str().unwrap(), "web-app")
+        .await;
+    let userinfo = format!("{}/oauth2/userinfo", common::ORIGIN);
+    let access = f
+        .verify_jwt(tokens["access_token"].as_str().unwrap(), &userinfo)
+        .await;
+    (id, access)
+}
+
+async fn id_claims(f: &Fixture, redirect: &str) -> Claims {
+    token_claims(f, redirect).await.0
 }
 
 fn code_for(secret_b32: &str) -> String {
@@ -115,9 +129,21 @@ async fn required_tenant_forces_totp_enrolment_before_the_code() {
         .await;
     assert_eq!(status, StatusCode::OK, "{done}");
     assert_eq!(done["recovery_codes"].as_array().unwrap().len(), 10);
-    let claims = id_claims(&f, done["redirect"].as_str().unwrap()).await;
+    // No code yet: it would expire while the user saves the recovery codes.
+    assert_eq!(done.as_object().unwrap().len(), 1, "{done}");
+    let (status, _, view) = browser.get(&format!("/api/authn/tx/{tx}")).await;
+    assert_eq!(status, StatusCode::OK);
+    let view: Value = serde_json::from_str(&view).unwrap();
+    assert_eq!(view["step"], "mfa_enroll", "{view}");
+    assert_eq!(view["factors"], json!([]));
+    let (status, _) = browser.step(&tx, "enroll/totp", json!({})).await;
+    assert_eq!(status, StatusCode::CONFLICT, "already enrolled");
+    let (status, done) = browser.step(&tx, "enroll/continue", json!({})).await;
+    assert_eq!(status, StatusCode::OK, "{done}");
+    let (claims, access) = token_claims(&f, done["redirect"].as_str().unwrap()).await;
     assert_eq!(claims["amr"], json!(["pwd", "otp", "mfa"]));
     assert_eq!(claims["acr"], "mfa");
+    assert_eq!(access["acr"], "mfa");
     let enrolled = audited(&f.db, "user.mfa.totp_enroll", f.user.id).await;
     assert_eq!(enrolled[0]["via"], "sign_in");
     // Next time the new factor is simply asked for.
@@ -161,12 +187,21 @@ async fn an_app_requiring_mfa_steps_up_a_single_factor_session() {
         .await
         .unwrap_err();
     assert_eq!(query_of(&redirect)["error"], "interaction_required");
-    // Without a factor: enrolment, without asking for the password again.
+    // Without a factor: the session alone can't add one (a stolen cookie
+    // would register a passkey); the user signs in again, then enrols.
     let tx = browser.authorize(&url(OPENID, &[])).await.unwrap();
     let (status, _, view) = browser.get(&format!("/api/authn/tx/{tx}")).await;
     assert_eq!(status, StatusCode::OK);
     let view: Value = serde_json::from_str(&view).unwrap();
-    assert_eq!(view["step"], "mfa_enroll", "{view}");
+    assert_eq!(view["step"], "password", "{view}");
+    assert!(view["user"].is_null(), "{view}");
+    for path in ["enroll/passkey/options", "enroll/totp"] {
+        let (status, _) = browser.step(&tx, path, json!({})).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{path}");
+    }
+    let body = json!({ "email": "ann@example.com", "password": PASSWORD });
+    let (_, resp) = browser.step(&tx, "password", body).await;
+    assert_eq!(resp["step"], "mfa_enroll", "{resp}");
     // With one: the factor, then a new multi-factor session.
     f.enroll_totp(&f.user).await;
     let tx = browser.authorize(&url(OPENID, &[])).await.unwrap();
@@ -214,4 +249,26 @@ async fn a_device_sign_in_steps_up_the_browser_session_too() {
     assert_eq!(status, StatusCode::OK, "{view}");
     // The device is still confirmed explicitly.
     assert_eq!(view["step"], "consent", "{view}");
+}
+
+#[tokio::test]
+async fn a_step_up_fails_once_its_session_ended() {
+    let f = Fixture::new().await;
+    let mut browser = f.browser();
+    let (_, resp) = password(&mut browser, OPENID).await;
+    assert!(resp["redirect"].is_string(), "{resp}");
+    app_policy(&f, &f.web, AppMfaPolicy::Required).await;
+    f.enroll_totp(&f.user).await;
+    let tx = browser.authorize(&url(OPENID, &[])).await.unwrap();
+    // Revoked (sign-out elsewhere, admin) while the factor is being entered.
+    let revoke = sessions::Entity::delete_many().filter(sessions::Column::UserId.eq(f.user.id));
+    revoke.exec(&f.db).await.unwrap();
+    let (status, resp) = browser
+        .step(&tx, "totp", json!({ "code": current_totp() }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    let redirect = resp["redirect"].as_str().unwrap();
+    assert_eq!(query_of(redirect)["error"], "login_required", "{redirect}");
+    let left = sessions::Entity::find().filter(sessions::Column::UserId.eq(f.user.id));
+    assert_eq!(left.count(&f.db).await.unwrap(), 0, "no session from it");
 }

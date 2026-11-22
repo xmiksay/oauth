@@ -232,6 +232,21 @@ mod tests {
     }
 
     #[test]
+    fn multi_factor_access_token_carries_acr() {
+        let u = user();
+        let amr = vec!["pwd".to_owned(), "otp".to_owned(), "mfa".to_owned()];
+        let ctx = UserContext {
+            user: &u,
+            session_id: Uuid::nil(),
+            amr: &amr,
+            auth_time: 90,
+        };
+        let c = access_token(&input(Some(ctx), &[], &[], &[]));
+        assert_eq!(c["acr"], "mfa");
+        assert_eq!(c["amr"], json!(["pwd", "otp", "mfa"]));
+    }
+
+    #[test]
     fn app_only_token_has_no_scp_and_idtyp_app() {
         let roles = vec!["Directory.Read.All".to_owned()];
         let c = access_token(&input(None, &[], &[], &roles));

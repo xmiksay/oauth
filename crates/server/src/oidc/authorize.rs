@@ -124,7 +124,10 @@ async fn handle(env: &Env<'_>, query: &str) -> OAuthResult<Response> {
             let msg = "multi-factor authentication is required";
             return Ok(fail(ErrorCode::InteractionRequired, msg));
         }
-        return to_login(env, &client, &req, stage, Some(&session)).await;
+        // Only the MFA step continues the session; anything else is a
+        // fresh sign-in (see `mfa_policy::step_up`).
+        let continued = (stage == LoginStage::Mfa).then_some(&session);
+        return to_login(env, &client, &req, stage, continued).await;
     }
     let force = authn::force_consent(&req);
     let eval = authn::evaluate_consent(conn, &client, &req, user.id, force).await?;
@@ -185,7 +188,7 @@ async fn to_login(
             req,
             stage,
             session,
-            step_up: !matches!(stage, LoginStage::Password | LoginStage::Consent),
+            step_up: stage == LoginStage::Mfa,
             binding: &binding,
         },
     )

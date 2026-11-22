@@ -21,8 +21,12 @@ pub struct Model {
     pub user_id: Option<Uuid>,
     pub amr: Vec<String>,
     pub auth_time: Option<DateTimeWithTimeZone>,
-    /// Existing session being reused (consent-only transactions).
+    /// Existing session: reused (consent-only transactions), or replaced
+    /// once its sign-in is stepped up (`step_up`).
     pub session_id: Option<Uuid>,
+    /// The transaction continues `session_id`'s sign-in with a second
+    /// factor (MFA policy) and ends in a new session.
+    pub step_up: bool,
     /// SHA-256 of the browser-binding cookie.
     pub binding_hash: Vec<u8>,
     /// Stage `link`: the upstream identity (IdP, subject, email, name) the
@@ -42,6 +46,7 @@ impl std::fmt::Debug for Model {
             .field("application_id", &self.application_id)
             .field("stage", &self.stage)
             .field("user_id", &self.user_id)
+            .field("step_up", &self.step_up)
             .field("binding_hash", &"<redacted>")
             .field(
                 "pending_identity",

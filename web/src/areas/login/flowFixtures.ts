@@ -60,6 +60,7 @@ export function deps() {
     discover: vi.fn(),
     enrollTotp: vi.fn(),
     confirmEnrollTotp: vi.fn(),
+    enrollContinue: vi.fn(),
     enrollPasskeyOptions: vi.fn(),
     enrollPasskey: vi.fn(),
   }

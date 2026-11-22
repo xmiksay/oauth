@@ -200,17 +200,27 @@ async fn finish(
         return Err(AuthnError::WrongStep);
     }
     let mut cookies = Vec::new();
-    let session = match tx.row.session_id {
-        Some(id) => match session::find_by_id(&txn, ctx.tenant.id, id).await? {
-            Some(existing) => existing,
-            None => {
+    // The session this transaction builds on (consent-only or step-up) must
+    // still be live: a sign-out or revocation meanwhile ends the sign-in.
+    let origin = match tx.row.session_id {
+        Some(id) => match session::lock_live(&txn, ctx.tenant.id, id).await? {
+            Some(existing) if existing.user_id == user.id => Some(existing),
+            _ => {
                 device_code::deny_for(&txn, ctx, &tx, user.id, "session_ended").await?;
                 txn.commit().await?;
-                let msg = "the session ended while consent was pending";
+                let msg = "the session ended while the sign-in was pending";
                 return ctx.error_redirect(&tx.req, ErrorCode::LoginRequired, msg);
             }
         },
-        None => {
+        None => None,
+    };
+    let session = match origin {
+        Some(existing) if !tx.row.step_up => existing,
+        origin => {
+            // A step-up replaces the session it continued.
+            if let Some(old) = origin {
+                session::delete(&txn, old.id).await?;
+            }
             let user_id = tx
                 .row
                 .user_id
@@ -274,7 +284,7 @@ async fn finish(
         }
     };
     txn.commit().await?;
-    if tx.row.session_id.is_none() {
+    if tx.row.session_id.is_none() || tx.row.step_up {
         metrics::login("success");
     }
     Ok(Outcome::Redirect { url, cookies })

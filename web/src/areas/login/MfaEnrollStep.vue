@@ -11,6 +11,8 @@ import SecretOnceDialog from '@/components/SecretOnceDialog.vue'
  */
 const props = defineProps<{
   locked: boolean
+  /** A factor was set up already (e.g. before a reload): only continuing is left. */
+  enrolled: boolean
   /** The browser can create passkeys. */
   passkeys: boolean
   begin: () => Promise<TotpEnrollment | null>
@@ -47,7 +49,21 @@ onMounted(() => first.value?.focus())
 
 <template>
   <div class="space-y-4">
-    <template v-if="!enrollment">
+    <template v-if="enrolled && !codes">
+      <p class="muted text-sm">
+        Your second way to verify it's you is set up.
+      </p>
+      <button
+        ref="first"
+        type="button"
+        class="btn btn-primary w-full"
+        :disabled="locked"
+        @click="emit('done')"
+      >
+        Continue
+      </button>
+    </template>
+    <template v-else-if="!enrollment">
       <p class="muted text-sm">
         Your organization requires a second way to verify it's you. Set one up to continue.
       </p>
