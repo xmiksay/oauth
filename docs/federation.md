@@ -214,6 +214,21 @@ A mapping is `claim` (a top-level ID token claim, e.g. `groups`, `roles`)
 + `value` + a group of the tenant; several mappings may grant one group,
 at most 100 per provider.
 
+A mapped claim is only as trustworthy as the tenants allowed to sign the
+token. On a multi-tenant Entra provider (`{tenantid}` issuer) any Entra
+tenant can sign in, and its own admins control `wids` (directory role
+template ids, e.g. Global Administrator `62e90394-…`, the same in every
+tenant), `roles` of a multi-tenant app (any consenting tenant assigns them
+in its own service principal) and on-prem group names. So such a provider
+needs `allowed_tenants` before it can have mappings: creating a mapping
+without it is a 400, and so is a PATCH that clears `allowed_tenants` or
+switches the issuer to a templated one while mappings exist. Mappings
+stored before this rule, on a provider that still accepts every tenant,
+decide nothing at sign-in (the memberships they kept stay as they are).
+Even with tenants pinned, prefer mapping `groups` by object id over
+`wids` / `roles` / group names: an object id names one group of one
+tenant.
+
 On every federated sign-in — of a linked identity, at JIT creation, and
 when stage `link` links a parked identity and completes the sign-in — the
 user's memberships follow the token: the user joins each group whose

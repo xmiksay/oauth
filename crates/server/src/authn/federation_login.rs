@@ -75,7 +75,7 @@ pub async fn complete(
         return back("upstream_failed");
     }
     let reauth = flow::Reauth::of(&tx.req);
-    let mapped = group_map::pairs(conn, ctx.tenant.id, idp.id).await?;
+    let mapped = group_map::pairs(conn, &idp).await?;
     let finished = flow::finish(
         ctx.state,
         &ctx.tenant.slug,
