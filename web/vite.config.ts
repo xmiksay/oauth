@@ -4,37 +4,20 @@ import { defineConfig, loadEnv, type ProxyOptions } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
 import { BACKEND_PROXY_PATTERN } from './dev-proxy.ts'
+import { tenantDefines } from './tenant-defines.ts'
 
 // `changeOrigin: false` forwards the browser's Host (`acme.localhost:5173`) untouched: the
 // backend resolves the tenant from it, so dev needs PUBLIC_URL=http://localhost:5173.
 const backend: ProxyOptions = { target: 'http://localhost:8080', changeOrigin: false }
 
-// Only the dev apex (`localhost:5173`, served by Vite, so without the server's tenant `<meta>`)
-// needs these: the system tenant's slug, to send the browser to its admin center as the
-// server's apex does, or the `APEX_TENANT` it serves instead. Read from the backend's `.env`,
-// trimmed like the server does. A malformed slug, or an `APEX_TENANT` naming the system tenant,
-// fails here too, loudly; whether the tenant exists, is enabled or reserved only the server knows.
-function tenantSlug(mode: string, key: string, fallback: string): string {
-  const env = loadEnv(mode, fileURLToPath(new URL('..', import.meta.url)), key)
-  const slug = (env[key] ?? '').trim() || fallback
-  if (slug && !/^[a-z0-9][a-z0-9-]{1,62}$/.test(slug)) {
-    throw new Error(`${key} \`${slug}\` is not a valid tenant slug`)
-  }
-  return slug
-}
-
-function tenantDefines(mode: string): Record<string, string> {
-  const system = tenantSlug(mode, 'SYSTEM_TENANT_SLUG', 'system')
-  const apex = tenantSlug(mode, 'APEX_TENANT', '')
-  if (apex === system) {
-    throw new Error(`APEX_TENANT \`${apex}\` is the system tenant, which the apex cannot serve`)
-  }
-  return { __SYSTEM_TENANT_SLUG__: JSON.stringify(system), __APEX_TENANT__: JSON.stringify(apex) }
-}
-
-export default defineConfig(({ mode }) => ({
+export default defineConfig(({ command, mode }) => ({
   plugins: [vue(), tailwindcss()],
-  define: tenantDefines(mode),
+  // The backend's `.env` reaches only the dev server; builds and vitest (whose command is also
+  // `serve`) get fixed values, so a developer's `.env` can't change test results or break a build.
+  define: tenantDefines(command === 'serve' && !process.env.VITEST, (key) => {
+    const root = fileURLToPath(new URL('..', import.meta.url))
+    return loadEnv(mode, root, key)[key]
+  }),
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },

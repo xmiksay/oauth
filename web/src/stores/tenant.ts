@@ -30,7 +30,8 @@ export function tenantOrigin(
 
 /**
  * Admin center of the system tenant, as seen from a single-label dev apex. `slug` defaults to
- * `SYSTEM_TENANT_SLUG` of the dev `.env` (see `vite.config.ts`).
+ * `SYSTEM_TENANT_SLUG` of the dev `.env` under the Vite dev server, else `system` (see
+ * `tenant-defines.ts`).
  */
 export function systemAdminUrl(
   loc: Pick<Location, 'protocol' | 'host'> = window.location,
@@ -41,8 +42,8 @@ export function systemAdminUrl(
 
 /**
  * The page's tenant: the server's `<meta>` first; under the Vite dev server the host's first
- * label, or on the single-label dev apex the dev `.env`'s `APEX_TENANT` (`null` without one: the
- * dev apex then redirects to the system admin center).
+ * label, or on the single-label dev apex the dev `.env`'s `APEX_TENANT` (`null` without one, and
+ * always in builds and tests: the dev apex then redirects to the system admin center).
  */
 export function currentTenant(
   doc: Pick<Document, 'querySelector'> = document,

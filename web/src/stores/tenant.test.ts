@@ -80,9 +80,9 @@ describe('systemAdminUrl', () => {
     )
   })
 
-  it('defaults to the configured system slug', () => {
+  it('defaults to the `system` slug outside the dev server', () => {
     expect(systemAdminUrl({ protocol: 'http:', host: 'localhost:5173' })).toBe(
-      `http://${__SYSTEM_TENANT_SLUG__}.localhost:5173/admin`,
+      'http://system.localhost:5173/admin',
     )
   })
 })
@@ -98,7 +98,7 @@ describe('useTenantStore', () => {
 
   it('has no tenant on the dev apex', () => {
     vi.stubGlobal('location', { ...window.location, hostname: 'localhost' })
-    expect(useTenantStore().slug).toBe(__APEX_TENANT__ || null)
+    expect(useTenantStore().slug).toBe(null)
   })
 
   it("prefers the server's meta", () => {
