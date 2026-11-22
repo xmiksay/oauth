@@ -45,7 +45,7 @@ pub async fn migrate(db: &DatabaseConnection) -> anyhow::Result<()> {
 pub async fn migrate_and_reconcile(db: &DatabaseConnection, config: &Config) -> anyhow::Result<()> {
     let txn = begin_migrated(db).await?;
     // Before the slug check and redirect URI rewrite: both see the new slug.
-    directory::reconcile_system_slug(&txn, config).await?;
+    directory::reconcile_system_slug(&txn, config, directory::SlugVia::Startup).await?;
     let invalid = directory::invalid_enabled_slugs(&txn, &config.system_tenant_slug).await?;
     if !invalid.is_empty() {
         anyhow::bail!(

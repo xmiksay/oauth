@@ -10,7 +10,7 @@ use zeroize::Zeroizing;
 use crate::{
     config::Config,
     db,
-    directory::{self, NewUser, SlugOutcome, builtin_apps, password},
+    directory::{self, NewUser, SlugOutcome, SlugVia, builtin_apps, password},
 };
 
 /// Serializes concurrent bootstraps ("oauthbst" in ASCII); distinct from the
@@ -116,7 +116,8 @@ pub async fn run(
 
     // Same rule as `serve`: a stored system tenant under another slug is
     // refused, or renamed with SYSTEM_TENANT_RENAME=1.
-    if let SlugOutcome::Renamed { .. } = directory::reconcile_system_slug(&txn, config).await? {
+    let outcome = directory::reconcile_system_slug(&txn, config, SlugVia::Bootstrap).await?;
+    if let SlugOutcome::Renamed { .. } = outcome {
         builtin_apps::reconcile_all(&txn, config).await?;
     }
     let (tenant, tenant_created) = match directory::find_system_tenant(&txn).await? {

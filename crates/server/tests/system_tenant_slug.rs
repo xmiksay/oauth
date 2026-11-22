@@ -177,6 +177,7 @@ async fn rename_with_the_flag_moves_the_system_tenant() {
     assert_eq!(event.target_id, Some(tenant.id));
     assert_eq!(event.details["from"], "system");
     assert_eq!(event.details["to"], "config");
+    assert_eq!(event.details["via"], "startup");
     // The old host no longer serves it; the new one does.
     assert_eq!(
         apex_redirect(&conn, &cfg).await.as_deref(),
@@ -198,6 +199,36 @@ async fn rename_with_the_flag_moves_the_system_tenant() {
     db::migrate_and_reconcile(&conn, &cfg).await.unwrap();
     bootstrap::run(&conn, &cfg, &opts()).await.unwrap();
     assert_eq!(renames(&conn).await, 1);
+}
+
+#[tokio::test]
+async fn bootstrap_renames_with_the_flag() {
+    let (pg, conn) = bootstrapped().await;
+    let cfg = config(
+        &pg,
+        &[
+            ("SYSTEM_TENANT_SLUG", "config"),
+            ("SYSTEM_TENANT_RENAME", "1"),
+        ],
+    );
+
+    // Bootstrap alone (no `serve`) renames and rewrites the built-in SPAs.
+    bootstrap::run(&conn, &cfg, &opts()).await.unwrap();
+    let tenant = system(&conn).await;
+    assert_eq!(tenant.slug, "config");
+    assert_eq!(
+        admin_portal_redirects(&conn, tenant.id).await,
+        ["https://config.id.example.test/admin/callback"]
+    );
+    assert_eq!(renames(&conn).await, 1);
+    let event = audit_events::Entity::find()
+        .filter(audit_events::Column::EventType.eq("tenant.rename"))
+        .one(&conn)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(event.details["from"], "system");
+    assert_eq!(event.details["via"], "bootstrap");
 }
 
 #[tokio::test]

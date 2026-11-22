@@ -30,12 +30,32 @@ pub enum SlugOutcome {
     },
 }
 
+/// Which command ran [`reconcile_slug`]; recorded as the audit event's
+/// `details.via`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Via {
+    /// `oauth serve` (`db::migrate_and_reconcile`).
+    Startup,
+    /// `oauth bootstrap`.
+    Bootstrap,
+}
+
+impl Via {
+    fn as_str(self) -> &'static str {
+        match self {
+            Via::Startup => "startup",
+            Via::Bootstrap => "bootstrap",
+        }
+    }
+}
+
 /// Run on the startup (or bootstrap) transaction: refuses a stored system
 /// tenant whose slug isn't the configured one, or renames it with
 /// `SYSTEM_TENANT_RENAME=1` (refused when another tenant has the slug).
 pub async fn reconcile_slug(
     conn: &impl ConnectionTrait,
     config: &Config,
+    via: Via,
 ) -> anyhow::Result<SlugOutcome> {
     // Row lock: a concurrent bootstrap / replica waits and then sees the
     // renamed row instead of renaming (and auditing) it again.
@@ -83,7 +103,7 @@ pub async fn reconcile_slug(
             target: Some(Target::Tenant(id)),
             outcome: Outcome::Success,
             ip: None,
-            details: json!({ "from": from, "to": wanted, "via": "startup" }),
+            details: json!({ "from": from, "to": wanted, "via": via.as_str() }),
         },
     )
     .await?;
@@ -92,4 +112,15 @@ pub async fn reconcile_slug(
         from,
         to: wanted.to_owned(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Via;
+
+    #[test]
+    fn via_names_the_command() {
+        assert_eq!(Via::Startup.as_str(), "startup");
+        assert_eq!(Via::Bootstrap.as_str(), "bootstrap");
+    }
 }
