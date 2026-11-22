@@ -24,7 +24,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 const APPS: &str = "/api/v1/applications";
-const SUPPLIED: &str = "Zx8pQ2vN7rT4kL9wB3mY6cH1jF5dS0aG-uE_iO";
+const SUPPLIED: &str = "mZOWZylKwwVXXPmCV9rrSl3slrjp2bjUIQyc79qbsFo";
 
 async fn new_app(f: &Fixture, token: &str, client_id: &str) -> String {
     let (st, app) = post(
@@ -55,7 +55,17 @@ async fn a_caller_supplied_secret_is_checked_stored_hashed_and_never_echoed() {
     let path = new_app(&f, &token, "deployer").await;
 
     let hex32 = "9f86d081884c7d659a2feaa0c55ad015";
-    for weak in ["short", hex32, &"a".repeat(64), &format!("{SUPPLIED} x")] {
+    let password = "password".repeat(8);
+    for weak in [
+        "short",
+        hex32,
+        &"a".repeat(64),
+        &format!("{SUPPLIED} x"),
+        // #81: these passed the character-histogram estimate.
+        &password,
+        "abcdefghijklmnopqrstuvwxyz012345",
+        "CompanyNameProductionSecret2026!",
+    ] {
         let (st, body) = post(&f, &token, &path, json!({ "secret": weak })).await;
         assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
         assert!(!body.to_string().contains(weak));
@@ -184,7 +194,7 @@ async fn a_supplied_secret_with_form_reserved_characters_works_when_encoded() {
     let f = Fixture::new().await;
     let token = app_admin_token(&f).await;
     let path = new_app(&f, &token, "deployer").await;
-    let value = "Zx8pQ2vN7rT4kL9wB3mY6cH1jF5dS0aG+uE%iO/=";
+    let value = "2fWH6CRxNI9OZg3nSFittXX4ugYKS+tHSKM8+Qqf7/I=";
     let (st, created) = post(&f, &token, &path, json!({ "secret": value })).await;
     assert_eq!(st, StatusCode::CREATED, "{created}");
 
