@@ -25,6 +25,8 @@ use uuid::Uuid;
 
 const APPS: &str = "/api/v1/applications";
 const SUPPLIED: &str = "mZOWZylKwwVXXPmCV9rrSl3slrjp2bjUIQyc79qbsFo";
+/// `openssl rand -hex 32`
+const SUPPLIED_HEX: &str = "e83239adaf4444a9ae61ba14223b320a31e6ade2f006e2170651faff226e8718";
 
 async fn new_app(f: &Fixture, token: &str, client_id: &str) -> String {
     let (st, app) = post(
@@ -56,6 +58,10 @@ async fn a_caller_supplied_secret_is_checked_stored_hashed_and_never_echoed() {
 
     let hex32 = "9f86d081884c7d659a2feaa0c55ad015";
     let password = "password".repeat(8);
+    // #81 review: repeated words off base64's 4-character grid.
+    let password1 = format!("{}pas", "password1".repeat(5));
+    let password17 = "passwordpassword1".repeat(4);
+    let company = "MyCompanySecretKey2026".repeat(2);
     for weak in [
         "short",
         hex32,
@@ -65,6 +71,9 @@ async fn a_caller_supplied_secret_is_checked_stored_hashed_and_never_echoed() {
         &password,
         "abcdefghijklmnopqrstuvwxyz012345",
         "CompanyNameProductionSecret2026!",
+        &password1,
+        &password17,
+        &company,
     ] {
         let (st, body) = post(&f, &token, &path, json!({ "secret": weak })).await;
         assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
@@ -104,6 +113,15 @@ async fn a_caller_supplied_secret_is_checked_stored_hashed_and_never_echoed() {
     assert_eq!(details["caller_supplied"], true, "{details}");
     assert_eq!(details["never_expires"], false);
     assert!(!details.to_string().contains(SUPPLIED));
+
+    // 64 hex digits (the documented `openssl rand -hex 32`) work too.
+    let (st, created) = post(&f, &token, &path, json!({ "secret": SUPPLIED_HEX })).await;
+    assert_eq!(st, StatusCode::CREATED, "{created}");
+    assert!(!created.to_string().contains(SUPPLIED_HEX));
+    assert_eq!(
+        client_credentials(&f, "deployer", SUPPLIED_HEX).await,
+        StatusCode::OK
+    );
 
     // Generated secrets are still returned once.
     let (st, generated) = post(&f, &token, &path, json!({})).await;
