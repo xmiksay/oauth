@@ -181,6 +181,7 @@ pub async fn approve(
     session: &sessions::Model,
 ) -> anyhow::Result<bool> {
     let decision = Decision::Approve {
+        session_id: session.id,
         amr: &session.amr,
         auth_time: session.auth_time,
     };

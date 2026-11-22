@@ -31,14 +31,15 @@ GlobalAdmin, like its redirect URIs; never on built-in apps). Others get
   scopes (`error=consent_required`) deny the request — with a browser
   session at code entry already, before any transaction is made (like `/authorize`),
   otherwise right after sign-in. Approving records the
-  user and the browser session's `amr` / `auth_time` on the row (CAS on
-  `pending` + unexpired) in the completion's transaction; Deny records
-  `denied`. The browser ends on `/device?result=approved` or
+  user, the approving browser session (`approved_session_id`) and its `amr` /
+  `auth_time` on the row (CAS on `pending` + unexpired) in the completion's
+  transaction; Deny records `denied`. The browser ends on `/device?result=approved` or
   `/device?error=…` ([api/authn.md](api/authn.md#device-code)).
 - Token endpoint, `grant_type=urn:ietf:params:oauth:grant-type:device_code`
   + `device_code`: the row is taken `FOR UPDATE`, so polls, the decision's
   CAS and redemption serialize. Unknown / another client's / redeemed →
   `invalid_grant`; expired → `expired_token`; `denied` → `access_denied`;
+  `approved` whose approving session has ended → `access_denied` (below);
   `pending` → `authorization_pending`, or `slow_down` when the poll came
   sooner than `interval_secs` after the previous one (1 s jitter allowed),
   which adds 5 s for all later polls (capped at 60). `approved` → consumed
@@ -58,6 +59,32 @@ GlobalAdmin, like its redirect URIs; never on built-in apps). Others get
   Every path that ends the device's login transaction without approving
   denies the device request on the same DB transaction as its audit event,
   so the device gets `access_denied` instead of polling until expiry.
+
+## An approval dies with its sign-in
+
+Like an authorization code (refused once its session ended), an approval
+that is not redeemed yet is only as good as the sign-in that made it — so a
+user tricked into approving an attacker's code can still cut it off:
+
+- `approved_session_id` is a composite FK to `sessions` with `ON DELETE SET
+  NULL (approved_session_id)`: signing out of the approving browser
+  (`/oauth2/logout`), revoking that session in My Account or a new sign-in
+  replacing it clears it. Redemption locks the approving session `FOR KEY
+  SHARE` (lock order user → session → request, the order a session's deletion
+  and its FK action take) and answers `access_denied` when the column is
+  empty or the session has expired; the row stays `approved` and unconsumed,
+  every later poll gets the same answer. A sign-out racing a redemption that
+  already holds the session waits for it and then ends the device's new
+  session too (it is the user's).
+- `directory::revoke_credentials` ("sign out everywhere", admin
+  `revoke-sessions`, password change and reset, disabling) marks every
+  `approved`, unredeemed request of the user `denied` on its transaction —
+  even one approved by the session a self-service password change keeps.
+  It runs before the session delete, so a redemption already holding a row
+  finishes first and its new session is deleted with the others.
+- Rows approved before migration `m20261122_000019` have no session and are
+  refused (they lived 15 minutes at most). Disabling or deleting the user
+  stopped redemption before (`active_user`, FK cascade) and still does.
 
 ## Guessing user codes
 

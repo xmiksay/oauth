@@ -12,7 +12,7 @@ use chrono::{DateTime, Duration, FixedOffset};
 use entity::{device_authorizations, enums::DeviceStatus};
 use sea_orm::{
     ActiveValue::Set,
-    ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QuerySelect,
+    ColumnTrait, ConnectionTrait, DbErr, EntityTrait, QueryFilter, QuerySelect, Statement,
     sea_query::{Expr, OnConflict},
 };
 use uuid::Uuid;
@@ -128,6 +128,8 @@ pub async fn by_device_code(
 /// The signed-in user's answer.
 pub enum Decision<'a> {
     Approve {
+        /// The approving browser session; redemption needs it still live.
+        session_id: Uuid,
         amr: &'a [String],
         auth_time: DateTime<FixedOffset>,
     },
@@ -150,8 +152,13 @@ pub async fn decide(
         .col_expr(Column::UserId, Expr::value(user_id))
         .col_expr(Column::DecidedAt, Expr::value(now));
     update = match decision {
-        Decision::Approve { amr, auth_time } => update
+        Decision::Approve {
+            session_id,
+            amr,
+            auth_time,
+        } => update
             .col_expr(Column::Status, Expr::value(DeviceStatus::Approved))
+            .col_expr(Column::ApprovedSessionId, Expr::value(session_id))
             .col_expr(Column::Amr, Expr::value(amr.to_vec()))
             .col_expr(Column::AuthTime, Expr::value(auth_time)),
         Decision::Deny => update.col_expr(Column::Status, Expr::value(DeviceStatus::Denied)),
@@ -165,6 +172,53 @@ pub async fn decide(
         .await
         .context("recording device authorization decision")?;
     Ok(result.rows_affected == 1)
+}
+
+/// Locks the approving session `FOR KEY SHARE` (so a sign-out or revocation
+/// waits for a redemption that already holds it) and returns whether it is
+/// still live. Lock order user → session → request: deleting the session
+/// locks it and then, through the FK's `SET NULL`, the request row.
+pub async fn lock_approving_session(
+    conn: &impl ConnectionTrait,
+    tenant_id: Uuid,
+    session_id: Uuid,
+) -> anyhow::Result<bool> {
+    let row = conn
+        .query_one_raw(Statement::from_sql_and_values(
+            conn.get_database_backend(),
+            "WITH s AS (SELECT expires_at FROM sessions \
+               WHERE tenant_id = $1 AND id = $2 FOR KEY SHARE) \
+             SELECT EXISTS (SELECT 1 FROM s WHERE expires_at > now()) AS live",
+            [tenant_id.into(), session_id.into()],
+        ))
+        .await
+        .context("locking the approving session")?
+        .context("locking the approving session returned no row")?;
+    row.try_get::<bool>("", "live")
+        .context("reading whether the approving session is live")
+}
+
+/// Denies every approved, not yet redeemed request of the user — on the
+/// transaction that signs them out everywhere (`directory::revoke_credentials`),
+/// so an approval can't outlive the revocation even when the approving
+/// session itself is kept.
+pub async fn deny_unredeemed(
+    conn: &impl ConnectionTrait,
+    tenant_id: Uuid,
+    user_id: Uuid,
+) -> anyhow::Result<()> {
+    use device_authorizations::Column;
+    device_authorizations::Entity::update_many()
+        .col_expr(Column::Status, Expr::value(DeviceStatus::Denied))
+        .col_expr(Column::ApprovedSessionId, Expr::value(Option::<Uuid>::None))
+        .filter(Column::TenantId.eq(tenant_id))
+        .filter(Column::UserId.eq(user_id))
+        .filter(Column::Status.eq(DeviceStatus::Approved))
+        .filter(Column::ConsumedAt.is_null())
+        .exec(conn)
+        .await
+        .context("denying the user's unredeemed device approvals")?;
+    Ok(())
 }
 
 /// Whether a poll at `now` came sooner than `interval_secs` after the last

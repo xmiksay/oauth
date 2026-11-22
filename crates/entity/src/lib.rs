@@ -271,6 +271,7 @@ mod tests {
                     user_id: None,
                     amr: vec![],
                     auth_time: None,
+                    approved_session_id: None,
                     interval_secs: 5,
                     last_polled_at: None,
                     created_at: now(),
