@@ -246,7 +246,8 @@ pub async fn update(
         }
     }
     // Narrowing who may sign in must also fail a callback verified against
-    // the wider list (it would still get mapped groups); no unlink needed.
+    // the wider list (it would still get mapped groups); no unlink needed,
+    // but the mapped memberships go below.
     let narrowed = fields.contains(&"allowed_tenants") || fields.contains(&"hosted_domain");
     if repointed || narrowed {
         row.generation = Set(idp.generation.saturating_add(1));
@@ -275,8 +276,16 @@ pub async fn update(
     // Another issuer, client or discovery source means other subjects:
     // keeping the links would hand the old users' accounts to whoever the
     // new provider calls by those subjects.
+    // Narrowing: identities don't record their upstream tenant / domain, so
+    // every mapped membership goes; a de-listed user can't sign in to have
+    // them re-synced, a still-allowed one gets them back on the next one.
     let (removed, memberships) = if repointed {
         identities::unlink_all(&txn, tenant_id, id, caller.actor(), caller.ip).await?
+    } else if narrowed {
+        let dropped =
+            group_map::drop_owned(&txn, tenant_id, id, None, None, caller.actor(), caller.ip)
+                .await?;
+        (0, dropped)
     } else {
         (0, 0)
     };

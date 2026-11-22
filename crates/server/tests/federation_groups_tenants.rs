@@ -182,3 +182,30 @@ async fn narrowing_allowed_tenants_during_the_exchange_wins() {
     let events = audited_any(&fed.f.db, "sign_in").await;
     assert_eq!(events.last().unwrap()["reason"], "idp_repointed");
 }
+
+/// De-listing a tenant drops the memberships its users got through the
+/// mappings: they can't sign in again to have them re-synced.
+#[tokio::test]
+async fn narrowing_allowed_tenants_drops_mapped_memberships() {
+    let fed = Fed::new().await;
+    let idp = entra_idp(&fed, json!({ "allowed_tenants": [T1, T2] })).await;
+    let admins = group(&fed, "k8s-admins").await;
+    mapped(&fed, &idp, "wids", GLOBAL_ADMIN, admins).await;
+    from_tenant(&fed, T2);
+    let user = sign_in_with(&fed, &idp, json!({ "wids": [GLOBAL_ADMIN] })).await;
+    assert_eq!(
+        memberships(&fed, user.id).await,
+        vec![(admins, false, true)]
+    );
+
+    fed.patch_idp(&idp, json!({ "allowed_tenants": [T1] }))
+        .await;
+    assert!(memberships(&fed, user.id).await.is_empty());
+    let events = audited_any(&fed.f.db, "identity_provider.update").await;
+    let last = events.last().unwrap();
+    assert_eq!(last["memberships_removed"], 1);
+    assert_eq!(last["identities_removed"], 0);
+    // The identity stays linked; only the de-listed tenant is refused.
+    let (_, location) = fed.sign_in(&mut fed.f.browser(), &idp).await;
+    assert_eq!(login_error(&location).as_deref(), Some("upstream_failed"));
+}
