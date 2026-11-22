@@ -124,7 +124,7 @@ async fn after_enrolment(ctx: &Ctx<'_>, tx: LoadedTx, user: &users::Model) -> Au
     let next = user
         .must_change_password
         .then_some(LoginStage::ChangePassword);
-    proceed(ctx, tx, LoginStage::MfaEnroll, next, user, false).await
+    proceed(ctx, tx, LoginStage::MfaEnroll, next, user).await
 }
 
 /// `POST …/enroll/totp`: a new pending secret (replacing an unconfirmed

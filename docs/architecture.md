@@ -111,7 +111,7 @@ Implemented:
 | `http` | Shared outbound client recipe (rustls on AWS-LC, webpki roots, no redirects, no proxy, timeouts) and capped body reads |
 | `federation` | Upstream OIDC / OAuth2 (relying-party side): `discovery` (discovery + JWKS caches), `exchange` (code exchange), `id_token` (signature + claims), `flow` (begin / finish of a round trip), `state` (single-use `federation_states`), `identities` (links, last-method rule), `group_map` (claim value → group mappings, applied per sign-in), `idps`, `policy`, `profile` (bounding upstream claims), `resolve` (public-address-only DNS), `urls`, `kinds` (per-preset claim checks: Google `hd`, Entra `tid` + `{tenantid}` issuer template + allowed tenants, `xms_edov` / `trust_upstream_email` as verified email), `github` (OAuth2 adapter, no OIDC: `/user` + `/user/emails`, verified primary email, numeric id as subject) — [federation.md](federation.md) |
 | `telegram` | Bot: `api` (reqwest `sendMessage` / `setWebhook`, token never logged; outbox `Courier`), `update` (pure update parsing), `links` (link codes, links), `otp` (sign-in codes), `webhook`, `set_webhook` (CLI) — [telegram.md](telegram.md) |
-| `authn` | Login JSON API + CSRF guard (`AuthnError`, `JsonBody`), `passkey` (passkey sign-in), `invite_passkey` (invitation accepted with a passkey), `cookie` (session, tx-binding and device cookies), `device` (known devices + new sign-in notice), `telegram` (sending sign-in codes), `reset` (password-reset request / completion), `email` (verify / invite link redemption), `federation` / `federation_login` / `federation_link` / `federation_pending` (upstream sign-in, linking callbacks, stage `link`), `device_code` (user-code entry → transaction, device approve / deny), `ctx`, `tx` (login transactions + browser binding + view), `password`, `mfa` (TOTP / recovery / Telegram codes), `complete` (next step, consent, session + code), `session` (cookie), `totp` (RFC 6238 via AWS-LC HMAC, sealed secret, replay-protected step), `recovery`, `rate_limit`, `ip` |
+| `authn` | Login JSON API + CSRF guard (`AuthnError`, `JsonBody`), `passkey` (passkey sign-in), `invite_passkey` (invitation accepted with a passkey), `cookie` (session, tx-binding and device cookies), `device` (known devices + new sign-in notice), `telegram` (sending sign-in codes), `reset` (password-reset request / completion), `email` (verify / invite link redemption), `federation` / `federation_login` / `federation_link` / `federation_pending` (upstream sign-in, linking callbacks, stage `link`), `device_code` (user-code entry → transaction, device approve / deny), `ctx`, `tx` (login transactions + browser binding + view), `password`, `mfa` (TOTP / recovery / Telegram codes), `complete` (next step, consent, session + code), `consent_eval` (consent state of a pending request), `session` (cookie), `totp` (RFC 6238 via AWS-LC HMAC, sealed secret, replay-protected step), `recovery`, `rate_limit`, `ip` |
 | `consent` | Pure evaluation (granted / needs user / needs admin) + grant lookup / merge-upsert |
 | `tokens` | Issuance (`issue_delegated`, `issue_app_only`), `inspect` (access-token resolution incl. user-disabled check), `claims` (pure builders), `jwt` (sign with active key, verify against published keys + `typ`), `opaque`, `refresh` (family state machine, rotation, revocation), `code`, `principal` (groups, roles) |
 | `jobs` | `sweeper` (incl. audit retention), `rotation`, `outbox` (delivery per channel `Courier`: email, Telegram), leader lock helper |
@@ -241,9 +241,15 @@ sign-in and before consent, and again when consent is approved (an
 unassigned user is never asked to consent, nor stores a grant) →
 `access_denied` redirect (only after the redirect URI matched; also with
 `prompt=none`), on code redemption and on every refresh (only the resource
-actually minted for; a refresh narrowed to OIDC scopes skips it) and on
+actually minted for: a multi-resource refresh checks the new resource
+(`mrrt`), a refresh narrowed to OIDC scopes skips it) and on
 `client_credentials` → `invalid_grant`. A refused refresh doesn't rotate
-the token, so a restored assignment works again. An app requiring
+the token, so a restored assignment works again. In the login flow the check runs once
+sign-in is complete, after any MFA step the policy demands (a password
+alone reveals nothing about assignments) and after a federated sign-in
+applied its group mappings (a mapped group's role counts; at stage `link`
+the mappings apply only on completion, so they don't count for that first
+sign-in). An app requiring
 assignment with no roles admits nobody. Access tokens already issued stay
 valid until they expire. Every grant issuing delegated tokens goes through
 `oidc::token::ensure_assigned` (the device-code grant included; its
