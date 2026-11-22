@@ -225,8 +225,11 @@ async fn echoed_verified_with_a_new_email_still_resets_it() {
 
     // Vouching for the new address takes a real switch.
     let body = json!({ "email_verified": true });
-    let (_, user) = call(&f.app, Method::PATCH, &path, tok, Some(&body)).await;
+    let (status, user) = call(&f.app, Method::PATCH, &path, tok, Some(&body)).await;
+    assert_eq!(status, StatusCode::OK, "{user}");
     assert_eq!(user["email_verified"], true);
+    let sent = f.deliver().await;
+    assert!(sent.iter().all(|m| m.to != "vera2@example.com"));
     let events = audited(&f.db, "user.update", id).await;
     assert_eq!(events.last().unwrap()["fields"], json!(["email_verified"]));
 }
