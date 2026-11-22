@@ -50,6 +50,7 @@ fn view(p: &Resolved) -> Value {
         "type": p.kind,
         "permission_id": p.row.scope_id.or(p.row.app_role_id),
         "value": p.value,
+        "managed": p.row.managed,
         "created_at": ts(&p.row.created_at),
     })
 }

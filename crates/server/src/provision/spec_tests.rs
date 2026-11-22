@@ -136,6 +136,10 @@ fn duplicates_are_rejected() {
             "tenant: t\nadmin_consents:\n  - { client: a, resource: b }\n  - { client: a, resource: b, scopes: [] }\n",
             "duplicate admin consent",
         ),
+        (
+            "tenant: t\nidentity_providers:\n  - { name: Google, kind: google, client_id: a }\n  - { name: \" Google\", kind: google, client_id: b }\n",
+            "duplicate identity provider",
+        ),
     ] {
         let err = parse(bad).unwrap_err().to_string();
         assert!(err.contains(what), "{bad}: {err}");

@@ -328,9 +328,11 @@ impl Spec {
             |g| g.display_name.trim().to_lowercase(),
             "group",
         )?;
+        // Trimmed like `idp_validate::name` stores it (unique per tenant,
+        // case-sensitive), so padded copies can't overwrite each other.
         unique(
             &self.identity_providers,
-            |i| i.name.clone(),
+            |i| i.name.trim().to_owned(),
             "identity provider",
         )?;
         unique(&self.applications, |a| a.client_id.clone(), "application")?;

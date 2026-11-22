@@ -12,6 +12,7 @@ import type {
 import { useAction } from '@/composables/useAction'
 import { formatDate } from '@/lib/format'
 import PageHeader from '@/components/PageHeader.vue'
+import ManagedBadge from '@/components/ManagedBadge.vue'
 import ErrorAlert from '@/components/ErrorAlert.vue'
 import StatusNote from '@/components/StatusNote.vue'
 import ConfirmButton from '@/components/ConfirmButton.vue'
@@ -137,6 +138,7 @@ async function remove() {
         <span class="badge">{{ idp.visible ? 'Shown on sign-in page' : 'Hidden' }}</span>
         <span class="badge">{{ POLICY_LABELS[idp.policy] }}</span>
         <span class="badge">{{ idp.has_secret ? 'Secret set' : 'No secret' }}</span>
+        <ManagedBadge :managed="idp.managed" />
       </p>
       <p
         v-if="lockout"

@@ -11,6 +11,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import ListShell from '@/components/ListShell.vue'
 import ModalDialog from '@/components/ModalDialog.vue'
 import ErrorAlert from '@/components/ErrorAlert.vue'
+import ManagedBadge from '@/components/ManagedBadge.vue'
 import IdpForm from './IdpForm.vue'
 import { POLICY_LABELS } from './idpForm'
 
@@ -98,6 +99,7 @@ async function create(body: IdentityProviderInput) {
                 v-if="!idp.visible"
                 class="badge"
               >Hidden</span>
+              <ManagedBadge :managed="idp.managed" />
             </td>
           </tr>
         </tbody>

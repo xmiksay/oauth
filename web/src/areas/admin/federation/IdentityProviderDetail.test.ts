@@ -56,6 +56,12 @@ beforeEach(() => {
 })
 
 describe('IdentityProviderDetail', () => {
+  it('marks a provider managed by oauth apply', async () => {
+    expect((await mountPage()).text()).not.toContain('Managed by apply')
+    identityProviders.get.mockResolvedValue(fakeIdp({ managed: true }))
+    expect((await mountPage()).text()).toContain('Managed by apply')
+  })
+
   it('shows the redirect URI to register and whether a secret is set, never a secret', async () => {
     const w = await mountPage()
     expect(w.find('[data-testid=redirect-uri]').text()).toBe(

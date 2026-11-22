@@ -34,6 +34,7 @@ fn view(a: &dra::Model) -> Value {
         "id": a.id,
         "user_id": a.user_id,
         "role": a.role.to_value(),
+        "managed": a.managed,
         "created_at": ts(&a.created_at),
     })
 }

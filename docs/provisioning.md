@@ -89,8 +89,9 @@ within their app, required permissions by (resource, type, value), role
 assignments by (role, principal), admin consents by (client, resource). A
 declared object that already exists — created through the API, the admin UI
 or an earlier apply — is updated and **adopted**: it is marked
-`managed = true` (shown as *Managed by apply* in the admin UI and as
-`managed` in the management API).
+`managed = true` (as `managed` in the management API on every kind but
+group memberships; the admin UI shows *Managed by apply* on users, groups,
+applications and identity providers).
 
 **Deletion.** Only managed objects the file no longer declares are deleted;
 objects apply never created or adopted are never touched. Lists are the
@@ -112,9 +113,11 @@ and disable or demote the old one). Disabling a user revokes their sessions
 and refresh tokens, like `PATCH /api/v1/users/{id}`; disabling and deleting
 both queue the Back-Channel Logouts of the ended sessions (deletion through
 the same `directory::delete_user` as `DELETE /api/v1/users/{id}`). Users are
-locked (`FOR UPDATE`) before they are disabled, deleted or lose a directory
-role, like the API, so a concurrent sign-in finishes first and its session
-is ended too. Identity provider updates go through the API's own
+locked (`FOR UPDATE`) before they are deleted or lose a directory role, and
+the `UPDATE` that disables one row-locks it, like the API, so a concurrent
+sign-in serializes with it; a disabled user's sessions and refresh tokens
+are revoked after the end-state Global Admin check, so a sign-in that
+finished first has its session ended too. Identity provider updates go through the API's own
 `api::idp_update`: narrowing `allowed_tenants` / `hosted_domain` bumps the
 provider's generation (a callback verified against the wider rule fails)
 and drops the memberships its group mappings gave, and opening a provider

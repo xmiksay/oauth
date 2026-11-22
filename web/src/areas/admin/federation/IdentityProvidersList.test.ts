@@ -50,6 +50,17 @@ beforeEach(() => {
 })
 
 describe('IdentityProvidersList', () => {
+  it('marks providers managed by oauth apply', async () => {
+    identityProviders.list.mockResolvedValue({
+      items: [fakeIdp({ managed: true }), fakeIdp({ id: 'idp2', name: 'Okta' })],
+      next_cursor: null,
+    })
+    const w = await mountList(['UserAdmin'])
+    const rows = w.findAll('tbody tr')
+    expect(rows[0]?.text()).toContain('Managed by apply')
+    expect(rows[1]?.text()).not.toContain('Managed by apply')
+  })
+
   it('lists providers with policy and status, read-only below Global Admin', async () => {
     const w = await mountList(['UserAdmin'])
     const rows = w.findAll('tbody tr').map((r) => r.text())

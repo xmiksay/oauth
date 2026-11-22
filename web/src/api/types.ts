@@ -273,6 +273,7 @@ export interface DirectoryRoleAssignment {
   id: string
   user_id: string
   role: DirectoryRole
+  managed: boolean
   created_at: string
 }
 
@@ -281,6 +282,7 @@ export interface Scope {
   value: string
   description: string
   admin_consent_required: boolean
+  managed: boolean
   created_at: string
 }
 
@@ -292,6 +294,7 @@ export interface AppRole {
   display_name: string
   description: string
   allowed_member_types: MemberType[]
+  managed: boolean
   created_at: string
 }
 
@@ -304,6 +307,7 @@ export interface RequiredPermission {
   type: PermissionType
   permission_id: string
   value: string
+  managed: boolean
   created_at: string
 }
 
@@ -315,6 +319,7 @@ export interface AppRoleAssignment {
   app_role_id: string
   principal_type: PrincipalType
   principal_id: string
+  managed: boolean
   created_at: string
 }
 
@@ -324,6 +329,7 @@ export interface ConsentGrant {
   resource_application_id: string
   user_id: string | null
   scopes: string[]
+  managed: boolean
   created_at: string
   updated_at: string
 }
