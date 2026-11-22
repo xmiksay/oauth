@@ -75,6 +75,26 @@ describe('AppAuthentication', () => {
     expect(applications.update).toHaveBeenLastCalledWith('a1', { backchannel_logout_uri: null })
   })
 
+  it('offers the sid flag only with a URI and clears it with the URI', async () => {
+    const w = await mountForm(
+      fakeApp({
+        backchannel_logout_uri: 'https://shop.example/bcl',
+        backchannel_logout_session_required: true,
+      }),
+    )
+    const sid = w.find('#aa-backchannel-sid')
+    expect(sid.attributes('disabled')).toBeUndefined()
+    applications.update.mockResolvedValue(fakeApp())
+    await w.find('#aa-backchannel').setValue('')
+    expect(sid.attributes('disabled')).toBeDefined()
+    await w.find('form').trigger('submit')
+    await flushPromises()
+    expect(applications.update).toHaveBeenLastCalledWith('a1', {
+      backchannel_logout_uri: null,
+      backchannel_logout_session_required: false,
+    })
+  })
+
   it('edits explicit origins and shows the ones derived from redirect URIs', async () => {
     const w = await mountForm(fakeApp())
     const origins = w.find('#aa-origins')

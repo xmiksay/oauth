@@ -19,6 +19,7 @@ const derivedOrigins = computed(() =>
 const deviceCode = ref(false)
 const backchannelUri = ref('')
 const backchannelSid = ref(false)
+const hasBackchannel = computed(() => backchannelUri.value.trim() !== '')
 const saved = ref(false)
 const { busy, error, run } = useAction()
 
@@ -40,7 +41,8 @@ async function save() {
       web_origins: parseLines(origins.value),
       device_code_enabled: deviceCode.value,
       backchannel_logout_uri: backchannelUri.value.trim() || null,
-      backchannel_logout_session_required: backchannelSid.value,
+      // Meaningless without a URI: clearing the URI clears the flag.
+      backchannel_logout_session_required: hasBackchannel.value && backchannelSid.value,
     }),
   )
   saved.value = !!ok
@@ -163,9 +165,16 @@ async function save() {
           v-model="backchannelSid"
           type="checkbox"
           class="mt-1"
-          :disabled="!canEditConfig"
+          :disabled="!canEditConfig || !hasBackchannel"
+          aria-describedby="aa-backchannel-sid-hint"
         >
-        <span>The app requires the session id (sid) in logout tokens — always included.</span>
+        <span>
+          The app requires the session id (sid) in logout tokens
+          <span
+            id="aa-backchannel-sid-hint"
+            class="hint block"
+          >Recorded for the app's registration only: logout tokens always carry sid.</span>
+        </span>
       </label>
     </div>
     <ErrorAlert :error="error" />

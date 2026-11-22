@@ -241,7 +241,7 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   `code` / `description` / `retryAfter`, `errorMessage`), `management.ts`
   (bearer injection, `/api/v1` paths via `apiPath`), one typed module per resource group
   (`directory`, `applications`, `access`, `identityProviders`, `me`, `authn`), shapes in
-  `types.ts` (WebAuthn wire shapes in `webauthnTypes.ts`, re-exported by it). Leaving the SPA (an app's redirect URI, an identity provider) goes through
+  `types.ts` (application shapes in `appTypes.ts`, WebAuthn wire shapes in `webauthnTypes.ts`, both re-exported by it). Leaving the SPA (an app's redirect URI, an identity provider) goes through
   `lib/navigate` (`navigateTo`, `isWebUrl`: never follow a non-http(s) URL a server sends).
   Lists page with `usePagedList` (cursor stack over `next_cursor`, debounced
   search; Next / Previous while a search change waits reload page 1 with it instead).
