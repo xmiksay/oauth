@@ -248,7 +248,8 @@ pub struct UpdateUser {
     display_name: Option<String>,
     email: Option<String>,
     disabled: Option<bool>,
-    /// Set explicitly, it wins over the reset a new `email` implies.
+    /// A value that differs from the stored one wins over the reset a new
+    /// `email` implies; an echo of the stored value is no change.
     email_verified: Option<bool>,
 }
 
@@ -327,10 +328,14 @@ pub async fn update(
     Ok(axum::Json(view(&updated)))
 }
 
-/// `email_verified` after a PATCH: an explicit value wins; otherwise a new
-/// address is unproven until its owner opens a link.
+/// `email_verified` after a PATCH: a requested value that differs from the
+/// stored one wins; otherwise a new address is unproven until its owner opens
+/// a link. Clients echo unchanged fields, so an echoed `true` next to a new
+/// email must not vouch for that address (#82): only a real switch does.
 fn verified_after(current: bool, email_changed: bool, requested: Option<bool>) -> bool {
-    requested.unwrap_or(current && !email_changed)
+    requested
+        .filter(|v| *v != current)
+        .unwrap_or(current && !email_changed)
 }
 
 pub async fn remove(
@@ -373,6 +378,13 @@ mod tests {
         assert!(verified_after(false, true, Some(true)));
         assert!(!verified_after(true, false, Some(false)));
         assert!(verified_after(false, false, Some(true)));
+    }
+
+    #[test]
+    fn an_echoed_value_does_not_stop_the_email_change_reset() {
+        assert!(!verified_after(true, true, Some(true)));
+        assert!(!verified_after(false, true, Some(false)));
+        assert!(verified_after(true, false, Some(true)));
     }
 
     #[test]
