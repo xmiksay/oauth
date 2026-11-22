@@ -189,7 +189,7 @@ async fn authorization_code(
     // The code's session must still be live, and stays so (its row lock is
     // held to commit): a logout either already ended it — the code is dead
     // with it — or waits for us and then revokes and announces our tokens.
-    if !backchannel::record_client(&txn, tenant.id, row.session_id, client.id).await? {
+    if !backchannel::record_client(&txn, tenant.id, row.user_id, row.session_id, client.id).await? {
         return Err(OAuthError::invalid_grant("the sign-in session has ended"));
     }
     if !tokens::code::consume(&txn, row.id).await? {

@@ -129,11 +129,13 @@ pub async fn grant(
     // resource actually minted for counts — a narrowed request drops the
     // grant's, a multi-resource refresh brings its own (`mrrt`).
     ensure_assigned(&txn, tenant, &user, client, resource.as_ref()).await?;
-    // Lock order: session, then refresh tokens — the order logout and
-    // session revocation take them (`backchannel::queue` locks the session
-    // before `revoke_by_session` updates its tokens). Taking the token row
-    // first would deadlock against them.
-    backchannel::record_client(&txn, tenant.id, row.session_id, client.id).await?;
+    // Lock order: user, session, then refresh tokens — the order admin
+    // revocation (user `FOR UPDATE`, then `backchannel::queue`), logout and
+    // session revocation (session, then `revoke_by_session`) take them. The
+    // user is locked even when the session is gone: the new token's FK would
+    // otherwise take it after the presented token's row lock. Taking the
+    // token row first would deadlock against them.
+    backchannel::record_client(&txn, tenant.id, row.user_id, row.session_id, client.id).await?;
     if !refresh::mark_rotated(&txn, row.id).await? {
         // Revoked meanwhile (e.g. the session just ended) is no replay: no
         // alarm, but still finish the family's revocation.

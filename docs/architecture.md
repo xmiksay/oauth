@@ -270,8 +270,8 @@ must filter with `oidc::assignment::user_may_use`.
   atomic consume, so nobody without the verifier can burn a code. Consume
   and token issuance share one DB transaction: a concurrent redemption waits
   on the code's row lock, then finds it consumed. The code's session must
-  still exist: the transaction locks it (`backchannel::record_client`,
-  `FOR KEY SHARE`, before the consume) and refuses with `invalid_grant` once
+  still exist: the transaction locks its user, then it (`backchannel::record_client`,
+  `FOR KEY SHARE`, before the consume — lock order user → session → tokens) and refuses with `invalid_grant` once
   it has ended, so a logout either kills the unredeemed code or waits for the
   redemption and then revokes and announces its tokens. A consumed code presented
   again revokes the refresh-token families and opaque access tokens it

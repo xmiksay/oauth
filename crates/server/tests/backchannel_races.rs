@@ -7,21 +7,29 @@
     clippy::indexing_slicing
 )]
 
-//! A logout racing a refresh of the same session: both lock the session
-//! before its refresh tokens, so neither deadlocks, and the refresh that
-//! loses is a plain `invalid_grant`, not a replay alarm.
+//! Lock order user → session → tokens: a logout or an admin revocation
+//! racing a refresh / code redemption of the same session never deadlocks,
+//! and the grant that loses is a plain `invalid_grant`, not a replay alarm.
 mod common;
 
 use std::time::Duration;
 
 use axum::http::StatusCode;
-use common::{backchannel::logout_url, flow::Fixture};
-use entity::{audit_events, sessions};
+use common::{
+    backchannel::logout_url,
+    browser::authorize_url,
+    flow::{Fixture, WEB_CB},
+};
+use entity::{audit_events, sessions, users};
 use oauth_server::{
     backchannel::{self, Ended},
+    directory,
     tokens::refresh,
 };
-use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, TransactionTrait};
+use sea_orm::{
+    ColumnTrait, DatabaseTransaction, EntityTrait, PaginatorTrait, QueryFilter, QuerySelect,
+    TransactionTrait,
+};
 use uuid::Uuid;
 
 const SCOPE: &str = "openid offline_access";
@@ -84,4 +92,78 @@ async fn concurrent_logout_and_refresh_both_finish() {
         assert!(!browser.has_session(), "round {round}");
     }
     assert_eq!(replay_alarms(&f).await, 0);
+}
+
+/// An admin action (revoke sessions, disable, password reset) as it starts:
+/// the user row locked `FOR UPDATE` (`guard::lock_user`).
+async fn admin_holding_user(f: &Fixture) -> DatabaseTransaction {
+    let txn = f.db.begin().await.unwrap();
+    users::Entity::find_by_id(f.user.id)
+        .lock_exclusive()
+        .one(&txn)
+        .await
+        .unwrap()
+        .unwrap();
+    txn
+}
+
+/// The rest of it: queue, delete the sessions, revoke the tokens.
+async fn admin_revokes(f: &Fixture, txn: DatabaseTransaction) {
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    directory::revoke_credentials(&txn, &f.config.master_key, f.tenant.id, f.user.id, None)
+        .await
+        .unwrap();
+    txn.commit().await.unwrap();
+}
+
+/// With the session locked before the user, the refresh would hold the
+/// session and its token row and wait on the user (new token's FK) while
+/// the admin waits on the session: a deadlock.
+#[tokio::test]
+async fn refresh_waits_for_an_admin_holding_the_user() {
+    let f = Fixture::new().await;
+    let (_browser, tokens) = f.web_tokens(SCOPE, "ann@example.com").await;
+    let rt = tokens["refresh_token"].as_str().unwrap();
+    let txn = admin_holding_user(&f).await;
+    let (refreshed, ()) = tokio::join!(f.refresh(rt, None), admin_revokes(&f, txn));
+    assert_eq!(refreshed.0, StatusCode::BAD_REQUEST, "{:?}", refreshed.1);
+    assert_eq!(refreshed.1["error"], "invalid_grant");
+    assert_eq!(replay_alarms(&f).await, 0);
+}
+
+#[tokio::test]
+async fn code_redemption_waits_for_an_admin_holding_the_user() {
+    let f = Fixture::new().await;
+    let mut browser = f.browser();
+    let url = authorize_url("web-app", WEB_CB, SCOPE, &[]);
+    let code = browser.login_for_code(&url, "ann@example.com").await;
+    let txn = admin_holding_user(&f).await;
+    let redeem = f.redeem(&f.web, Some(&f.web_secret), &code, WEB_CB);
+    let (redeemed, ()) = tokio::join!(redeem, admin_revokes(&f, txn));
+    assert_eq!(redeemed.0, StatusCode::BAD_REQUEST, "{:?}", redeemed.1);
+    assert_eq!(redeemed.1["error"], "invalid_grant");
+}
+
+/// My Account's "sign out everywhere" doesn't lock the user: two
+/// revocations of the same sessions take them in id order.
+#[tokio::test]
+async fn concurrent_revocations_of_one_user_both_finish() {
+    let f = Fixture::new().await;
+    for _ in 0..4 {
+        f.web_tokens(SCOPE, "ann@example.com").await;
+    }
+    let revoke = || async {
+        let txn = f.db.begin().await.unwrap();
+        directory::revoke_credentials(&txn, &f.config.master_key, f.tenant.id, f.user.id, None)
+            .await
+            .unwrap();
+        txn.commit().await.unwrap();
+    };
+    tokio::join!(revoke(), revoke());
+    let left = sessions::Entity::find()
+        .filter(sessions::Column::UserId.eq(f.user.id))
+        .count(&f.db)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
 }

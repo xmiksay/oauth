@@ -142,9 +142,10 @@ pub async fn complete(
         record(conn, ctx, user.id, AuditOutcome::Failure, details).await?;
         return Ok(back(ctx, failed));
     }
-    // IdP → user → session: an admin's revoke / disable locks the user row
-    // FOR UPDATE and then deletes the sessions, so taking the user before the
-    // session keeps the two from deadlocking. A user disabled meanwhile is
+    // IdP → user → session (the global order, see
+    // `backchannel::record_client`): an admin's revoke / disable locks the
+    // user row FOR UPDATE and then deletes the sessions, so taking the user
+    // before the session keeps the two from deadlocking. A user disabled meanwhile is
     // refused like an ended session.
     let user_ok = users::Entity::find_by_id(user.id)
         .filter(users::Column::TenantId.eq(ctx.tenant.id))
