@@ -43,6 +43,9 @@ pub struct AppBody {
     refresh_token_ttl_secs: Option<i32>,
     device_code_enabled: Option<bool>,
     mfa_policy: Option<String>,
+    #[serde(default, deserialize_with = "nullable")]
+    backchannel_logout_uri: Option<Option<String>>,
+    backchannel_logout_session_required: Option<bool>,
 }
 
 pub(super) fn parse<E: ActiveEnum<Value = String>>(
@@ -57,11 +60,13 @@ pub(super) fn parse<E: ActiveEnum<Value = String>>(
 /// Validates the settable fields and applies those whose value differs from
 /// `row`; returns the changed names (unchanged values sent back are ignored,
 /// so built-in / privileged-app rules only see real changes).
+/// `allow_http_loopback` admits plain-http loopback back-channel URIs.
 pub(super) fn apply(
     row: &mut applications::ActiveModel,
     body: &AppBody,
     client_id: &str,
     client_type: ClientType,
+    allow_http_loopback: bool,
 ) -> AppResult<Vec<&'static str>> {
     let mut fields = Vec::new();
     let mut mark = |changed: bool, name: &'static str| {
@@ -155,6 +160,21 @@ pub(super) fn apply(
     if let Some(raw) = &body.mfa_policy {
         let policy: AppMfaPolicy = parse(raw, "mfa_policy", "inherit, required")?;
         mark(set_changed(&mut row.mfa_policy, policy), "mfa_policy");
+    }
+    if let Some(uri) = &body.backchannel_logout_uri {
+        if let Some(uri) = uri {
+            validate::backchannel_logout_uri(uri, allow_http_loopback)?;
+        }
+        mark(
+            set_changed(&mut row.backchannel_logout_uri, uri.clone()),
+            "backchannel_logout_uri",
+        );
+    }
+    if let Some(required) = body.backchannel_logout_session_required {
+        mark(
+            set_changed(&mut row.backchannel_logout_session_required, required),
+            "backchannel_logout_session_required",
+        );
     }
     Ok(fields)
 }

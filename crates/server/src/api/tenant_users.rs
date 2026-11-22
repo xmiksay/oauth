@@ -200,6 +200,7 @@ mod tests {
             disabled: false,
             audit_retention_days: 90,
             mfa_policy: entity::enums::MfaPolicy::Optional,
+            logout_revokes_refresh_tokens: true,
             created_at: now,
             updated_at: now,
         }

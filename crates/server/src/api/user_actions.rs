@@ -150,7 +150,15 @@ pub async fn apply_password_reset(
     chosen: &ChosenPassword,
     by: Resetter,
 ) -> AppResult<Map<String, Value>> {
-    directory::set_password(txn, tenant.id, user.id, &chosen.value, chosen.must_change).await?;
+    directory::set_password(
+        txn,
+        &config.master_key,
+        tenant.id,
+        user.id,
+        &chosen.value,
+        chosen.must_change,
+    )
+    .await?;
     let facts = notify::change(by.password_notice());
     notify::event(
         txn,
@@ -299,7 +307,7 @@ pub async fn revoke_sessions(
     let txn = state.db.begin().await?;
     find_user(&txn, tenant_id, id).await?;
     ensure_can_modify_user(&txn, &caller, id).await?;
-    directory::revoke_credentials(&txn, tenant_id, id, None).await?;
+    directory::revoke_credentials(&txn, &state.config.master_key, tenant_id, id, None).await?;
     caller
         .audit(
             &txn,

@@ -284,6 +284,9 @@ pub async fn issue_delegated(
         None => None,
     };
 
+    // The session's Back-Channel Logout reaches every client it issued to.
+    crate::backchannel::record_client(conn, d.tenant.id, d.session_id, d.client.id).await?;
+
     let audience = d.resource.map(|_| spec.audience.as_str());
     Ok(TokenSet {
         access_token,

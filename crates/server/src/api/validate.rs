@@ -6,6 +6,7 @@ use crate::{
     cors,
     directory::reject_control_chars,
     error::{AppError, AppResult},
+    federation::urls,
     oidc::scope::{DEFAULT, OIDC_SCOPES},
 };
 
@@ -94,6 +95,23 @@ pub fn redirect_uris(uris: &[String], what: &str) -> AppResult<()> {
         if uris.iter().skip(i + 1).any(|other| other == uri) {
             return Err(bad(format!("duplicate {what} entry `{uri}`")));
         }
+    }
+    Ok(())
+}
+
+/// A Back-Channel Logout URI: absolute `https` (plain `http` only to a
+/// loopback host in development, `federation::urls`), no fragment, at
+/// most 2048 bytes (also a DB CHECK). Host names resolving to non-public
+/// addresses are refused when delivering (`federation::resolve`).
+pub fn backchannel_logout_uri(uri: &str, allow_http_loopback: bool) -> AppResult<()> {
+    if uri.is_empty()
+        || uri.len() > MAX_URI_LEN
+        || urls::checked(uri, allow_http_loopback).is_none()
+    {
+        return Err(bad(
+            "backchannel_logout_uri must be an absolute https URL without a fragment \
+             (http only to a loopback host in development)",
+        ));
     }
     Ok(())
 }
@@ -200,6 +218,25 @@ pub fn description(raw: &str) -> AppResult<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn backchannel_logout_uris() {
+        assert!(backchannel_logout_uri("https://rp.example/bcl?x=1", false).is_ok());
+        assert!(backchannel_logout_uri("http://127.0.0.1:9/bcl", true).is_ok());
+        let long = format!("https://rp.example/{}", "a".repeat(MAX_URI_LEN));
+        for bad in [
+            "",
+            "/bcl",
+            "http://rp.example/bcl",
+            "http://127.0.0.1:9/bcl",
+            "https://10.0.0.1/bcl",
+            "https://rp.example/bcl#f",
+            "https://u:p@rp.example/bcl",
+            long.as_str(),
+        ] {
+            assert!(backchannel_logout_uri(bad, false).is_err(), "{bad}");
+        }
+    }
 
     #[test]
     fn redirect_uris_https_or_ip_loopback() {

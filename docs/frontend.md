@@ -169,6 +169,11 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   (`mfa_policy` optional / required, Global Admins only); an app's Token configuration tab
   (`AppTokenConfig`) has its override (`inherit` / `required`), editable wherever the token
   lifetimes are (built-in apps: Global Admins). Both PATCH only when changed.
+- **Logout** (admin): Settings has "Sign-out revokes refresh tokens"
+  (`logout_revokes_refresh_tokens`, Global Admins only); an app's Authentication tab
+  (`AppAuthentication`) has the back-channel logout URI (empty → `null`) and the
+  "session id required" flag (non-built-in apps). See
+  [backchannel_logout.md](backchannel_logout.md).
 - **Tenants** (admin `areas/admin/access/TenantsPage`, nav "Tenants": only on the system host
   for a Global Admin): list, create (first admin's one-time password via `SecretOnceDialog`),
   edit, enable / disable. Every tenant but the system one links "Users" to

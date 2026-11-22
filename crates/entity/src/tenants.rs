@@ -16,6 +16,8 @@ pub struct Model {
     pub disabled: bool,
     pub audit_retention_days: i32,
     pub mfa_policy: MfaPolicy,
+    /// RP-initiated logout also revokes the session's refresh-token families.
+    pub logout_revokes_refresh_tokens: bool,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
 }

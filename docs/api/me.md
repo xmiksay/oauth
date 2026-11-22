@@ -89,7 +89,8 @@ and objects there).
 - `DELETE me/sessions/{id}` signs that device out: the session and the
   refresh-token families started in it (with their opaque access tokens).
   `revoke-all` = every session including the caller's (its management
-  token stops working immediately).
+  token stops working immediately). Either way the ended sessions'
+  Back-Channel Logouts are queued ([../backchannel_logout.md](../backchannel_logout.md)).
 - `DELETE me/consents/{id}` deletes the user's own grant and revokes the
   client's refresh / opaque tokens for that resource and user (refresh
   tokens of the client's other resources can't reach it any more). Tenant-wide

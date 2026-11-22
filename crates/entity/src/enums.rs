@@ -143,6 +143,9 @@ pub enum Channel {
     Email,
     #[sea_orm(string_value = "telegram")]
     Telegram,
+    /// Back-Channel Logout tokens; the recipient is the application id.
+    #[sea_orm(string_value = "backchannel")]
+    Backchannel,
 }
 
 /// What an email link token proves / allows.

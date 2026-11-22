@@ -53,7 +53,8 @@ pub async fn configuration(
         "request_uri_parameter_supported": false,
         "authorization_response_iss_parameter_supported": true,
         "frontchannel_logout_supported": false,
-        "backchannel_logout_supported": false,
+        "backchannel_logout_supported": true,
+        "backchannel_logout_session_supported": true,
     }))
 }
 

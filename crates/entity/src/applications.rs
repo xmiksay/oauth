@@ -34,6 +34,10 @@ pub struct Model {
     pub device_code_enabled: bool,
     /// `required` forces MFA for sign-ins to this app (as client or resource).
     pub mfa_policy: AppMfaPolicy,
+    /// OIDC Back-Channel Logout 1.0: where logout tokens are POSTed.
+    pub backchannel_logout_uri: Option<String>,
+    /// The client wants `sid` in logout tokens (we always send it).
+    pub backchannel_logout_session_required: bool,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
 }

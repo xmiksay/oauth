@@ -7,7 +7,8 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
 
 - Architecture: [docs/architecture.md](../docs/architecture.md), SPA: [docs/frontend.md](../docs/frontend.md),
   sign-in: [docs/authn.md](../docs/authn.md), passkeys: [docs/passkeys.md](../docs/passkeys.md),
-  federation: [docs/federation.md](../docs/federation.md), device code: [docs/device_code.md](../docs/device_code.md)
+  federation: [docs/federation.md](../docs/federation.md),
+  logout / back-channel logout: [docs/backchannel_logout.md](../docs/backchannel_logout.md), device code: [docs/device_code.md](../docs/device_code.md)
 - Roadmap / milestones: [docs/roadmap.md](../docs/roadmap.md)
 - Deployment / release: [docs/deploy.md](../docs/deploy.md)
 
@@ -169,6 +170,13 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   both count). Every sign-in completes through `complete::proceed` (which routes a non-MFA
   sign-in to `mfa` / `mfa_enroll`) and every session reuse checks `mfa_policy::step_up` —
   never issue a code around them. `acr: "mfa"` is derived from `amr` in `tokens::claims`.
+- Back-Channel Logout (`backchannel`, [docs/backchannel_logout.md](../docs/backchannel_logout.md)):
+  anything deleting sessions calls `backchannel::queue` first, on the same
+  transaction (`directory::revoke_credentials` does it for its callers);
+  delegated issuance records its client (`record_client`). Delivery is an
+  outbox `Courier` (`channel = backchannel`) through `http::client` +
+  `federation::urls` / `resolve::PublicOnly`; never log a logout token or an
+  RP endpoint URL.
 - Bearer values (cookies, codes, tokens) come from `secret::random_token`
   and are stored only as `secret::hash`; unguessable handles from
   `secret::random_uuid` (not UUIDv7).
