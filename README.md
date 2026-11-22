@@ -86,7 +86,8 @@ the tenant host without the port).
 
 ## Docs
 
-- [Architecture](docs/architecture.md) — endpoints, flows, token formats, jobs
+- [Architecture](docs/architecture.md) — modules, flows, token formats, jobs
+- [HTTP surface](docs/http.md) — host-based tenant routing, trust model, route table
 - [Frontend](docs/frontend.md) — the SPA: areas, auth state, API layer
 - [Login JSON API](docs/api/authn.md) — contract for the login SPA
 - [Management API](docs/api/management.md) — `/api/v1` REST contract for the admin / My Account SPAs and service apps ([`me`](docs/api/me.md), [identity providers](docs/api/identity_providers.md), [applications](docs/api/applications.md))

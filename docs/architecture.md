@@ -36,55 +36,9 @@ background jobs run each tick inside a transaction holding
 
 Spawned by `serve::run_with` after migrations: `sweeper`, `rotation`, `secret_expiry`, `outbox` — schedules and behaviour in [jobs.md](jobs.md).
 
-## HTTP surface (current)
+## HTTP surface
 
-Tenant `{t}` lives only at `{t}.{PUBLIC_URL host}[:port]`; its issuer is that origin. The
-optional `APEX_TENANT` lives only on the apex instead (`PUBLIC_URL` is its origin and issuer;
-its subdomain → 404; [deploy.md](deploy.md#apex-tenant)). `Config::tenant_origin` /
-`issuer` / `tenant_rp_id` are the only places that map a slug to its origin, so issuer,
-redirect URIs, CSRF / CORS origin, RP ID, links and federation callback all follow it.
-`tenancy::resolve_host` gates every route but the probes. The request authority is the
-absolute-form target / HTTP/2 `:authority` if present, else `Host` (RFC 9112 §3.2.2); more
-than one `Host` header → 400. It must match exactly: ASCII case-insensitive, the scheme's
-default port (`:443` for https, `:80` for http) spelled out counts as none; another port, trailing dot, nested label or
-IP literal → 404. `X-Forwarded-Host` / `Forwarded` are never trusted. Unknown or disabled
-tenants are 404 everywhere, and so are enabled tenants whose slug today's rules reject
-(startup refuses to run with any — rename or disable them). Without `APEX_TENANT` the apex serves
-only `GET /` → 302 `{scheme}://{SYSTEM_TENANT_SLUG}.{host}/admin` and the Telegram webhook (404 on tenant
-hosts); with it, the webhook and that tenant's routes (startup refuses an `APEX_TENANT` that is
-the system tenant, missing or disabled). Other paths below are per tenant host.
-
-Trust model: issuer, redirect URLs and the CSRF origin all derive from `PUBLIC_URL` plus
-the tenant's slug in the DB, never from request text, so a client choosing its `Host`
-only reaches a tenant it could visit anyway. Hence no shared cache or CDN in front may
-key responses on the path without the host, and the ingress must forward `Host`
-unchanged (ingress-nginx: leave `use-forwarded-headers` off unless another trusted
-proxy sits in front; the server ignores the forwarded host either way).
-
-| Route | Listener | Module |
-|---|---|---|
-| `GET /healthz` — process alive, no DB dependency (any host) | app | `health` |
-| `GET /readyz` — migrations done + DB ping, else 503 (any host) | app | `health` |
-| `GET /` on the apex → 302 to the system admin portal (without `APEX_TENANT`) | app | `tenancy` |
-| `POST /telegram/webhook` on the apex — bot updates, secret-token authenticated ([telegram.md](telegram.md)) | app | `telegram::webhook` |
-| `GET /.well-known/openid-configuration` (CORS: [cors.md](cors.md) for this and JWKS / token / userinfo / revoke, incl. `OPTIONS` preflights) | app | `oidc::discovery`, `cors` |
-| `GET /discovery/keys` — JWKS (next + active + unexpired retired), `max-age=300` | app | `oidc::discovery` |
-| `GET /oauth2/authorize` | app | `oidc::authorize` |
-| `POST /oauth2/token`, `POST /oauth2/devicecode` (RFC 8628 device authorization) | app | `oidc::token`, `oidc::refresh_grant`, `oidc::device_grant`, `oidc::device_authorization` |
-| `GET\|POST /oauth2/userinfo` | app | `oidc::userinfo` |
-| `POST /oauth2/introspect` (RFC 7662) | app | `oidc::introspect` |
-| `POST /oauth2/revoke` (RFC 7009) | app | `oidc::revoke` |
-| `GET /oauth2/logout` (RP-initiated), `POST` (confirmation page, CSRF-checked) | app | `oidc::logout` |
-| `GET /api/authn/tx/{id}`, `POST …/{password,totp,recovery,passkey/options,passkey,telegram/send,telegram,enroll/totp,enroll/totp/confirm,enroll/passkey/options,enroll/passkey,enroll/continue,change-password,consent,federation/{idp},discover}` — login JSON API, contract in [api/authn.md](api/authn.md) | app | `authn` |
-| `GET /federation/callback` — return from an upstream identity provider ([federation.md](federation.md)) | app | `authn::federation` |
-| `POST /api/authn/password-reset`, `POST /api/authn/email/{verify,reset,invite,invite/passkey/options,invite/passkey}` — email links (the token is the credential), same contract | app | `authn::{reset,email}` |
-| `POST /api/authn/device` — a device's user code entered on `/device` → login transaction, same contract | app | `authn::device_code` |
-| `/api/v1/{settings,users,groups,directory-roles,applications,identity-providers,role-assignments,consents,audit-events}[/…]`, `/api/v1/me[/…]`, and on the system host only `/api/v1/tenants[/{slug}[/users[/…]]]` (system Global Admins) — management REST API, bearer tokens for the host tenant's `management-api`; contract in [api/management.md](api/management.md) (+ [applications](api/applications.md), [identity providers](api/identity_providers.md)) | app | `api` |
-| `/` (the portal; apex `/` redirects without `APEX_TENANT`, above; with it the apex serves that tenant's SPA), `/index.html` and `/{login,logout,device,myaccount,admin}[/…]` → `index.html` with `<meta name="oauth-tenant" content="{slug}">` (`Cache-Control: no-cache`) (incl. the public link pages `/login/reset`, `/login/invite`, `/myaccount/verify-email`) | app | `spa` |
-| any other path → static file from `WEB_DIST_DIR`, else 404 | app | `spa` |
-| `GET /metrics` — Prometheus text format | metrics | `metrics` |
-
-A missing SPA build only logs a warning; SPA routes then return 404.
+Host routing, trust model and the route table: [http.md](http.md).
 
 ## Server modules (`crates/server/src/`)
 
@@ -101,7 +55,7 @@ Implemented:
 | `spa` | `ServeDir` + history fallback for the three SPA areas |
 | `serve` | `run` (process-global setup: recorder, binds, signals) → `run_with` (serve, then migrate, then ready; tested in `tests/serve.rs`), tracing init, graceful shutdown |
 | `keys` | Per-tenant RS256 (2048-bit) / ES256 key generation, `wrap` (AES-256-GCM seal/open, AAD = tenant id ‖ kid), public JWK with RFC 7638 thumbprint as `kid`, `active_signing_key`, `jwks` (next + active + retired-until-`expires_at`). Rotation job lands in step 3. See [Cryptography](#cryptography) |
-| `directory` | `create_tenant` (DNS-label slug rules in `slug`, keys + built-in apps in one transaction; `builtin_apps::reconcile_all`), `create_user`, `find_user_by_email`, `set_password` (argon2id in `password`), `assign_directory_role`; typed `DirectoryError` |
+| `directory` | `create_tenant` (DNS-label slug rules in `slug`, keys + built-in apps in one transaction; `builtin_apps::reconcile_all`), `ensure_apex_tenant` (startup: `APEX_TENANT` exists, is enabled and isn't the system tenant), `system_tenant` (`reconcile_system_slug`, at startup and bootstrap: refuses a stored system-tenant slug other than `SYSTEM_TENANT_SLUG`, or renames it with `SYSTEM_TENANT_RENAME=1`), `create_user`, `find_user_by_email`, `set_password` (argon2id in `password`), `assign_directory_role`; typed `DirectoryError` |
 | `bootstrap` | `oauth bootstrap` logic + report rendering |
 | `headers` | `content_type_is`; app-wide `X-Frame-Options: DENY`, `CSP: frame-ancestors 'none'`, `Referrer-Policy: no-referrer` |
 | `tenancy` | `resolve_host` middleware (host → active tenant, `APEX_TENANT` on the apex or the apex redirect, else 404) and the `Tenant` extractor reading its result |
@@ -117,8 +71,8 @@ Implemented:
 | `authn` | Login JSON API + CSRF guard (`AuthnError`, `JsonBody`), `passkey` (passkey sign-in), `invite_passkey` (invitation accepted with a passkey), `cookie` (session, tx-binding and device cookies), `device` (known devices + new sign-in notice), `telegram` (sending sign-in codes), `reset` (password-reset request / completion), `email` (verify / invite link redemption), `federation` / `federation_login` / `federation_link` / `federation_pending` (upstream sign-in, linking callbacks, stage `link`), `device_code` (user-code entry → transaction, device approve / deny), `ctx`, `tx` (login transactions + browser binding), `tx_view` (`GET /api/authn/tx/{id}`), `password`, `mfa` (TOTP / recovery / Telegram codes), `complete` (next step, consent, session + code), `complete_refuse` (completion refusals that close the transaction and deny a device request), `consent_eval` (consent state of a pending request), `session` (cookie), `totp` (RFC 6238 via AWS-LC HMAC, sealed secret, replay-protected step), `recovery`, `rate_limit`, `ip` |
 | `consent` | Pure evaluation (granted / needs user / needs admin) + grant lookup / merge-upsert |
 | `tokens` | Issuance (`issue_delegated`, `issue_app_only`), `inspect` (access-token resolution incl. user-disabled check), `claims` (pure builders), `jwt` (sign with active key, verify against published keys + `typ`), `opaque`, `refresh` (family state machine, rotation, revocation), `code`, `principal` (groups, roles) |
-| `jobs` | `sweeper` (incl. audit retention), `rotation`, `outbox` (delivery per channel `Courier`: email, Telegram, back-channel logout), leader lock helper |
-| `api` | Management REST API: `auth` (`Caller` / `SystemAdmin` bearer extractors), `guard` (administrator protection, last-GlobalAdmin lock), `page` (UUIDv7 keyset pagination), `validate` (client ids, redirect / identifier URIs, scope values), `app_rules` (app lookup + row lock, built-in protection, credential protection of privileged apps, lifetime and per-app caps), `extract` (JSON-error extractors), one module per resource (`tenants`, `tenant_users` (system admin: another tenant's users, password / MFA reset), `users`, `user_actions`, `user_invite`, `user_identities`, `groups`, `directory_roles`, `applications`, `identity_providers` (+ `idp_body`, `idp_validate`, `idp_rules` (per-kind cross-field rules + defaults), `idp_group_mappings`), `apps_secrets`, `apps_scopes`, `apps_roles`, `apps_permissions`, `role_assignments`, `consents`, `audit_events`, `me`, `me_mfa`, `me_email`, `me_passkeys`, `me_telegram`, `me_identities`, `user_passkeys`), `reauth` (password-or-passkey re-authentication) |
+| `jobs` | `sweeper` (incl. audit retention), `rotation`, `secret_expiry` (expiring client-secret warnings), `outbox` (delivery per channel `Courier`: email, Telegram, back-channel logout), leader lock helper |
+| `api` | Management REST API: `auth` (`Caller` / `SystemAdmin` bearer extractors), `guard` (administrator protection, last-GlobalAdmin lock), `page` (UUIDv7 keyset pagination), `validate` (client ids, redirect / identifier URIs, scope values), `secret_value` (length / entropy check of caller-supplied client secrets), `app_rules` (app lookup + row lock, built-in protection, credential protection of privileged apps, lifetime and per-app caps), `extract` (JSON-error extractors), one module per resource (`tenants`, `tenant_users` (system admin: another tenant's users, password / MFA reset), `users`, `user_actions`, `user_invite`, `user_identities`, `groups`, `directory_roles`, `applications`, `identity_providers` (+ `idp_body`, `idp_validate`, `idp_rules` (per-kind cross-field rules + defaults), `idp_group_mappings`), `apps_secrets`, `apps_scopes`, `apps_roles`, `apps_permissions`, `role_assignments`, `consents`, `audit_events`, `me`, `me_mfa`, `me_email`, `me_passkeys`, `me_telegram`, `me_identities`, `user_passkeys`), `reauth` (password-or-passkey re-authentication) |
 | `webauthn` | Own WebAuthn verifier on AWS-LC + `ciborium`: `cbor`, `authdata`, `cose`, `client_data`, `register`, `assert` — see [passkeys.md](passkeys.md) |
 | `passkey` | Passkey ceremonies over the DB: `challenge` (single-use, 5 min), `store` (credentials, user handle, last-method rule), `wire` (browser JSON, options) |
 | `authz` | Pure permission matrix (directory roles, `Directory.Read.All` / `ReadWrite.All`) and administrator protection |
