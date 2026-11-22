@@ -178,6 +178,52 @@ pub fn notice(
     }
 }
 
+/// The client secret about to expire, for [`secret_expiring`].
+pub struct ExpiringSecret<'a> {
+    pub app_name: &'a str,
+    pub client_id: &'a str,
+    pub hint: &'a str,
+    pub description: Option<&'a str>,
+    /// RFC 3339, UTC.
+    pub expires_at: &'a str,
+    /// The app's secrets page in the admin portal.
+    pub manage_url: &'a str,
+}
+
+/// Warning to an app administrator that a client secret expires soon.
+pub fn secret_expiring(ctx: &Ctx<'_>, secret: &ExpiringSecret<'_>) -> Rendered {
+    let app = clean(secret.app_name);
+    let mut body = format!(
+        "Hello {},
+
+A client secret of the application {app} in {} expires soon. Create a \
+         new secret, update the application to use it, then delete the old one.\n\n",
+        ctx.user_name, ctx.tenant_name
+    );
+    let description = secret.description.map(clean);
+    let facts = [
+        ("Application", Some(app.clone())),
+        ("Client ID", Some(clean(secret.client_id))),
+        ("Secret", Some(format!("{}…", clean(secret.hint)))),
+        ("Description", description),
+        ("Expires", Some(clean(secret.expires_at))),
+    ];
+    for (label, value) in facts {
+        if let Some(value) = value {
+            body.push_str(&format!("  {label}: {value}\n"));
+        }
+    }
+    body.push_str(&format!(
+        "\nManage its secrets at:\n\n{}\n",
+        secret.manage_url
+    ));
+    Rendered {
+        kind: "secret_expiring".into(),
+        subject: format!("A client secret of {app} expires soon"),
+        body: Zeroizing::new(body),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use sea_orm::Iterable;
@@ -266,5 +312,34 @@ mod tests {
         );
         assert!(r.body.contains("  IP address: 203.0.113.7\n"));
         assert_eq!(clean(&"x".repeat(500)).len(), 200);
+    }
+
+    #[test]
+    fn secret_expiry_warnings_name_the_secret() {
+        let secret = ExpiringSecret {
+            app_name: "Billing\r\nBcc: x@y",
+            client_id: "c-123",
+            hint: "abc",
+            description: None,
+            expires_at: "2027-01-01T00:00:00Z",
+            manage_url: "https://c/admin/app-registrations/1/secrets",
+        };
+        let r = secret_expiring(&CTX, &secret);
+        assert_eq!(r.kind, "secret_expiring");
+        assert_eq!(r.subject, "A client secret of BillingBcc: x@y expires soon");
+        assert!(r.body.starts_with("Hello Ann,\n\n"));
+        assert!(r.body.contains("  Secret: abc…\n"), "{}", r.body.as_str());
+        assert!(r.body.contains("  Expires: 2027-01-01T00:00:00Z\n"));
+        assert!(!r.body.contains("Description"));
+        assert!(r.body.ends_with("/admin/app-registrations/1/secrets\n"));
+        let described = ExpiringSecret {
+            description: Some("CI"),
+            ..secret
+        };
+        assert!(
+            secret_expiring(&CTX, &described)
+                .body
+                .contains("  Description: CI\n")
+        );
     }
 }

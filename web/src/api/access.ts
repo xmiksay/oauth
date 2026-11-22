@@ -65,7 +65,11 @@ export const auditEvents = {
 export type SettingsPatch = Partial<
   Pick<
     Tenant,
-    'display_name' | 'audit_retention_days' | 'mfa_policy' | 'logout_revokes_refresh_tokens'
+    | 'display_name'
+    | 'audit_retention_days'
+    | 'mfa_policy'
+    | 'logout_revokes_refresh_tokens'
+    | 'allow_non_expiring_secrets'
   >
 >
 

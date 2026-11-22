@@ -177,6 +177,11 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   (`AppAuthentication`) has the back-channel logout URI (empty → `null`) and the
   "session id required" flag (non-built-in apps). See
   [backchannel_logout.md](backchannel_logout.md).
+- **Client secrets** (admin): Settings has "Allow client secrets that never expire"
+  (`allow_non_expiring_secrets`, Global Admins only); an app's Certificates & secrets tab
+  (`AppSecrets`) offers "Never" as an expiry only when the tenant allows it (read from
+  `GET settings`) and lists such secrets as "Never". Caller-supplied values are an API /
+  automation feature, not offered in the UI.
 - **Tenants** (admin `areas/admin/access/TenantsPage`, nav "Tenants": only on the system host
   for a Global Admin): list, create (first admin's one-time password via `SecretOnceDialog`),
   edit, enable / disable. Every tenant but the system one links "Users" to

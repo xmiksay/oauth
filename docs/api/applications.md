@@ -88,10 +88,33 @@ Validation:
 | Method & path | Body | Response |
 |---|---|---|
 | `GET applications/{id}/secrets` | – | `{ items: ClientSecret[] }` (never values) |
-| `POST applications/{id}/secrets` | `{ description?, expires_in_days? (1–730, default 180) }` | 201 `ClientSecret` + `"secret"`: the value, shown only now |
+| `POST applications/{id}/secrets` | `{ description?, expires_in_days? (1–730, default 180), never_expires?, secret? }` | 201 `ClientSecret`; with a generated value also `"secret"`: the value, shown only now |
 | `DELETE applications/{id}/secrets/{secret_id}` | – | 204 |
 
 Public clients can't have secrets (400).
+
+- **Caller-supplied value** (`secret`, config as code / GitOps): the
+  automation registers a value it already holds in its secret manager
+  instead of copying a generated one. It must be 32–256 visible ASCII
+  characters (no spaces) with at least 128 bits of *estimated* entropy —
+  length × the Shannon entropy of the value's own character distribution —
+  else 400 (the message never repeats the value). 32 random bytes as base64
+  (`openssl rand -base64 32`) or 64 hex digits pass; 32 hex digits, a
+  repeated or two-letter value don't. It is stored exactly like a generated
+  one (SHA-256 + 3-character `hint`) and never echoed: the response has no
+  `"secret"`. Without `secret` the server generates 256 random bits and
+  returns them once, as before. Clients using `client_secret_basic` must
+  form-urlencode a value with reserved characters (RFC 6749 §2.3.1).
+- **Non-expiring** (`never_expires: true`, exclusive with
+  `expires_in_days`): only where the tenant's `allow_non_expiring_secrets`
+  is on (else 400); `expires_at` is `null`, `never_expires` is `true`.
+  Turning the setting off later keeps existing non-expiring secrets until
+  they are deleted.
+- The `application.secret_add` audit event records `secret_id`,
+  `never_expires` and `caller_supplied` (never the value).
+- **Expiry warning**: 14 days before a secret expires, the tenant's Global
+  Admins and Application Admins get one email
+  ([email.md](../email.md#client-secret-expiry)).
 
 ## Exposed scopes and app roles
 

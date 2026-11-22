@@ -201,6 +201,7 @@ mod tests {
             audit_retention_days: 90,
             mfa_policy: entity::enums::MfaPolicy::Optional,
             logout_revokes_refresh_tokens: true,
+            allow_non_expiring_secrets: false,
             created_at: now,
             updated_at: now,
         }

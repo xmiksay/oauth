@@ -6,6 +6,7 @@
 
 pub mod outbox;
 pub mod rotation;
+pub mod secret_expiry;
 pub mod sweeper;
 
 use std::{future::Future, sync::Arc, time::Duration};
@@ -21,10 +22,13 @@ use crate::{app::AppState, backchannel::deliver::Notifier, mail::SmtpMailer};
 pub const SWEEPER_LOCK_KEY: i64 = 0x6f61_7574_6873_7770;
 /// "oauthrot" in ASCII.
 pub const ROTATION_LOCK_KEY: i64 = 0x6f61_7574_6872_6f74;
+/// "oauthsxp" in ASCII.
+pub const SECRET_EXPIRY_LOCK_KEY: i64 = 0x6f61_7574_6873_7870;
 
 const SWEEP_EVERY: Duration = Duration::from_secs(60);
 const ROTATE_EVERY: Duration = Duration::from_secs(300);
 const OUTBOX_EVERY: Duration = Duration::from_secs(10);
+const SECRET_EXPIRY_EVERY: Duration = Duration::from_secs(3600);
 
 /// `true` if this transaction now holds the job's leader lock.
 pub async fn try_lock(txn: &DatabaseTransaction, key: i64) -> anyhow::Result<bool> {
@@ -67,7 +71,8 @@ pub fn spawn(state: AppState, shutdown: CancellationToken) -> JoinHandle<()> {
         let mut sweep = tokio::time::interval(SWEEP_EVERY);
         let mut rotate = tokio::time::interval(ROTATE_EVERY);
         let mut deliver = tokio::time::interval(OUTBOX_EVERY);
-        for interval in [&mut sweep, &mut rotate, &mut deliver] {
+        let mut expiry = tokio::time::interval(SECRET_EXPIRY_EVERY);
+        for interval in [&mut sweep, &mut rotate, &mut deliver, &mut expiry] {
             interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
         }
         let hello = state.config.public_url.host().to_owned();
@@ -106,6 +111,13 @@ pub fn spawn(state: AppState, shutdown: CancellationToken) -> JoinHandle<()> {
                     guarded("rotation", async move {
                         let now = chrono::Utc::now().fixed_offset();
                         rotation::run_once(&st.db, &st.config, now).await.map(drop)
+                    })
+                    .await;
+                }
+                _ = expiry.tick() => {
+                    guarded("secret_expiry", async move {
+                        let now = chrono::Utc::now().fixed_offset();
+                        secret_expiry::run_once(&st.db, &st.config, now).await.map(drop)
                     })
                     .await;
                 }

@@ -70,6 +70,20 @@ browser can't be linked); a browser unknown for the user queues the notice —
 except on the user's first sign-in ever (`users.first_device_at`, which
 survives the sweep of expired device rows), when every browser is new.
 
+## Client secret expiry
+
+`jobs::secret_expiry` (hourly, only with email configured): 14 days before a
+client secret expires, every verified, enabled Global Admin and Application
+Admin of its tenant (the directory roles that can add a secret) gets one
+`secret_expiring` message naming the application, its client ID, the
+secret's hint and description and the expiry, with a link to the app's
+secrets page in the admin portal. `client_secrets.expiry_notified_at` is
+set in the same transaction as the queued messages, so a secret is warned
+about once (also one created already inside the window — it is warned about
+on the next run). Disabled tenants and non-expiring secrets get nothing; an
+undelivered warning expires after 3 days. Secrets that came due while email
+was off are warned about once it is configured (if not yet expired).
+
 ## Delivery
 
 `jobs::outbox` (see [Background jobs](architecture.md#background-jobs-jobs)):

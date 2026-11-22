@@ -124,7 +124,8 @@ Additional rules:
 // Tenant
 { "id", "slug", "display_name", "is_system": false, "disabled": false,
   "audit_retention_days": 90, "mfa_policy": "optional|required",
-  "logout_revokes_refresh_tokens": true, "created_at", "updated_at" }
+  "logout_revokes_refresh_tokens": true, "allow_non_expiring_secrets": false,
+  "created_at", "updated_at" }
 // User (list / create / update)
 { "id", "email", "display_name", "user_type": "member", "email_verified": false,
   "disabled": false, "must_change_password": true, "has_password": true,
@@ -161,7 +162,7 @@ Additional rules:
   "backchannel_logout_session_required": false,
   "created_at", "updated_at" }
 // ClientSecret (the value only in the create response, as "secret")
-{ "id", "hint": "abc", "description": null, "expires_at", "created_at" }
+{ "id", "hint": "abc", "description": null, "expires_at": null, "never_expires": true, "created_at" }
 // Scope
 { "id", "value", "description", "admin_consent_required": false, "created_at" }
 // AppRole
@@ -188,7 +189,7 @@ Additional rules:
 | `GET /api/v1/tenants` *paged* `?search=` (slug, name) | – | `Tenant`s |
 | `POST /api/v1/tenants` | `{ slug, display_name, admin_email, admin_display_name? }` | 201 `{ tenant, admin: { id, email }, one_time_password }` |
 | `GET /api/v1/tenants/{slug}` | – | `Tenant` (also disabled ones) |
-| `PATCH /api/v1/tenants/{slug}` | `{ display_name?, disabled?, audit_retention_days? (30–3650), mfa_policy? (optional\|required), logout_revokes_refresh_tokens? }` | `Tenant` |
+| `PATCH /api/v1/tenants/{slug}` | `{ display_name?, disabled?, audit_retention_days? (30–3650), mfa_policy? (optional\|required), logout_revokes_refresh_tokens?, allow_non_expiring_secrets? }` | `Tenant` |
 | `GET /api/v1/tenants/{slug}/users` *paged* `?search=` (email, name) | – | that tenant's `User`s |
 | `GET /api/v1/tenants/{slug}/users/{id}` | – | `UserDetail` (as `GET users/{id}`) |
 | `POST /api/v1/tenants/{slug}/users/{id}/reset-password` | optional: empty, or a JSON object with no fields (`{}`), read as JSON whatever the `Content-Type`; any field or non-object / malformed body → 400 (the password is always generated; the error never quotes the body, not even a field name); over the body limit → 413 | `{ one_time_password, must_change_password: true }` — as `reset-password` without `password`: sessions, refresh tokens and opaque access tokens revoked, the user notified ("reset by a system administrator") |
@@ -222,7 +223,7 @@ id), and in the target tenant's log with the user's `email` and
 | Method & path | Body | Response |
 |---|---|---|
 | `GET /api/v1/settings` | – | `Tenant` |
-| `PATCH /api/v1/settings` | `{ display_name?, audit_retention_days? (30–3650), mfa_policy? (optional\|required), logout_revokes_refresh_tokens? (RP-initiated logout revokes the session's refresh tokens; default true) }` | `Tenant` (audited as `tenant.update` in the tenant's own log) |
+| `PATCH /api/v1/settings` | `{ display_name?, audit_retention_days? (30–3650), mfa_policy? (optional\|required), logout_revokes_refresh_tokens? (RP-initiated logout revokes the session's refresh tokens; default true), allow_non_expiring_secrets? (app admins may create client secrets without expiry; default false) }` | `Tenant` (audited as `tenant.update` in the tenant's own log) |
 
 Creating, disabling and enabling tenants stay with the system tenant's
 GlobalAdmins (`disabled` here → 400, unknown field).
@@ -341,7 +342,7 @@ exclusive, RFC 3339) → `AuditEvent`s.
 | `user.email_verify_request`, `user.email_verify`, `user.email_change_request`, `user.email_change_complete`, `user.password_reset_request`, `user.password_reset_complete`, `user.invite_accept`, `user.notification_prefs_update` | user → self (link redemptions: by the link's user, with the caller's IP) | `email` / `new_email` / `events` |
 | `group.create`, `group.update`, `group.delete`, `group.member_add`, `group.member_remove` | → group (a federation group mapping on sign-in: user → group; a repoint, IdP / mapping delete or unlink dropping mapped memberships: admin / user → group) | `display_name`, `fields`, `user_id`; by a mapping also `via: "federation"`, `idp_id` |
 | `directory_role.assign`, `directory_role.unassign` | → user | `role`, `assignment_id` |
-| `application.create`, `application.update`, `application.delete`, `application.secret_add`, `application.secret_remove`, `application.scope_add`, `application.scope_update`, `application.scope_remove`, `application.role_add`, `application.role_update`, `application.role_remove`, `application.permission_add`, `application.permission_remove` | → application | `client_id`, `fields`, `secret_id`, `scope_id`/`role_id` + `value`, `permission_id` |
+| `application.create`, `application.update`, `application.delete`, `application.secret_add`, `application.secret_remove`, `application.scope_add`, `application.scope_update`, `application.scope_remove`, `application.role_add`, `application.role_update`, `application.role_remove`, `application.permission_add`, `application.permission_remove` | → application | `client_id`, `fields`, `secret_id` (+ `never_expires`, `caller_supplied` on `secret_add`), `scope_id`/`role_id` + `value`, `permission_id` |
 | `app_role_assignment.create`, `app_role_assignment.delete` | → assignment | create: `resource_client_id`, `role`, `principal_type`, `principal_id`; delete: `resource_client_id`, `app_role_id` |
 | `consent.grant`, `consent.revoke` | → consent grant (or client app) | `client_id`, `resource_client_id`, `scopes`, `app_roles`, `user_id` |
 

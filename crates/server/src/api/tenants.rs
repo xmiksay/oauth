@@ -49,6 +49,7 @@ pub fn view(t: &tenants::Model) -> Value {
         "audit_retention_days": t.audit_retention_days,
         "mfa_policy": t.mfa_policy.to_value(),
         "logout_revokes_refresh_tokens": t.logout_revokes_refresh_tokens,
+        "allow_non_expiring_secrets": t.allow_non_expiring_secrets,
         "created_at": ts(&t.created_at),
         "updated_at": ts(&t.updated_at),
     })
@@ -175,6 +176,7 @@ pub struct UpdateTenant {
     audit_retention_days: Option<i32>,
     mfa_policy: Option<String>,
     logout_revokes_refresh_tokens: Option<bool>,
+    allow_non_expiring_secrets: Option<bool>,
 }
 
 /// Validates and stores the changes on `txn` (loading the tenant there),
@@ -228,6 +230,11 @@ async fn save(
     {
         fields.push("logout_revokes_refresh_tokens");
     }
+    if let Some(allow) = body.allow_non_expiring_secrets
+        && set_changed(&mut row.allow_non_expiring_secrets, allow)
+    {
+        fields.push("allow_non_expiring_secrets");
+    }
     if fields.is_empty() {
         return Ok(tenant);
     }
@@ -248,7 +255,8 @@ async fn save(
     Ok(updated)
 }
 
-/// Rename, disable / enable, retention, MFA policy, logout revocation. Disabling makes the tenant 404
+/// Rename, disable / enable, retention, MFA policy, logout revocation,
+/// non-expiring secrets. Disabling makes the tenant 404
 /// everywhere (sign-in, tokens, management API).
 pub async fn update(
     State(state): State<AppState>,
@@ -287,10 +295,12 @@ pub struct Settings {
     audit_retention_days: Option<i32>,
     mfa_policy: Option<String>,
     logout_revokes_refresh_tokens: Option<bool>,
+    allow_non_expiring_secrets: Option<bool>,
 }
 
 /// `PATCH /api/v1/settings`: a tenant's own Global Admin renames it,
-/// sets its audit retention, MFA policy or logout revocation (creating, disabling and enabling tenants
+/// sets its audit retention, MFA policy, logout revocation or non-expiring
+/// secret policy (creating, disabling and enabling tenants
 /// stay with the system tenant's admins).
 pub async fn update_settings(
     State(state): State<AppState>,
@@ -304,6 +314,7 @@ pub async fn update_settings(
         audit_retention_days: body.audit_retention_days,
         mfa_policy: body.mfa_policy,
         logout_revokes_refresh_tokens: body.logout_revokes_refresh_tokens,
+        allow_non_expiring_secrets: body.allow_non_expiring_secrets,
     };
     let txn = state.db.begin().await?;
     let updated = save(&txn, &caller, &caller.tenant.slug, &body).await?;

@@ -14,10 +14,12 @@ import type {
   PermissionType,
   RequiredPermission,
   Scope,
+  SecretCreate,
 } from './types'
 
+/** `secret`: the generated value, present only when none was supplied. */
 export interface CreatedSecret extends ClientSecret {
-  secret: string
+  secret?: string
 }
 
 export const applications = {
@@ -30,7 +32,7 @@ export const applications = {
 
 export const secrets = {
   list: (app: string) => t.get<Items<ClientSecret>>(p`applications/${app}/secrets`),
-  create: (app: string, body: { description?: string; expires_in_days?: number }) =>
+  create: (app: string, body: SecretCreate) =>
     t.post<CreatedSecret>(p`applications/${app}/secrets`, body),
   remove: (app: string, id: string) => t.del(p`applications/${app}/secrets/${id}`),
 }
