@@ -56,6 +56,9 @@ applications:
     web_origins: [https://inventory.contoso.example]
     access_token_ttl_secs: 900
     mfa_policy: required
+    id_token_groups: assigned            # groups holding one of its roles, in ID tokens
+    backchannel_logout_uri: https://inventory.contoso.example/auth/backchannel-logout
+    backchannel_logout_session_required: true
     assignment_required: true            # only assigned users and groups sign in
     roles:                               # ... so it needs a role to assign
       - value: Inventory.User

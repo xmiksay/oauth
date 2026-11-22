@@ -14,7 +14,11 @@ mod common;
 
 use axum::http::{Method, StatusCode};
 use common::{flow::Fixture, mgmt::call};
-use entity::{applications, audit_events, enums::ActorType, tenants};
+use entity::{
+    applications, audit_events, client_secrets,
+    enums::{AccessTokenFormat, ActorType, ClientType, SigningAlg},
+    tenants,
+};
 use oauth_server::{
     bootstrap::{self, Options, TenantOptions, provisioning},
     db,
@@ -32,6 +36,7 @@ fn provisioning_opts(tenant: &str, role: provisioning::Role, rotate: bool) -> Op
             client_id: "ci".into(),
             role,
             rotate_secret: rotate,
+            adopt: false,
         }),
         ..Default::default()
     }
@@ -145,6 +150,53 @@ async fn read_only_provisioning_app_cannot_write() {
     )
     .await;
     assert_eq!(st, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn an_existing_app_is_adopted_only_on_request() {
+    let f = Fixture::new().await;
+    let web = common::seed::add_app(
+        &f.db,
+        f.tenant.id,
+        "ci",
+        ClientType::Confidential,
+        None,
+        AccessTokenFormat::Jwt,
+        SigningAlg::Rs256,
+    )
+    .await;
+    let mut opts = provisioning_opts("contoso", provisioning::Role::ReadWrite, true);
+    let err = bootstrap::run(&f.db, &f.config, &opts).await.unwrap_err();
+    assert!(format!("{err:#}").contains("--adopt-app"), "{err:#}");
+    // Refused before any write: no role, no secret.
+    let secrets = client_secrets::Entity::find()
+        .filter(client_secrets::Column::ApplicationId.eq(web.id))
+        .count(&f.db)
+        .await
+        .unwrap();
+    assert_eq!(secrets, 0);
+
+    if let Some(p) = opts.provisioning.as_mut() {
+        p.adopt = true;
+    }
+    let report = bootstrap::run(&f.db, &f.config, &opts).await.unwrap();
+    assert!(
+        report
+            .render()
+            .contains("WARNING: adopted existing app `ci`")
+    );
+    let p = report.provisioning.unwrap();
+    assert!(p.adopted && p.role_assigned && p.secret.is_some());
+    // Now it holds a provisioning role: re-runs need no flag.
+    if let Some(p) = opts.provisioning.as_mut() {
+        p.adopt = false;
+    }
+    let p = bootstrap::run(&f.db, &f.config, &opts)
+        .await
+        .unwrap()
+        .provisioning
+        .unwrap();
+    assert!(!p.adopted && !p.role_assigned);
 }
 
 async fn create_user(f: &Fixture, token: &str, email: &str) -> StatusCode {

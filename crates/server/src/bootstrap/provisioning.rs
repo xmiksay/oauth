@@ -57,12 +57,17 @@ pub struct Options {
     pub role: Role,
     /// Issue a new secret for an existing app (older ones stay valid).
     pub rotate_secret: bool,
+    /// Take over an existing app that holds no provisioning role yet.
+    pub adopt: bool,
 }
 
 #[derive(Debug)]
 pub struct Outcome {
     pub client_id: String,
     pub created: bool,
+    /// An existing app without a provisioning role was taken over
+    /// (`--adopt-app`).
+    pub adopted: bool,
     pub role: &'static str,
     pub role_assigned: bool,
     /// The other provisioning role, when the app held it until now.
@@ -111,9 +116,29 @@ pub async fn ensure(
     opts: &Options,
 ) -> anyhow::Result<Outcome> {
     validate::client_id(&opts.client_id)?;
+    let api = find_app(conn, tenant.id, MANAGEMENT_API)
+        .await?
+        .context("the tenant has no management API app")?;
+    let mut adopted = false;
     let (app, created) = match find_app(conn, tenant.id, &opts.client_id).await? {
         Some(app) if app.builtin => bail!("`{}` is a built-in application", opts.client_id),
-        Some(app) => (lock_app(conn, tenant.id, app.id).await?, false),
+        Some(app) => {
+            let app = lock_app(conn, tenant.id, app.id).await?;
+            // An app this command made holds one of the roles; anything
+            // else is someone's app, and a typo must not hand it the
+            // management API (nor issue it a secret).
+            if !holds_any_role(conn, &api, &app).await? {
+                if !opts.adopt {
+                    bail!(
+                        "application `{}` exists and holds no management API provisioning role; \
+                         pass --adopt-app to make it the provisioning app",
+                        app.client_id
+                    );
+                }
+                adopted = true;
+            }
+            (app, false)
+        }
         None => {
             let mut row = new_row(tenant.id, &opts.client_id, ClientType::Confidential);
             row.display_name = Set(DISPLAY_NAME.to_owned());
@@ -167,9 +192,6 @@ pub async fn ensure(
     } else {
         None
     };
-    let api = find_app(conn, tenant.id, MANAGEMENT_API)
-        .await?
-        .context("the tenant has no management API app")?;
     let role_assigned = assign_role(conn, tenant, &api, &app, opts.role).await?;
     let other = opts.role.other();
     let role_removed = unassign_role(conn, tenant, &api, &app, other)
@@ -178,6 +200,7 @@ pub async fn ensure(
     Ok(Outcome {
         client_id: app.client_id,
         created,
+        adopted,
         role: opts.role.value(),
         role_assigned,
         role_removed,
@@ -196,6 +219,20 @@ async fn find_role(
         .one(conn)
         .await?
         .with_context(|| format!("the management API has no role `{}`", role.value()))
+}
+
+async fn holds_any_role(
+    conn: &impl ConnectionTrait,
+    api: &applications::Model,
+    app: &applications::Model,
+) -> anyhow::Result<bool> {
+    for role in [Role::Read, Role::ReadWrite] {
+        let role = find_role(conn, api, role).await?;
+        if find_assignment(conn, &role, app).await?.is_some() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 async fn find_assignment(

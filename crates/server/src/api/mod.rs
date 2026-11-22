@@ -23,6 +23,7 @@ pub(crate) mod identity_providers;
 pub(crate) mod idp_body;
 mod idp_group_mappings;
 pub(crate) mod idp_rules;
+pub(crate) mod idp_update;
 pub(crate) mod idp_validate;
 mod me;
 mod me_email;

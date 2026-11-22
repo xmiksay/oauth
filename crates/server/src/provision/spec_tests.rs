@@ -159,6 +159,52 @@ fn oversized_files_are_rejected() {
 }
 
 #[test]
+fn oversized_files_are_not_read_whole() {
+    use std::io::Write;
+    let mut file = tempfile::NamedTempFile::new().unwrap();
+    file.write_all(b"tenant: t\n").unwrap();
+    assert_eq!(read_file(file.path()).unwrap(), "tenant: t\n");
+    file.write_all(&vec![b'#'; MAX_FILE_BYTES]).unwrap();
+    let err = read_file(file.path()).unwrap_err().to_string();
+    assert!(err.contains("larger"), "{err}");
+}
+
+#[test]
+fn back_channel_logout_and_id_token_groups_reach_the_app_body() {
+    let spec = parse(
+        "tenant: t
+applications:
+  - client_id: a
+    display_name: A
+    backchannel_logout_uri: https://a.example/bcl
+    backchannel_logout_session_required: true
+    id_token_groups: assigned
+  - { client_id: b, display_name: B, backchannel_logout_uri: null }
+  - { client_id: c, display_name: C }
+",
+    )
+    .unwrap();
+    let body = |i: usize| spec.applications.get(i).unwrap().body();
+    let a = body(0);
+    assert_eq!(
+        a.backchannel_logout_uri,
+        Some(Some("https://a.example/bcl".into()))
+    );
+    assert_eq!(a.backchannel_logout_session_required, Some(true));
+    assert_eq!(a.id_token_groups.as_deref(), Some("assigned"));
+    assert_eq!(body(1).backchannel_logout_uri, Some(None));
+    let c = body(2);
+    assert_eq!(c.backchannel_logout_uri, None);
+    assert_eq!(c.backchannel_logout_session_required, None);
+    assert_eq!(c.id_token_groups, None);
+    // Strict schema: the API's own spelling only.
+    let typo =
+        "tenant: t\napplications:\n  - { client_id: a, display_name: A, backchannel_logout: x }\n";
+    let err = format!("{:#}", parse(typo).unwrap_err());
+    assert!(err.contains("unknown field"), "{err}");
+}
+
+#[test]
 fn env_references_need_the_apply_prefix() {
     for var in [
         "OAUTH_MASTER_KEY",

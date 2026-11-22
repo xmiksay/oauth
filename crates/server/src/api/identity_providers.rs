@@ -14,8 +14,8 @@ use entity::{
     identity_providers,
 };
 use sea_orm::{
-    ActiveEnum, ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait,
-    QueryFilter, QuerySelect, TransactionTrait,
+    ActiveEnum, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
+    QuerySelect, TransactionTrait,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -25,7 +25,7 @@ use super::{
     extract::{Json, Path, Query},
     guard::conflict_on_unique,
     idp_body::{IdpBody, apply, ensure_domains_free, seal},
-    idp_rules, idp_validate,
+    idp_rules, idp_update, idp_validate,
     page::{self, Order, PageParams, Paged},
     ts,
 };
@@ -34,7 +34,7 @@ use crate::{
     audit::{Actor, EventType, Target},
     authz::{Access, Area},
     error::{AppError, AppResult},
-    federation::{group_map, identities, idps, kinds, urls},
+    federation::{group_map, identities, idps, urls},
 };
 
 fn view(state: &AppState, caller: &Caller, idp: &identity_providers::Model) -> Value {
@@ -246,86 +246,25 @@ pub async fn update(
     let tenant_id = caller.tenant_id();
     let txn = state.db.begin().await?;
     let idp = lock(&txn, tenant_id, id).await?;
-    ensure_same_kind(&body, &idp)?;
-    let mut row: identity_providers::ActiveModel = idp.clone().into();
-    let mut secret = None;
-    let mut fields = apply(&state.config, &mut row, &body, &mut secret)?;
-    let repointed = ["issuer", "client_id", "discovery_url"]
-        .iter()
-        .any(|f| fields.contains(f));
-    // A secret only ever goes to the provider it was entered for: pointing
-    // the IdP elsewhere drops it unless a new one comes with the change.
-    let moved = fields.contains(&"issuer") || fields.contains(&"discovery_url");
-    if moved && secret.is_none() && idp.client_secret_sealed.is_some() {
-        row.client_secret_sealed = Set(None);
-        if !fields.contains(&"client_secret") {
-            fields.push("client_secret");
-        }
-    }
-    // Narrowing who may sign in must also fail a callback verified against
-    // the wider list (it would still get mapped groups); no unlink needed,
-    // but the mapped memberships go below. Any change bumps (simplest);
-    // only a real narrowing drops memberships.
-    let admits = fields.contains(&"allowed_tenants") || fields.contains(&"hosted_domain");
-    let narrowed = admits
-        && idp_rules::Row::of(&row).is_none_or(|new| {
-            let new = kinds::Rules {
-                hosted_domain: new.hosted_domain,
-                allowed_tenants: new.allowed_tenants,
-                ..kinds::Rules::of(&idp)
-            };
-            kinds::narrows(&kinds::Rules::of(&idp), &new)
-        });
-    if repointed || admits {
-        row.generation = Set(idp.generation.saturating_add(1));
-    }
-    if fields.is_empty() {
+    let prepared = idp_update::prepare(&state.config, &idp, &body)?;
+    if prepared.fields.is_empty() {
         return Ok(axum::Json(detailed(&state, &caller, &txn, &idp).await?));
     }
-    seal(&state.config, &mut row, tenant_id, id, secret)?;
-    idp_rules::check_secret(&row)?;
-    if fields.contains(&"issuer") || fields.contains(&"allowed_tenants") {
-        let stored = idp_rules::Row::of(&row).ok_or_else(|| {
-            AppError::Internal(anyhow::anyhow!("identity provider row incomplete"))
-        })?;
-        let mappings = group_map::count(&txn, tenant_id, id).await?;
-        idp_rules::check_mappings(&stored, mappings)?;
-    }
-    if fields.contains(&"email_domains") {
-        let domains = row.email_domains.try_as_ref().cloned().unwrap_or_default();
-        ensure_domains_free(&txn, tenant_id, id, &domains).await?;
-    }
-    row.updated_at = Set(chrono::Utc::now().fixed_offset());
-    let updated = row
-        .update(&txn)
-        .await
-        .map_err(|err| conflict_on_unique(err, "an identity provider with this name exists"))?;
-    // Another issuer, client or discovery source means other subjects:
-    // keeping the links would hand the old users' accounts to whoever the
-    // new provider calls by those subjects.
-    // Narrowing: identities don't record their upstream tenant / domain, so
-    // every mapped membership goes; a de-listed user can't sign in to have
-    // them re-synced, a still-allowed one gets them back on the next one.
-    let (removed, memberships) = if repointed {
-        identities::unlink_all(&txn, tenant_id, id, caller.actor(), caller.ip).await?
-    } else if narrowed {
-        let dropped =
-            group_map::drop_owned(&txn, tenant_id, id, None, None, caller.actor(), caller.ip)
-                .await?;
-        (0, dropped)
-    } else {
-        (0, 0)
-    };
+    let (updated, details) = idp_update::write(
+        &txn,
+        &state.config,
+        &idp,
+        prepared,
+        caller.actor(),
+        caller.ip,
+    )
+    .await?;
     caller
         .audit(
             &txn,
             EventType::IdentityProviderUpdate,
             Some(Target::IdentityProvider(id)),
-            json!({
-                "fields": fields,
-                "identities_removed": removed,
-                "memberships_removed": memberships,
-            }),
+            details,
         )
         .await?;
     let out = detailed(&state, &caller, &txn, &updated).await?;
