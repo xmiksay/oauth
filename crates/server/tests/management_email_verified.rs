@@ -13,7 +13,7 @@ mod common;
 use axum::http::{Method, StatusCode};
 use common::{
     flow::Fixture,
-    mail::only_to,
+    mail::{only_to, token_in},
     mgmt::{audited, call, mint_user_token, user_with_roles},
 };
 use entity::enums::DirectoryRole::{GlobalAdmin, UserAdmin};
@@ -141,4 +141,54 @@ async fn needs_users_write_and_rank_over_the_target() {
     )
     .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn email_change_explicitly_unverified_mails_a_verification_link() {
+    let f = Fixture::with_email().await;
+    let token = admin_token(&f).await;
+    let tok = Some(token.as_str());
+    let body =
+        json!({ "email": "vera@example.com", "display_name": "Vera", "email_verified": true });
+    let (_, created) = call(&f.app, Method::POST, USERS, tok, Some(&body)).await;
+    let path = format!("{USERS}/{}", id_of(&created["user"]));
+    f.deliver().await;
+
+    let body = json!({ "email": "vera2@example.com", "email_verified": false });
+    let (status, user) = call(&f.app, Method::PATCH, &path, tok, Some(&body)).await;
+    assert_eq!(status, StatusCode::OK, "{user}");
+    assert_eq!(user["email_verified"], false);
+    let sent = f.deliver().await;
+    token_in(
+        only_to(&sent, "vera2@example.com"),
+        "/myaccount/verify-email",
+    );
+}
+
+#[tokio::test]
+async fn invited_user_gets_a_fresh_invite_even_when_marked_verified() {
+    let f = Fixture::with_email().await;
+    let token = admin_token(&f).await;
+    let tok = Some(token.as_str());
+    let body = json!({
+        "email": "ivy@example.com", "display_name": "Ivy",
+        "invite": true, "email_verified": true
+    });
+    let (status, created) = call(&f.app, Method::POST, USERS, tok, Some(&body)).await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    assert_eq!(created["user"]["email_verified"], true);
+    token_in(
+        only_to(&f.deliver().await, "ivy@example.com"),
+        "/login/invite",
+    );
+
+    let path = format!("{USERS}/{}", id_of(&created["user"]));
+    let body = json!({ "email": "ivy2@example.com", "email_verified": true });
+    let (status, user) = call(&f.app, Method::PATCH, &path, tok, Some(&body)).await;
+    assert_eq!(status, StatusCode::OK, "{user}");
+    assert_eq!(user["email_verified"], true);
+    token_in(
+        only_to(&f.deliver().await, "ivy2@example.com"),
+        "/login/invite",
+    );
 }

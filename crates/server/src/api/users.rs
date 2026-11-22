@@ -282,7 +282,9 @@ pub async fn update(
         }
     }
     let verified = verified_after(user.email_verified, email_changed, body.email_verified);
-    row.email_verified = Set(verified);
+    if verified != user.email_verified {
+        row.email_verified = Set(verified);
+    }
     if body
         .email_verified
         .is_some_and(|v| v != user.email_verified)

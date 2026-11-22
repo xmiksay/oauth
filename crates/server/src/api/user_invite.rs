@@ -63,8 +63,9 @@ pub async fn send_invite(
 /// to the old address die; the new one gets a verification link (none when
 /// the admin marked it verified in the same request) — or, for a user who
 /// never set a password, a fresh invitation (the old one went to the old
-/// address) — and the old one a notice if it was verified. A user with a
-/// passkey but no password counts as one with a password here.
+/// address) — and the old one a notice if it was verified. A user with any
+/// sign-in method (password, passkey or linked identity) gets the
+/// verification link unless already marked verified.
 pub async fn email_replaced(
     state: &AppState,
     caller: &Caller,
