@@ -3,6 +3,9 @@
 //! `group_members` records where a membership comes from: `manual` (added
 //! by an administrator) and/or `idp_id` (kept by that provider's mappings).
 //! A sign-in only ever adds or removes rows its own provider owns.
+//! `ON DELETE SET NULL (idp_id)` is no cleanup: on a mapped-only row it
+//! would break `group_members_source_check`, so a provider's mapped rows
+//! are dropped before the provider is deleted.
 
 use sea_orm_migration::prelude::*;
 

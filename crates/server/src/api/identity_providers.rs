@@ -233,11 +233,7 @@ pub async fn update(
     // keeping the links would hand the old users' accounts to whoever the
     // new provider calls by those subjects.
     let (removed, memberships) = if repointed {
-        (
-            identities::unlink_all(&txn, tenant_id, id).await?,
-            group_map::drop_owned(&txn, tenant_id, id, None, None, caller.actor(), caller.ip)
-                .await?,
-        )
+        identities::unlink_all(&txn, tenant_id, id, caller.actor(), caller.ip).await?
     } else {
         (0, 0)
     };
@@ -272,8 +268,9 @@ pub async fn remove(
     let txn = state.db.begin().await?;
     let idp = lock(&txn, caller.tenant_id(), id).await?;
     let only_via = identities::users_only_via(&txn, idp.tenant_id, id).await?;
-    // The FK would only clear the mark; memberships nothing but this
-    // provider kept go with it.
+    // Must run before the delete, not as a cleanup: the FK's `SET NULL
+    // (idp_id)` on a mapped-only row (`manual = false`) would break
+    // `group_members_source_check` and abort the delete.
     let memberships = group_map::drop_owned(
         &txn,
         idp.tenant_id,
