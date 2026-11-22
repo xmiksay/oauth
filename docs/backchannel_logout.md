@@ -53,8 +53,9 @@ password change / reset (other sessions), disabling or deleting a user
 in the same browser. **Sessions that just
 expire notify nobody.**
 
-Ordering: `queue` first locks the ended sessions `FOR UPDATE`;
-`record_client` reads its session `FOR KEY SHARE`. A token issuance racing
+Ordering: `queue` first locks the ended sessions `FOR UPDATE` (in id
+order, so two revocations of one user's sessions can't deadlock);
+`record_client` locks the user, then its session, `FOR KEY SHARE`. A token issuance racing
 a logout therefore either commits first (and its client is notified) or
 waits and then finds the session gone (no row, no FK error). The
 `authorization_code` grant requires the session: it calls `record_client`
@@ -62,10 +63,14 @@ before consuming the code and answers `invalid_grant` when the session has
 ended, so a code redeemed after (or losing a race with) its logout issues
 nothing, and one that wins the race holds the session until commit — the
 logout then revokes its refresh token and notifies its client.
-Lock order is session, then refresh tokens, on every path: logout and
-session revocation lock the session before `revoke_by_session` updates
-its tokens, and the refresh grant calls `record_client` before
-`mark_rotated` locks the presented token (the other order deadlocks). A
+Lock order is user, then session, then tokens, on every path: admin
+revocation / disabling / password resets lock the user `FOR UPDATE` before
+`queue`; logout and session revocation lock the session before
+`revoke_by_session` updates its tokens; issuance calls `record_client`
+first — the code grant before consuming the code, the refresh grant before
+`mark_rotated` locks the presented token. The user is locked even when the
+session is gone, since inserting a token takes the user's key lock (FK)
+too; any other order deadlocks against the admin paths. A
 refresh that loses this race gets a plain `invalid_grant` — a token
 revoked (not rotated) meanwhile is no replay, so no reuse alarm.
 

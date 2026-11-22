@@ -177,7 +177,8 @@ pub async fn issue_delegated(
     // The session's Back-Channel Logout reaches every client it issued to.
     // First, so the session lock is held before any token bound to it
     // exists: a concurrent logout then revokes and announces them.
-    crate::backchannel::record_client(conn, d.tenant.id, d.session_id, d.client.id).await?;
+    crate::backchannel::record_client(conn, d.tenant.id, d.user.id, d.session_id, d.client.id)
+        .await?;
     let now = chrono::Utc::now().fixed_offset();
     let spec = access_spec(d.issuer, d.resource);
     let groups = principal::user_groups(conn, d.tenant.id, d.user.id).await?;

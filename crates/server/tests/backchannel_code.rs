@@ -127,7 +127,7 @@ async fn logout_waits_for_a_redemption_holding_the_session() {
     let (_browser, _code, sid) = code(&f).await;
     let redemption = f.db.begin().await.unwrap();
     assert!(
-        backchannel::record_client(&redemption, f.tenant.id, sid, f.web.id)
+        backchannel::record_client(&redemption, f.tenant.id, f.user.id, sid, f.web.id)
             .await
             .unwrap()
     );

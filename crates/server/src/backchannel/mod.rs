@@ -54,28 +54,47 @@ pub enum Ended {
 /// returns whether the session still exists (`false`: nothing recorded,
 /// e.g. a refresh after the session ended).
 ///
-/// The session row is taken `FOR KEY SHARE` and held to the end of the
-/// caller's transaction. That conflicts with the `FOR UPDATE` that [`queue`]
-/// takes first: a logout racing the caller either waits for it (and then
-/// notifies this client and revokes the tokens it issued) or ends first (the
-/// locked read then skips the deleted row, so nothing is inserted and no FK
-/// violation surfaces). Call it BEFORE inserting tokens bound to the session
-/// (lock order: session, then tokens — see `oidc::refresh_grant`).
+/// Lock order, held to the end of the caller's transaction: the user row
+/// `FOR KEY SHARE`, then the session `FOR KEY SHARE`, then (the caller) the
+/// tokens. It is the one order every path takes: admin revocation / disable
+/// / password reset lock the user `FOR UPDATE` and then the sessions
+/// ([`queue`]), logout locks the session then its tokens, and token inserts
+/// would otherwise take the user's key lock (FK) only after the session's —
+/// a cycle with the admin paths. So a logout or revocation racing the
+/// caller either waits for it (and then notifies this client and revokes the
+/// tokens it issued) or ends first (the locked read then skips the deleted
+/// session: nothing is inserted, no FK violation). Call it BEFORE inserting
+/// tokens bound to the session.
 pub async fn record_client(
     conn: &impl ConnectionTrait,
     tenant_id: Uuid,
+    user_id: Uuid,
     session_id: Uuid,
     application_id: Uuid,
 ) -> anyhow::Result<bool> {
+    // Its own statement: the order of row locks within one statement isn't
+    // guaranteed.
+    conn.execute_raw(Statement::from_sql_and_values(
+        conn.get_database_backend(),
+        "SELECT 1 FROM users WHERE tenant_id = $1 AND id = $2 FOR KEY SHARE",
+        [tenant_id.into(), user_id.into()],
+    ))
+    .await
+    .context("locking the session's user")?;
     let row = conn
         .query_one_raw(Statement::from_sql_and_values(
             conn.get_database_backend(),
             "WITH s AS (SELECT tenant_id, id FROM sessions \
-               WHERE tenant_id = $1 AND id = $2 FOR KEY SHARE), \
+               WHERE tenant_id = $1 AND id = $2 AND user_id = $4 FOR KEY SHARE), \
              ins AS (INSERT INTO session_clients (tenant_id, session_id, application_id) \
                SELECT tenant_id, id, $3 FROM s ON CONFLICT DO NOTHING) \
              SELECT EXISTS (SELECT 1 FROM s) AS live",
-            [tenant_id.into(), session_id.into(), application_id.into()],
+            [
+                tenant_id.into(),
+                session_id.into(),
+                application_id.into(),
+                user_id.into(),
+            ],
         ))
         .await
         .context("recording the session's client")?
@@ -88,7 +107,9 @@ pub async fn record_client(
 /// that obtained tokens in the `ended` sessions. Call it on the transaction
 /// that deletes them, before the delete (their `session_clients` cascade).
 ///
-/// The ended sessions are locked `FOR UPDATE` first, so a concurrent
+/// The ended sessions are locked `FOR UPDATE` first, in id order (two
+/// revocations of one user's sessions — My Account's doesn't lock the user —
+/// must not take them in opposite orders), so a concurrent
 /// [`record_client`] either committed before (and its row is read below,
 /// in a fresh read-committed snapshot) or waits until they are gone.
 pub async fn queue(
@@ -107,7 +128,7 @@ pub async fn queue(
         "SELECT id FROM sessions s WHERE s.tenant_id = $1 \
          AND ($2::uuid IS NULL OR s.id = $2) \
          AND ($3::uuid IS NULL OR s.user_id = $3) \
-         AND ($4::uuid IS NULL OR s.id <> $4) FOR UPDATE",
+         AND ($4::uuid IS NULL OR s.id <> $4) ORDER BY s.id FOR UPDATE",
         filter.clone(),
     ))
     .await

@@ -101,7 +101,7 @@ async fn password_change_notifies_the_other_sessions_only() {
         .into_iter()
         .find(|id| *id != sid)
         .unwrap();
-    backchannel::record_client(&f.db, f.tenant.id, current, f.web.id)
+    backchannel::record_client(&f.db, f.tenant.id, f.user.id, current, f.web.id)
         .await
         .unwrap();
 
@@ -161,7 +161,7 @@ async fn recipients_never_cross_tenants() {
     let key = &f.config.master_key;
     let other = Uuid::now_v7();
     // Another tenant id names neither the session nor the user.
-    backchannel::record_client(&f.db, other, sid, f.web.id)
+    backchannel::record_client(&f.db, other, f.user.id, sid, f.web.id)
         .await
         .unwrap();
     backchannel::queue(&f.db, key, other, Ended::Session(sid))
