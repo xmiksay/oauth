@@ -103,11 +103,14 @@ reports `linked_users`; the admin UI asks before such a change.
 A repoint also bumps the provider's `generation`, and so does any change of
 `allowed_tenants` or `hosted_domain` (without unlinking anyone): a callback
 verified against a wider list must not land, or a de-listed tenant would
-still get mapped groups. The same change also drops every membership the
-provider's mappings kept (see Group mappings): identities don't record the
-upstream `tid` / `hd`, so the de-listed ones can't be told apart, and their
-users can no longer sign in to have them re-synced; still-allowed users get
-theirs back on their next sign-in. Round trips and parked
+still get mapped groups. A change that narrows them (a tenant removed or
+a first one pinned; a `hosted_domain` set or changed) also drops every
+membership the provider's mappings kept (see Group mappings): identities
+don't record the upstream `tid` / `hd`, so the de-listed ones can't be told
+apart, and their users can no longer sign in to have them re-synced;
+still-allowed users get theirs back on their next sign-in. Widening (a
+tenant added, the list cleared, the domain removed) keeps them; the admin
+UI asks before a narrowing save. Round trips and parked
 identities remember the generation they were verified at; the writing
 transaction of a sign-in, JIT, in-flow link or My Account link locks the
 provider row `FOR SHARE` and requires it unchanged (an update locks it
@@ -300,7 +303,7 @@ Not a sign-in, so no mapping is applied: linking an identity from My
 Account (the next sign-in through the provider applies them). A new
 mapping applies from each user's next sign-in. Deleting a
 mapping removes the memberships it kept at once, unless another mapping
-of the provider grants the same group. A **repoint**, a change of
+of the provider grants the same group. A **repoint**, narrowing
 `allowed_tenants` / `hosted_domain`, deleting the
 provider and unlinking a user's identity drop the memberships the
 provider's mappings kept (of everyone / of that user; manual ones lose
