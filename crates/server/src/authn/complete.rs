@@ -187,6 +187,9 @@ async fn close(
     reason: &'static str,
 ) -> AuthnResult<()> {
     let txn = ctx.state.db.begin().await?;
+    // The user before the transaction row (deleting the user locks it, then
+    // cascades to the row); `deny_for` writes the user into the device row.
+    crate::backchannel::lock_user(&txn, ctx.tenant.id, user_id).await?;
     if tx::take(&txn, tx.row.id, from).await? {
         device_code::deny_for(&txn, ctx, tx, user_id, reason).await?;
     }
@@ -214,8 +217,14 @@ async fn finish(
     // Then the user, before the transaction row and any session (lock order
     // IdP → user → session, see `backchannel::lock_user`): the sessions
     // locked below and the session / device / code rows inserted for the
-    // user would otherwise deadlock against an admin revocation.
-    crate::backchannel::lock_user(&txn, ctx.tenant.id, user.id).await?;
+    // user would otherwise deadlock against an admin revocation. A disable
+    // that committed while this waited is only visible from here on.
+    if !crate::backchannel::lock_user(&txn, ctx.tenant.id, user.id)
+        .await?
+        .is_active()
+    {
+        return Err(AuthnError::AccountDisabled);
+    }
     // Claim the transaction first: a concurrent duplicate gets no second code.
     if !tx::take(&txn, tx.row.id, from).await? {
         return Err(AuthnError::WrongStep);

@@ -178,7 +178,9 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   any token bound to the session; the code grant refuses a code whose session
   ended). Global lock order: IdP → user → session → tokens; take the user
   with `backchannel::lock_user` (`record_client` does) before locking a
-  session or a row that inserts referencing the user — never after. Each outbox channel has its own leader lock (`jobs::outbox::policy`).
+  session or a row that inserts referencing the user — never after — and
+  issue nothing unless it returns `UserLock::Active` (a `disabled` read
+  before the lock is stale). Each outbox channel has its own leader lock (`jobs::outbox::policy`).
   Delivery is an
   outbox `Courier` (`channel = backchannel`) through `http::client` +
   `federation::urls` / `resolve::PublicOnly`; never log a logout token or an

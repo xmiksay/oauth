@@ -57,19 +57,54 @@ pub enum Ended {
 /// sessions, so taking a session first deadlocks against them. Global order:
 /// IdP → user → session → tokens. Its own statement: the order of row locks
 /// within one statement isn't guaranteed.
+///
+/// Returns the user's state as read under the lock: a disable or deletion
+/// that committed while this waited is seen here (read committed), so
+/// anything issuing for the user must refuse unless it is
+/// [`UserLock::Active`] — a `disabled` read before the lock is stale.
 pub async fn lock_user(
     conn: &impl ConnectionTrait,
     tenant_id: Uuid,
     user_id: Uuid,
-) -> anyhow::Result<()> {
-    conn.execute_raw(Statement::from_sql_and_values(
-        conn.get_database_backend(),
-        "SELECT 1 FROM users WHERE tenant_id = $1 AND id = $2 FOR KEY SHARE",
-        [tenant_id.into(), user_id.into()],
-    ))
-    .await
-    .context("locking the user")?;
-    Ok(())
+) -> anyhow::Result<UserLock> {
+    let row = conn
+        .query_one_raw(Statement::from_sql_and_values(
+            conn.get_database_backend(),
+            "SELECT disabled FROM users WHERE tenant_id = $1 AND id = $2 FOR KEY SHARE",
+            [tenant_id.into(), user_id.into()],
+        ))
+        .await
+        .context("locking the user")?;
+    let Some(row) = row else {
+        return Ok(UserLock::Gone);
+    };
+    let disabled: bool = row
+        .try_get("", "disabled")
+        .context("reading whether the user is disabled")?;
+    Ok(UserLock::from_disabled(disabled))
+}
+
+/// What [`lock_user`] found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UserLock {
+    Active,
+    Disabled,
+    /// Deleted (or never existed in the tenant).
+    Gone,
+}
+
+impl UserLock {
+    fn from_disabled(disabled: bool) -> Self {
+        if disabled {
+            Self::Disabled
+        } else {
+            Self::Active
+        }
+    }
+
+    pub fn is_active(self) -> bool {
+        self == Self::Active
+    }
 }
 
 /// Remembers that `application_id` obtained tokens in `session_id` and
@@ -86,7 +121,8 @@ pub async fn lock_user(
 /// caller either waits for it (and then notifies this client and revokes the
 /// tokens it issued) or ends first (the locked read then skips the deleted
 /// session: nothing is inserted, no FK violation). Call it BEFORE inserting
-/// tokens bound to the session.
+/// tokens bound to the session. A user disabled or deleted meanwhile counts
+/// as an ended session (`false`).
 pub async fn record_client(
     conn: &impl ConnectionTrait,
     tenant_id: Uuid,
@@ -94,7 +130,9 @@ pub async fn record_client(
     session_id: Uuid,
     application_id: Uuid,
 ) -> anyhow::Result<bool> {
-    lock_user(conn, tenant_id, user_id).await?;
+    if !lock_user(conn, tenant_id, user_id).await?.is_active() {
+        return Ok(false);
+    }
     let row = conn
         .query_one_raw(Statement::from_sql_and_values(
             conn.get_database_backend(),
@@ -197,5 +235,14 @@ mod tests {
         };
         let text = serde_json::to_string(&p).unwrap();
         assert_eq!(serde_json::from_str::<Payload>(&text).unwrap(), p);
+    }
+
+    #[test]
+    fn only_an_enabled_user_is_active() {
+        assert_eq!(UserLock::from_disabled(false), UserLock::Active);
+        assert_eq!(UserLock::from_disabled(true), UserLock::Disabled);
+        assert!(UserLock::Active.is_active());
+        assert!(!UserLock::Disabled.is_active());
+        assert!(!UserLock::Gone.is_active());
     }
 }

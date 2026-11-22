@@ -168,6 +168,8 @@ async fn redeem(
     let (Some(user_id), Some(auth_time)) = (row.user_id, row.auth_time) else {
         return Err(anyhow::anyhow!("approved device authorization without its user").into());
     };
+    // Read under the user lock (`lock_request`), so a disable that
+    // committed while the poll waited on it is seen.
     let user = active_user(txn, tenant.id, user_id).await?;
     let resource = load_app(txn, row.resource_application_id).await?;
     // The assignment may have gone since the user approved.
