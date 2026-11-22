@@ -16,10 +16,12 @@ struct Cli {
 enum Command {
     /// Run the HTTP server (migrates the database on startup).
     Serve,
-    /// Create the `system` tenant and its first Global Admin (idempotent;
+    /// Create the system tenant (SYSTEM_TENANT_SLUG, default `system`) and its
+    /// first Global Admin (idempotent;
     /// migrates first). Prints a one-time password when the admin is created.
     Bootstrap {
-        /// Email of the Global Admin of the `system` tenant.
+        /// Email of the Global Admin of the system tenant (SYSTEM_TENANT_SLUG,
+        /// default `system`).
         #[arg(long)]
         admin_email: String,
         /// Display name for a newly created admin.

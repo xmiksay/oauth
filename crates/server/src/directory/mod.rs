@@ -13,7 +13,7 @@ use sea_orm::{DbErr, RuntimeErr, sqlx};
 
 use crate::error::AppError;
 
-pub use system_tenant::{SlugOutcome, reconcile_slug as reconcile_system_slug};
+pub use system_tenant::{SlugOutcome, Via as SlugVia, reconcile_slug as reconcile_system_slug};
 pub(crate) use tenants::create_system_tenant;
 pub use tenants::{
     NewTenant, TenantKeys, create_tenant, find_system_tenant, find_tenant_by_slug,
