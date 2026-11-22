@@ -61,6 +61,10 @@ add. A new mapping applies from each user's next sign-in.
 Every write locks the provider row; a repoint, or a change of
 `allowed_tenants` / `hosted_domain`, bumps its internal generation, so a sign-in or link verified against the old configuration
 fails (`upstream_failed`, audit reason `idp_repointed`) instead of landing.
+A change of `allowed_tenants` / `hosted_domain` also removes every group
+membership the provider's mappings kept (manual ones lose just the mark;
+counted in `memberships_removed`) without unlinking anyone: users still
+allowed get them back on their next sign-in through the provider.
 Audit: `identity_provider.create` (`name`, `kind`, `issuer`, `policy`) / `update` (`fields`, `identities_removed`,
 `memberships_removed`) / `delete` (`users_only_via`, `memberships_removed`)
 / `group_mapping_add` (`mapping_id`, `claim`, `value`, `group_id`,
