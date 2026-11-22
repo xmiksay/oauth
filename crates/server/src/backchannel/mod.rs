@@ -57,7 +57,8 @@ pub enum Ended {
 /// `FOR UPDATE` that [`queue`] takes first: a logout racing this insert
 /// either waits for it (and then notifies this client) or ends first (the
 /// locked read then skips the deleted row, so nothing is inserted and no FK
-/// violation surfaces).
+/// violation surfaces). Callers that also lock refresh tokens call this
+/// first (lock order: session, then tokens — see `oidc::refresh_grant`).
 pub async fn record_client(
     conn: &impl ConnectionTrait,
     tenant_id: Uuid,

@@ -16,7 +16,7 @@ use super::{
 };
 use crate::{
     app::AppState,
-    audit, notify,
+    audit, backchannel, notify,
     tenancy::Tenant,
     tokens::{
         self, Delegated, Refresh, TokenSet,
@@ -129,7 +129,23 @@ pub async fn grant(
     // resource actually minted for counts — a narrowed request drops the
     // grant's, a multi-resource refresh brings its own (`mrrt`).
     ensure_assigned(&txn, tenant, &user, client, resource.as_ref()).await?;
+    // Lock order: session, then refresh tokens — the order logout and
+    // session revocation take them (`backchannel::queue` locks the session
+    // before `revoke_by_session` updates its tokens). Taking the token row
+    // first would deadlock against them.
+    backchannel::record_client(&txn, tenant.id, row.session_id, client.id).await?;
     if !refresh::mark_rotated(&txn, row.id).await? {
+        // Revoked meanwhile (e.g. the session just ended) is no replay: no
+        // alarm, but still finish the family's revocation.
+        let current = refresh_tokens::Entity::find_by_id(row.id)
+            .one(&txn)
+            .await
+            .map_err(anyhow::Error::from)?;
+        if current.is_some_and(|c| c.rotated_at.is_none()) {
+            refresh::revoke_family(&txn, row.family_id).await?;
+            txn.commit().await?;
+            return Err(OAuthError::invalid_grant("refresh token revoked"));
+        }
         let err = reuse(state, tenant, &txn, &row, client, ip).await?;
         txn.commit().await?;
         return Err(err);

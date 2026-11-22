@@ -31,7 +31,8 @@ Per application (`PATCH /api/v1/applications/{id}`, admin app
   Changing it is gated like redirect URIs (privileged apps: GlobalAdmin
   only); not settable on built-in apps.
 - `backchannel_logout_session_required`: stored and returned; the logout
-  token always carries `sid`, so it is always satisfied.
+  token always carries `sid`, so it is always satisfied. The admin UI
+  offers it only while a URI is set and clears it with the URI.
 
 Discovery advertises `backchannel_logout_supported` and
 `backchannel_logout_session_supported` as `true`. ID tokens (and delegated
@@ -56,6 +57,12 @@ Ordering: `queue` first locks the ended sessions `FOR UPDATE`;
 `record_client` reads its session `FOR KEY SHARE`. A token issuance racing
 a logout therefore either commits first (and its client is notified) or
 waits and then finds the session gone (no row, no FK error).
+Lock order is session, then refresh tokens, on every path: logout and
+session revocation lock the session before `revoke_by_session` updates
+its tokens, and the refresh grant calls `record_client` before
+`mark_rotated` locks the presented token (the other order deadlocks). A
+refresh that loses this race gets a plain `invalid_grant` — a token
+revoked (not rotated) meanwhile is no replay, so no reuse alarm.
 
 The outbox row: `recipient` = application id, `kind` =
 `backchannel_logout`, sealed body `{"sid", "sub"}`, 24 h lifetime.
