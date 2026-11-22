@@ -117,7 +117,7 @@ migration transaction). Deleting a tenant cascades to everything it owns.
 | Table | Notes |
 |---|---|
 | `tenants` | `slug` unique (`^[a-z0-9][a-z0-9-]{1,62}$`, reserved list in `directory::slug`), `is_system` (at most one), `disabled`, `audit_retention_days`, `mfa_policy` optional\|required, `logout_revokes_refresh_tokens` (default true), `allow_non_expiring_secrets` (default false) |
-| `retired_tenant_slugs` | PK `slug`, `tenant_id` (the system tenant), `retired_at`: slugs the system tenant was renamed away from, reserved against regular tenants for good (`directory::retired_slugs`; append-only, written by `reconcile_system_slug`) |
+| `retired_tenant_slugs` | PK `slug`, `tenant_id` (the system tenant), `retired_at`: slugs the system tenant was renamed away from, reserved against regular tenants for good (`directory::retired_slugs`; written only by `reconcile_system_slug`; a trigger enforces append-only and system-tenant-only; backfilled at creation from `tenant.rename` audit events) |
 | `users` | `user_type` member\|guest, `email` unique per tenant on `lower(email)` (casing kept), `password_hash` (argon2id PHC, nullable), `must_change_password`, `disabled`, `first_device_at` (first sign-in device recorded), `webauthn_handle` (random 32-byte WebAuthn user handle) |
 | `webauthn_credentials` · `webauthn_challenges` | passkeys (credential id unique per tenant, COSE key, counter, backup flags) and single-use 5-min ceremony challenges — [passkeys.md](passkeys.md) |
 | `user_totp` · `user_recovery_codes` | sealed TOTP secret + `confirmed_at`; SHA-256 code hashes + `used_at` |

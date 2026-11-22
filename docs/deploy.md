@@ -100,7 +100,15 @@ no regular tenant can claim the host and issuer its former users, relying
 parties and upstream IdPs still know (creating one is a 400 `reserved`,
 startup refuses an enabled tenant holding one — e.g. created before this
 check existed — and such a tenant is never served; disable it to start).
-The system tenant itself may move back to a slug it gave up.
+The system tenant itself may move back to a slug it gave up. The table is
+append-only and holds only the system tenant's slugs (a trigger refuses
+anything else). Renames that ran before it existed are backfilled when the
+migration creates it, from the system tenant's `tenant.rename` audit events
+(`details.from`); a rename whose audit row already fell to the system
+tenant's `audit_retention_days` can't be recovered — such a slug is **not**
+reserved, so check that no regular tenant should be on it. Conversely, an
+enabled regular tenant that took a backfilled slug makes startup refuse to
+run after the upgrade until it is disabled or renamed.
 
 <a id="apex-tenant"></a>**Apex tenant.** By default the apex (`PUBLIC_URL`
 itself) only redirects `GET /` to the system tenant's admin center. Set
