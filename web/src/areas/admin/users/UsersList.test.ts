@@ -20,6 +20,7 @@ function user(n: number): User {
     disabled: n === 2,
     must_change_password: false,
     has_password: true,
+    managed: false,
     created_at: '2026-10-13T10:00:00.000Z',
     updated_at: '2026-10-13T10:00:00.000Z',
   }

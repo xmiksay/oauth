@@ -28,7 +28,6 @@ use crate::{
     app::AppState,
     audit::{EventType, Target},
     authz::{Access, Area},
-    backchannel,
     directory::{self, DirectoryError, NewUser, display_name, normalize_email},
     error::{AppError, AppResult},
     mail::links,
@@ -45,6 +44,7 @@ pub fn view(u: &users::Model) -> Value {
         "disabled": u.disabled,
         "must_change_password": u.must_change_password,
         "has_password": u.password_hash.is_some(),
+        "managed": u.managed,
         "created_at": ts(&u.created_at),
         "updated_at": ts(&u.updated_at),
     })
@@ -202,6 +202,7 @@ pub async fn create(
             password: chosen.as_ref().map(|c| c.value.as_str()),
             must_change_password: chosen.as_ref().is_some_and(|c| c.must_change),
             email_verified,
+            disabled: false,
         },
     )
     .await?;
@@ -349,14 +350,7 @@ pub async fn remove(
     let user = find_user(&txn, tenant_id, id).await?;
     ensure_can_modify_user(&txn, &caller, id).await?;
     ensure_not_last_global_admin(&txn, tenant_id, id).await?;
-    // Sessions, tokens, memberships, roles and grants cascade; the outbox
-    // rows of the ended sessions' Back-Channel Logouts outlive the user.
-    let ended = backchannel::Ended::User {
-        user_id: id,
-        keep: None,
-    };
-    backchannel::queue(&txn, &state.config.master_key, tenant_id, ended).await?;
-    users::Entity::delete_by_id(id).exec(&txn).await?;
+    directory::delete_user(&txn, &state.config.master_key, tenant_id, id).await?;
     caller
         .audit(
             &txn,

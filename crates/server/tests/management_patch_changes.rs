@@ -117,9 +117,8 @@ async fn application_admin_renames_privileged_app_resending_its_redirect_uris() 
 async fn unchanged_tenant_values_are_not_audited() {
     let f = Fixture::new().await;
     let opts = bootstrap::Options {
-        admin_email: "root@example.com".into(),
-        display_name: None,
-        reset_password: false,
+        admin_email: Some("root@example.com".into()),
+        ..Default::default()
     };
     bootstrap::run(&f.db, &f.config, &opts).await.unwrap();
     let system = directory::find_system_tenant(&f.db).await.unwrap().unwrap();

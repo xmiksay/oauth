@@ -19,6 +19,14 @@ Single binary `oauth` (crate `crates/server`):
   admin if missing, ensures the admin holds `GlobalAdmin`, and prints a
   one-time password (`must_change_password = true`) to stdout. An existing
   admin's password is only replaced with `--reset-password`. Exit 0 either way.
+  `--tenant <slug> [--tenant-name …]` targets a regular tenant instead
+  (created when missing, no `system` tenant on the way);
+  `--provisioning-app <client_id> [--provisioning-role read|read-write]
+  [--rotate-secret]` ensures a confidential app holding that management API
+  app role and prints its secret once (at creation or rotation). At least one
+  of `--admin-email` / `--provisioning-app`. Audited as actor `system`.
+- `oauth apply -f tenant.yaml [--dry-run]` — declarative provisioning of one
+  existing tenant, see [provisioning.md](provisioning.md).
 
 Migrations: all pending ones run in a single transaction that first takes
 `pg_advisory_xact_lock(MIGRATION_LOCK_KEY)` (replicas serialize; released exactly on
@@ -56,7 +64,8 @@ Implemented:
 | `serve` | `run` (process-global setup: recorder, binds, signals) → `run_with` (serve, then migrate, then ready; tested in `tests/serve.rs`), tracing init, graceful shutdown |
 | `keys` | Per-tenant RS256 (2048-bit) / ES256 key generation, `wrap` (AES-256-GCM seal/open, AAD = tenant id ‖ kid), public JWK with RFC 7638 thumbprint as `kid`, `active_signing_key`, `jwks` (next + active + retired-until-`expires_at`). Rotation job lands in step 3. See [Cryptography](#cryptography) |
 | `directory` | `create_tenant` (DNS-label slug rules in `slug`, keys + built-in apps in one transaction; `builtin_apps::reconcile_all`), `ensure_apex_tenant` (startup: `APEX_TENANT` exists, is enabled and isn't the system tenant), `system_tenant` (`reconcile_system_slug`, at startup and bootstrap: refuses a stored system-tenant slug other than `SYSTEM_TENANT_SLUG`, or renames it with `SYSTEM_TENANT_RENAME=1` and retires the old slug), `retired_slugs` (`ensure_slug_not_retired`, `servable_tenant`), `create_user`, `find_user_by_email`, `set_password` (argon2id in `password`), `assign_directory_role`; typed `DirectoryError` |
-| `bootstrap` | `oauth bootstrap` logic + report rendering |
+| `bootstrap` | `oauth bootstrap` logic + report rendering; `provisioning` (client-credentials app + management API role + one-time secret) |
+| `provision` | `oauth apply`: `spec` (strict YAML schema + duplicate checks), one step per object kind (`users`, `groups`, `idps`, `apps`, `consents` = required permissions + admin consents, `access` = directory roles + app role assignments) over the management API's validation / write helpers, `ctx` (change log = dry-run diff, audit as actor `apply`, `kept` ids for pruning) — see [provisioning.md](provisioning.md) |
 | `headers` | `content_type_is`; app-wide `X-Frame-Options: DENY`, `CSP: frame-ancestors 'none'`, `Referrer-Policy: no-referrer` |
 | `tenancy` | `resolve_host` middleware (host → active tenant, `APEX_TENANT` on the apex or the apex redirect, else 404) and the `Tenant` extractor reading its result |
 | `secret` | Random bearer secrets (256-bit, base64url), random UUIDv4 handles, SHA-256 storage hash, constant-time compare |

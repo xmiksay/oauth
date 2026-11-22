@@ -55,6 +55,7 @@ fn new_user(email: &str) -> NewUser<'_> {
         password: None,
         must_change_password: false,
         email_verified: false,
+        disabled: false,
     }
 }
 

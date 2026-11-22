@@ -38,7 +38,7 @@ fn view(a: &dra::Model) -> Value {
     })
 }
 
-fn parse_role(raw: &str) -> AppResult<DirectoryRole> {
+pub(crate) fn parse_role(raw: &str) -> AppResult<DirectoryRole> {
     DirectoryRole::try_from_value(&raw.to_owned()).map_err(|_| {
         AppError::BadRequest("role must be GlobalAdmin, ApplicationAdmin or UserAdmin".into())
     })

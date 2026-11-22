@@ -15,6 +15,8 @@ pub struct Model {
     pub scope_id: Option<Uuid>,
     /// Application permission.
     pub app_role_id: Option<Uuid>,
+    /// Created or adopted by `oauth apply`, which may delete it.
+    pub managed: bool,
     pub created_at: DateTimeWithTimeZone,
 }
 

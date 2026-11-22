@@ -152,6 +152,7 @@ pub async fn create(
             password: Some(&one_time),
             must_change_password: true,
             email_verified: false,
+            disabled: false,
         },
     )
     .await?;

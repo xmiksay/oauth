@@ -12,6 +12,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import ListShell from '@/components/ListShell.vue'
 import ModalDialog from '@/components/ModalDialog.vue'
 import ErrorAlert from '@/components/ErrorAlert.vue'
+import ManagedBadge from '@/components/ManagedBadge.vue'
 
 const router = useRouter()
 const { canWriteApps } = storeToRefs(useAuthStore())
@@ -107,6 +108,7 @@ async function create() {
                 v-if="a.builtin"
                 class="badge ml-1"
               >Built-in</span>
+              <ManagedBadge :managed="a.managed" />
             </td>
             <td class="mono">
               {{ a.client_id }}

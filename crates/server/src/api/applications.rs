@@ -45,6 +45,7 @@ pub fn view(a: &applications::Model) -> Value {
         "display_name": a.display_name,
         "client_type": a.client_type.to_value(),
         "builtin": a.builtin,
+        "managed": a.managed,
         "redirect_uris": a.redirect_uris,
         "post_logout_redirect_uris": a.post_logout_redirect_uris,
         "web_origins": a.web_origins,
@@ -114,7 +115,7 @@ pub async fn get(
     )))
 }
 
-fn map_write_error(err: DbErr) -> AppError {
+pub(crate) fn map_write_error(err: DbErr) -> AppError {
     if directory::violates_unique(&err, "applications_tenant_id_client_id_key") {
         AppError::Conflict("client_id is already taken in this tenant".into())
     } else if directory::violates_unique(&err, "applications_tenant_id_identifier_uri_key") {
@@ -122,6 +123,34 @@ fn map_write_error(err: DbErr) -> AppError {
     } else {
         err.into()
     }
+}
+
+/// A new registration's defaults, before the body's settings apply.
+pub(crate) fn new_row(
+    tenant_id: Uuid,
+    client_id: &str,
+    client_type: ClientType,
+) -> applications::ActiveModel {
+    let mut row = applications::ActiveModel {
+        id: Set(Uuid::now_v7()),
+        tenant_id: Set(tenant_id),
+        client_id: Set(client_id.to_owned()),
+        client_type: Set(client_type),
+        builtin: Set(false),
+        redirect_uris: Set(Vec::new()),
+        post_logout_redirect_uris: Set(Vec::new()),
+        web_origins: Set(Vec::new()),
+        identifier_uri: Set(None),
+        access_token_format: Set(AccessTokenFormat::Jwt),
+        signing_alg: Set(SigningAlg::Rs256),
+        groups_claim_format: Set(GroupsClaimFormat::Id),
+        id_token_groups: Set(IdTokenGroups::None),
+        ..Default::default()
+    };
+    if client_type == ClientType::Public {
+        row.refresh_token_ttl_secs = Set(DEFAULT_REFRESH_TTL_PUBLIC);
+    }
+    row
 }
 
 pub async fn create(
@@ -144,25 +173,7 @@ pub async fn create(
     if body.display_name.is_none() {
         return Err(AppError::BadRequest("display_name is required".into()));
     }
-    let mut row = applications::ActiveModel {
-        id: Set(Uuid::now_v7()),
-        tenant_id: Set(caller.tenant_id()),
-        client_id: Set(client_id.clone()),
-        client_type: Set(client_type),
-        builtin: Set(false),
-        redirect_uris: Set(Vec::new()),
-        post_logout_redirect_uris: Set(Vec::new()),
-        web_origins: Set(Vec::new()),
-        identifier_uri: Set(None),
-        access_token_format: Set(AccessTokenFormat::Jwt),
-        signing_alg: Set(SigningAlg::Rs256),
-        groups_claim_format: Set(GroupsClaimFormat::Id),
-        id_token_groups: Set(IdTokenGroups::None),
-        ..Default::default()
-    };
-    if client_type == ClientType::Public {
-        row.refresh_token_ttl_secs = Set(DEFAULT_REFRESH_TTL_PUBLIC);
-    }
+    let mut row = new_row(caller.tenant_id(), &client_id, client_type);
     let loopback = state.config.idp_allow_http_loopback;
     apply(&mut row, &body, &client_id, client_type, loopback)?;
     let txn = state.db.begin().await?;

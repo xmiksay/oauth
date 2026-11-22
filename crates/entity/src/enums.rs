@@ -139,6 +139,9 @@ pub enum ActorType {
     Application,
     #[sea_orm(string_value = "system")]
     System,
+    /// `oauth apply` (declarative provisioning).
+    #[sea_orm(string_value = "apply")]
+    Apply,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, EnumIter, DeriveActiveEnum)]

@@ -207,6 +207,10 @@ runs Vite on `*.localhost:5173`, proxying backend paths with the `Host` kept
   row or the panel's "Close" changes it — no reload (search, page, failed load, a stale response)
   unmounts the panel or a password it shows. After a reset the panel reloads its own user; the
   list refreshes only once the password dialog is closed (`ResetPasswordButton` `done`). The page renders nothing but a note for anyone else.
+- **Managed by apply**: apps, groups and users with `managed` (created or adopted by
+  `oauth apply`, [provisioning.md](provisioning.md)) carry a `ManagedBadge` in lists / user
+  badges, and the app detail page warns that the next apply overwrites declared settings.
+  Editing stays allowed (the server doesn't lock managed objects).
 - **Identity providers** (admin `areas/admin/federation`, nav "Identity providers"): list
   (`usePagedList`, no search) and detail pages over `identity-providers`; anyone with a directory
   role reads, only a Global Admin (`auth.isGlobalAdmin`) sees create / save / enable–disable /

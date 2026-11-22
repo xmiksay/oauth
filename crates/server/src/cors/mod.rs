@@ -246,6 +246,7 @@ mod tests {
             mfa_policy: entity::enums::AppMfaPolicy::Inherit,
             backchannel_logout_uri: None,
             backchannel_logout_session_required: false,
+            managed: false,
             created_at: now,
             updated_at: now,
         }

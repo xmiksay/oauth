@@ -14,6 +14,8 @@ pub struct Model {
     pub user_id: Option<Uuid>,
     pub group_id: Option<Uuid>,
     pub client_application_id: Option<Uuid>,
+    /// Created or adopted by `oauth apply`, which may delete it.
+    pub managed: bool,
     pub created_at: DateTimeWithTimeZone,
 }
 

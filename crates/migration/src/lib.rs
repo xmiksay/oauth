@@ -39,6 +39,7 @@ mod m20261122_000018_id_token_groups;
 mod m20261122_000019_device_approved_session;
 mod m20261122_000020_secret_options;
 mod m20261122_000021_retired_tenant_slugs;
+mod m20261122_000022_provisioning;
 
 pub struct Migrator;
 
@@ -67,6 +68,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261122_000019_device_approved_session::Migration),
             Box::new(m20261122_000020_secret_options::Migration),
             Box::new(m20261122_000021_retired_tenant_slugs::Migration),
+            Box::new(m20261122_000022_provisioning::Migration),
         ]
     }
 }

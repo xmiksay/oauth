@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { UserDetail } from '@/api/types'
+import ManagedBadge from '@/components/ManagedBadge.vue'
 
 /** Status and MFA summary of a user as a row of badges. */
 defineProps<{ user: UserDetail }>()
@@ -30,5 +31,6 @@ defineProps<{ user: UserDetail }>()
       class="badge"
     >Telegram linked</span>
     <span class="badge">{{ user.user_type }}</span>
+    <ManagedBadge :managed="user.managed" />
   </p>
 </template>

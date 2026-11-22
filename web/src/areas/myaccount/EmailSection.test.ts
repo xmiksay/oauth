@@ -20,6 +20,7 @@ function detail(over: Partial<Me> = {}): Me {
     disabled: false,
     must_change_password: false,
     has_password: true,
+    managed: false,
     created_at: '',
     updated_at: '',
     directory_roles: [],
