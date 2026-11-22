@@ -1,6 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
-import { systemAdminUrl, tenantFromHostname, tenantOrigin, useTenantStore } from './tenant'
+import {
+  currentTenant,
+  systemAdminUrl,
+  tenantFromHostname,
+  tenantFromMeta,
+  tenantOrigin,
+  useTenantStore,
+} from './tenant'
+
+/** A document whose head holds `html`. */
+function docWith(html: string): Document {
+  const doc = document.implementation.createHTMLDocument('t')
+  doc.head.innerHTML = html
+  return doc
+}
 
 describe('tenantFromHostname', () => {
   it('takes the first label of a tenant host', () => {
@@ -14,6 +28,36 @@ describe('tenantFromHostname', () => {
     expect(tenantFromHostname('')).toBeNull()
     expect(tenantFromHostname('.localhost')).toBeNull()
     expect(tenantFromHostname('acme..localhost')).toBeNull()
+  })
+})
+
+describe('tenantFromMeta', () => {
+  it('reads the server-provided tenant', () => {
+    expect(tenantFromMeta(docWith('<meta name="oauth-tenant" content="prod">'))).toBe('prod')
+  })
+
+  it('is null without one', () => {
+    expect(tenantFromMeta(docWith(''))).toBeNull()
+    expect(tenantFromMeta(docWith('<meta name="oauth-tenant" content="">'))).toBeNull()
+  })
+})
+
+describe('currentTenant', () => {
+  const meta = docWith('<meta name="oauth-tenant" content="prod">')
+  const none = docWith('')
+
+  it('believes the server over the host name (the apex serving APEX_TENANT)', () => {
+    expect(currentTenant(meta, 'id.example.com', '')).toBe('prod')
+    expect(currentTenant(meta, 'acme.localhost', 'other')).toBe('prod')
+  })
+
+  it('falls back to the first label under the dev server', () => {
+    expect(currentTenant(none, 'acme.localhost', 'prod')).toBe('acme')
+  })
+
+  it("takes the dev apex's APEX_TENANT, if any", () => {
+    expect(currentTenant(none, 'localhost', 'prod')).toBe('prod')
+    expect(currentTenant(none, 'localhost', '')).toBeNull()
   })
 })
 
@@ -54,6 +98,19 @@ describe('useTenantStore', () => {
 
   it('has no tenant on the dev apex', () => {
     vi.stubGlobal('location', { ...window.location, hostname: 'localhost' })
-    expect(useTenantStore().slug).toBeNull()
+    expect(useTenantStore().slug).toBe(__APEX_TENANT__ || null)
+  })
+
+  it("prefers the server's meta", () => {
+    vi.stubGlobal('location', { ...window.location, hostname: 'id.example.com' })
+    const tag = document.createElement('meta')
+    tag.name = 'oauth-tenant'
+    tag.content = 'prod'
+    document.head.append(tag)
+    try {
+      expect(useTenantStore().slug).toBe('prod')
+    } finally {
+      tag.remove()
+    }
   })
 })

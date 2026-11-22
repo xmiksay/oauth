@@ -123,7 +123,8 @@ Additional rules:
 
 ```jsonc
 // Tenant
-{ "id", "slug", "display_name", "is_system": false, "disabled": false,
+{ "id", "slug", "origin": "https://{slug}.{PUBLIC_URL host}", // the apex origin for the APEX_TENANT
+  "display_name", "is_system": false, "disabled": false,
   "audit_retention_days": 90, "mfa_policy": "optional|required",
   "logout_revokes_refresh_tokens": true, "allow_non_expiring_secrets": false,
   "created_at", "updated_at" }
@@ -202,8 +203,10 @@ must be changed at first sign-in) in one transaction; slug rules as in
 like punycode `xn--`; reserved service names like `www`, `mail`, `api`, `system`
 and the configured `SYSTEM_TENANT_SLUG` → 400; taken → 409).
 The new tenant lives at `{scheme}://{slug}.{PUBLIC_URL host}[:port]`. Disabling makes the
-tenant 404 everywhere (sign-in, tokens, API); the system tenant can't be
-disabled (403). A disabled tenant whose slug fails today's rules (created
+tenant 404 everywhere (sign-in, tokens, API); the system tenant and the
+`APEX_TENANT` ([../deploy.md](../deploy.md#apex-tenant)) can't be disabled
+(403). `origin` is the tenant's origin and issuer, which for the `APEX_TENANT`
+is the apex (`PUBLIC_URL`); clients link to tenants by it. A disabled tenant whose slug fails today's rules (created
 before they existed, e.g. `www`) can't be re-enabled (`disabled: false` →
 400): the server refuses to start with such a tenant enabled.
 

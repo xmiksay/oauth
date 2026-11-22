@@ -19,7 +19,9 @@ make web-dev       # (second terminal) SPA on http://*.localhost:5173
 
 Every tenant `t` lives on its own host `t.{PUBLIC_URL host}` (the apex only
 redirects to the system tenant's admin center; its slug is `SYSTEM_TENANT_SLUG`,
-default `system`, see [docs/deploy.md](docs/deploy.md#system-tenant-slug)). The default `.env` has
+default `system`, see [docs/deploy.md](docs/deploy.md#system-tenant-slug)) —
+except an optional `APEX_TENANT`, served on the apex itself instead
+([docs/deploy.md](docs/deploy.md#apex-tenant)). The default `.env` has
 `PUBLIC_URL=http://localhost:5173`, the Vite dev server, which proxies the
 backend paths with the `Host` header kept; `*.localhost` resolves to loopback
 in browsers. Without Vite, `make web-build` and set

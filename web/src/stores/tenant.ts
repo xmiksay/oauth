@@ -2,9 +2,17 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 
 /**
+ * The tenant the server wrote into `index.html` (`<meta name="oauth-tenant">`, see `spa.rs`).
+ * Absent only under the Vite dev server, which serves its own `index.html`.
+ */
+export function tenantFromMeta(doc: Pick<Document, 'querySelector'> = document): string | null {
+  return doc.querySelector('meta[name="oauth-tenant"]')?.getAttribute('content') || null
+}
+
+/**
  * The tenant of a `{slug}.{base host}` hostname: its first label. `null` only for a
- * single-label host such as the dev apex `localhost` (a production apex like
- * `id.example.com` never serves the SPA: the server redirects or 404s there).
+ * single-label host such as the dev apex `localhost`. Wrong on a production apex serving
+ * `APEX_TENANT` (`id.example.com` is not tenant `id`), hence {@link currentTenant}.
  */
 export function tenantFromHostname(hostname: string): string | null {
   const [first, ...rest] = hostname.toLowerCase().split('.')
@@ -31,8 +39,21 @@ export function systemAdminUrl(
   return `${loc.protocol}//${slug}.${loc.host}/admin`
 }
 
+/**
+ * The page's tenant: the server's `<meta>` first; under the Vite dev server the host's first
+ * label, or on the single-label dev apex the dev `.env`'s `APEX_TENANT` (`null` without one: the
+ * dev apex then redirects to the system admin center).
+ */
+export function currentTenant(
+  doc: Pick<Document, 'querySelector'> = document,
+  hostname: string = location.hostname,
+  apexTenant: string = __APEX_TENANT__,
+): string | null {
+  return tenantFromMeta(doc) ?? tenantFromHostname(hostname) ?? (apexTenant || null)
+}
+
 export const useTenantStore = defineStore('tenant', () => {
   // Fixed for the page's lifetime: another tenant is another host, hence a full navigation.
-  const slug = ref<string | null>(tenantFromHostname(location.hostname))
+  const slug = ref<string | null>(currentTenant())
   return { slug }
 })

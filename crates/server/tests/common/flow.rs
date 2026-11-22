@@ -82,6 +82,12 @@ impl Fixture {
         Self::build(env, true).await
     }
 
+    /// A fixture whose server reads `env` on top of the defaults (e.g.
+    /// `APEX_TENANT`), with a Telegram bot when `telegram` is set.
+    pub async fn with_env(env: &[(&'static str, &str)], telegram: bool) -> Self {
+        Self::build(env, telegram).await
+    }
+
     /// The fake Bot API (Telegram fixtures only).
     pub fn bot(&self) -> &super::telegram::FakeBot {
         self.bot.as_ref().expect("a Telegram fixture")

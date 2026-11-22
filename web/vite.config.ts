@@ -9,21 +9,25 @@ import { BACKEND_PROXY_PATTERN } from './dev-proxy.ts'
 // backend resolves the tenant from it, so dev needs PUBLIC_URL=http://localhost:5173.
 const backend: ProxyOptions = { target: 'http://localhost:8080', changeOrigin: false }
 
-// Only the dev apex (`localhost:5173`, served by Vite) needs the system tenant's slug, to send
-// the browser to its admin center as the server's apex does; read from the backend's `.env`,
+// Only the dev apex (`localhost:5173`, served by Vite, so without the server's tenant `<meta>`)
+// needs these: the system tenant's slug, to send the browser to its admin center as the
+// server's apex does, or the `APEX_TENANT` it serves instead. Read from the backend's `.env`,
 // trimmed like the server does. A value the server would refuse fails here too, loudly.
-function systemTenantSlug(mode: string): string {
-  const env = loadEnv(mode, fileURLToPath(new URL('..', import.meta.url)), 'SYSTEM_TENANT_SLUG')
-  const slug = (env.SYSTEM_TENANT_SLUG ?? '').trim() || 'system'
-  if (!/^[a-z0-9][a-z0-9-]{1,62}$/.test(slug)) {
-    throw new Error(`SYSTEM_TENANT_SLUG \`${slug}\` is not a valid tenant slug`)
+function tenantSlug(mode: string, key: string, fallback: string): string {
+  const env = loadEnv(mode, fileURLToPath(new URL('..', import.meta.url)), key)
+  const slug = (env[key] ?? '').trim() || fallback
+  if (slug && !/^[a-z0-9][a-z0-9-]{1,62}$/.test(slug)) {
+    throw new Error(`${key} \`${slug}\` is not a valid tenant slug`)
   }
   return slug
 }
 
 export default defineConfig(({ mode }) => ({
   plugins: [vue(), tailwindcss()],
-  define: { __SYSTEM_TENANT_SLUG__: JSON.stringify(systemTenantSlug(mode)) },
+  define: {
+    __SYSTEM_TENANT_SLUG__: JSON.stringify(tenantSlug(mode, 'SYSTEM_TENANT_SLUG', 'system')),
+    __APEX_TENANT__: JSON.stringify(tenantSlug(mode, 'APEX_TENANT', '')),
+  },
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },

@@ -16,7 +16,8 @@ it writes nothing to disk). One-off commands use the same image:
 password) and `oauth telegram set-webhook` (with Telegram).
 
 **Hosts and TLS.** Tenant `t` lives at `t.<PUBLIC_URL host>` and the apex
-serves the system redirect and the Telegram webhook, so DNS and the ingress
+serves the system redirect (or the [`APEX_TENANT`](#apex-tenant)) and the
+Telegram webhook, so DNS and the ingress
 need both the apex and a one-label wildcard (`id.example.com`,
 `*.id.example.com`) routed to the app, and TLS needs a certificate covering
 both (a wildcard certificate can only be issued through ACME DNS-01). Nested
@@ -62,6 +63,7 @@ commented list.
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET` (with `TELEGRAM_BOT_USERNAME`) | `COOKIE_SECURE`, `TRUSTED_PROXY_HEADER`, `WEB_DIST_DIR` |
 | | `SMTP_FROM`, `TELEGRAM_BOT_USERNAME`, `TELEGRAM_API_URL` |
 | | `SYSTEM_TENANT_SLUG` (default `system`), `SYSTEM_TENANT_RENAME` (`1` / `0`, default `0`) |
+| | `APEX_TENANT` (unset) |
 
 Email is on only with both `SMTP_URL` and `SMTP_FROM`, Telegram only with all
 three `TELEGRAM_*` above; a partial set fails startup. Back up
@@ -97,6 +99,34 @@ the system tenant gives up (`config` after `system` → `config` → `acme`, or
 after moving back to `system`) is free again, and a regular tenant could claim
 the host its former users and relying parties still know. Don't rename away
 from a custom slug once it has been in use.
+
+<a id="apex-tenant"></a>**Apex tenant.** By default the apex (`PUBLIC_URL`
+itself) only redirects `GET /` to the system tenant's admin center. Set
+`APEX_TENANT=<slug>` to serve one regular tenant there instead — e.g. the
+production tenant at `https://id.example.com` rather than
+`https://prod.id.example.com`. That tenant then lives **only** on the apex:
+its issuer, discovery, JWKS, every protocol, login and management endpoint,
+the SPA (`/`, `/login`, `/logout`, `/device`, `/myaccount`, `/admin`), its
+cookies (host-only, so they stay on the apex), the login API's CSRF origin,
+CORS, back-channel logout `iss`, federation callback URL
+(`{PUBLIC_URL}/federation/callback`), email / notice links and its passkey RP
+ID (the apex host) all use the apex origin, and its old subdomain answers 404.
+Other tenants, the system tenant included, stay on their subdomains;
+`/telegram/webhook` stays a reserved apex path and the probes answer on any
+host. Startup refuses a slug that is not a regular tenant slug, is the system
+tenant's, names no tenant, or names a disabled one, so create the tenant first
+(with `APEX_TENANT` unset) and then set it on every replica; while it is set,
+the tenant can't be disabled (403). Unset = the default redirect.
+Startup points the tenant's built-in SPAs' redirect URIs at the apex (and back
+when unset). **Moving an existing tenant to or from the apex changes its
+issuer and origin**, with the same consequences as a
+[system tenant rename](#system-tenant-slug): tokens it issued stop validating,
+browser sessions stay behind, passkeys (bound to the old host as RP ID) stop
+working, and relying parties and upstream identity providers (federation
+callback URL) must be updated. A passkey registered on the apex names the apex
+host as RP ID, which browsers would also accept on its subdomains; the server
+still verifies the RP ID hash and the exact origin per tenant, so it is only
+ever accepted by the apex tenant.
 
 **Database.** One PostgreSQL database shared by all replicas; it holds all
 state (sessions, codes, login transactions, rate limits), so the app is

@@ -31,6 +31,7 @@ use crate::{
     app::AppState,
     audit::{EventType, Target},
     authz::{Access, Area},
+    config::Config,
     directory::{self, NewTenant, NewUser, display_name, normalize_email, password, slug},
     error::{AppError, AppResult},
 };
@@ -39,10 +40,11 @@ use crate::{
 /// keeps a tenant admin from erasing recent history by shrinking retention.
 const RETENTION_DAYS: std::ops::RangeInclusive<i32> = 30..=3650;
 
-pub fn view(t: &tenants::Model) -> Value {
+pub fn view(config: &Config, t: &tenants::Model) -> Value {
     json!({
         "id": t.id,
         "slug": t.slug,
+        "origin": config.tenant_origin(&t.slug),
         "display_name": t.display_name,
         "is_system": t.is_system,
         "disabled": t.disabled,
@@ -83,7 +85,7 @@ pub async fn list(
         |t| t.id,
     )
     .await?;
-    Ok(page.map(|t| view(&t)))
+    Ok(page.map(|t| view(&state.config, &t)))
 }
 
 pub(super) async fn by_slug(conn: &impl ConnectionTrait, slug: &str) -> AppResult<tenants::Model> {
@@ -100,7 +102,10 @@ pub async fn get(
     _admin: SystemAdmin,
     Path(slug): Path<String>,
 ) -> AppResult<axum::Json<Value>> {
-    Ok(axum::Json(view(&by_slug(&state.db, &slug).await?)))
+    Ok(axum::Json(view(
+        &state.config,
+        &by_slug(&state.db, &slug).await?,
+    )))
 }
 
 #[derive(Deserialize)]
@@ -161,7 +166,7 @@ pub async fn create(
         .await?;
     txn.commit().await?;
     let body = json!({
-        "tenant": view(&tenant),
+        "tenant": view(&state.config, &tenant),
         "admin": { "id": admin.id, "email": admin.email },
         "one_time_password": one_time.as_str(),
     });
@@ -264,6 +269,13 @@ pub async fn update(
     Path(slug): Path<String>,
     Json(body): Json<UpdateTenant>,
 ) -> AppResult<axum::Json<Value>> {
+    // Startup refuses a disabled APEX_TENANT, so disabling it would stop
+    // every new replica.
+    if body.disabled == Some(true) && state.config.is_apex_tenant(&slug) {
+        return Err(AppError::Forbidden(
+            "the apex tenant (APEX_TENANT) cannot be disabled".into(),
+        ));
+    }
     if body.disabled == Some(false) {
         // Startup refuses enabled tenants whose slug fails today's rules, so
         // enabling one would stop every new replica.
@@ -280,14 +292,17 @@ pub async fn update(
     let txn = state.db.begin().await?;
     let updated = save(&txn, &caller, &slug, &body).await?;
     txn.commit().await?;
-    Ok(axum::Json(view(&updated)))
+    Ok(axum::Json(view(&state.config, &updated)))
 }
 
 /// `GET /api/v1/settings`: the caller's own tenant (any directory
 /// role or app with read access).
-pub async fn get_settings(caller: Caller) -> AppResult<axum::Json<Value>> {
+pub async fn get_settings(
+    State(state): State<AppState>,
+    caller: Caller,
+) -> AppResult<axum::Json<Value>> {
     caller.require(Area::Directory, Access::Read)?;
-    Ok(axum::Json(view(&caller.tenant)))
+    Ok(axum::Json(view(&state.config, &caller.tenant)))
 }
 
 #[derive(Deserialize)]
@@ -321,5 +336,5 @@ pub async fn update_settings(
     let txn = state.db.begin().await?;
     let updated = save(&txn, &caller, &caller.tenant.slug, &body).await?;
     txn.commit().await?;
-    Ok(axum::Json(view(&updated)))
+    Ok(axum::Json(view(&state.config, &updated)))
 }

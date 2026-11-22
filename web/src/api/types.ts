@@ -31,6 +31,8 @@ export type AppMfaPolicy = 'inherit' | 'required'
 export interface Tenant {
   id: string
   slug: string
+  /** Its origin (= OIDC issuer): `https://{slug}.{apex}`, or the apex for the `APEX_TENANT`. */
+  origin: string
   display_name: string
   is_system: boolean
   disabled: boolean

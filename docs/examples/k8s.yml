@@ -67,6 +67,11 @@ data:
   # renames the tenant and changes its issuer (its tokens and sessions stop
   # working) — see docs/deploy.md#system-tenant-slug.
   # SYSTEM_TENANT_SLUG: "system"
+  # Serve one existing, enabled regular tenant on the apex (issuer
+  # https://id.example.com) instead of its subdomain, which then 404s; unset =
+  # the apex redirects to the system admin center. Moving a tenant changes its
+  # issuer — see docs/deploy.md#apex-tenant.
+  # APEX_TENANT: "prod"
   # The ingress appends the client address; its right-most entry is trusted.
   TRUSTED_PROXY_HEADER: "X-Forwarded-For"
   # Email (verification, password reset, invitations, security notices) needs

@@ -32,6 +32,8 @@ impl Config {
         }
 
         let public_url = PublicUrl::parse(&required("PUBLIC_URL")?)?;
+        let system_tenant_slug = parse_system_slug(get("SYSTEM_TENANT_SLUG"))?;
+        let apex_tenant = parse_apex_tenant(get("APEX_TENANT"), &system_tenant_slug)?;
         let config = Self {
             database_url: required("DATABASE_URL")?,
             idp_allow_http_loopback: !public_url.is_https(),
@@ -68,7 +70,8 @@ impl Config {
                 get("TELEGRAM_WEBHOOK_SECRET"),
                 get("TELEGRAM_API_URL"),
             )?,
-            system_tenant_slug: parse_system_slug(get("SYSTEM_TENANT_SLUG"))?,
+            system_tenant_slug,
+            apex_tenant,
             system_tenant_rename: get("SYSTEM_TENANT_RENAME")
                 .map(|v| parse_flag("SYSTEM_TENANT_RENAME", &v))
                 .transpose()?
@@ -86,6 +89,20 @@ fn parse_system_slug(raw: Option<String>) -> anyhow::Result<String> {
     let value = raw.trim();
     slug::validate_system(value).map_err(|e| anyhow::anyhow!("SYSTEM_TENANT_SLUG: {e}"))?;
     Ok(value.to_owned())
+}
+
+/// `APEX_TENANT`: a regular tenant's slug (whether it exists and is enabled
+/// is checked against the database at startup).
+fn parse_apex_tenant(raw: Option<String>, system_slug: &str) -> anyhow::Result<Option<String>> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let value = raw.trim();
+    if value == system_slug {
+        bail!("APEX_TENANT: the system tenant `{value}` can't be served on the apex");
+    }
+    slug::validate(value, system_slug).map_err(|e| anyhow::anyhow!("APEX_TENANT: {e}"))?;
+    Ok(Some(value.to_owned()))
 }
 
 /// `1` / `true` / `0` / `false` (any case).
@@ -162,6 +179,46 @@ mod tests {
         assert!(cfg.telegram.is_none() && !cfg.telegram_enabled());
         assert_eq!(cfg.system_tenant_slug, "system");
         assert!(!cfg.system_tenant_rename);
+        assert_eq!(cfg.apex_tenant, None);
+    }
+
+    #[test]
+    fn apex_tenant_moves_one_tenant_to_the_apex() {
+        let mut env = base_env();
+        env.insert("APEX_TENANT", " prod ".into());
+        let cfg = parse(&env).unwrap();
+        assert_eq!(cfg.apex_tenant.as_deref(), Some("prod"));
+        assert!(cfg.is_apex_tenant("prod") && !cfg.is_apex_tenant("other"));
+        assert_eq!(cfg.tenant_origin("prod"), "https://id.example.com");
+        assert_eq!(cfg.issuer("prod"), "https://id.example.com");
+        assert_eq!(cfg.tenant_rp_id("prod"), "id.example.com");
+        // Every other tenant keeps its subdomain.
+        assert_eq!(cfg.tenant_origin("other"), "https://other.id.example.com");
+        assert_eq!(cfg.tenant_rp_id("other"), "other.id.example.com");
+        assert!(format!("{cfg:?}").contains("prod"));
+        env.insert("PUBLIC_URL", "http://localhost:5173".into());
+        env.insert("COOKIE_SECURE", "false".into());
+        let cfg = parse(&env).unwrap();
+        assert_eq!(cfg.tenant_origin("prod"), "http://localhost:5173");
+        assert_eq!(cfg.tenant_rp_id("prod"), "localhost");
+    }
+
+    #[test]
+    fn apex_tenant_must_be_a_regular_tenant_slug() {
+        let mut env = base_env();
+        for bad in ["system", "www", "Prod", "ab-", "xn--80ak6aa92e", "a"] {
+            env.insert("APEX_TENANT", bad.into());
+            let err = parse(&env).unwrap_err().to_string();
+            assert!(err.contains("APEX_TENANT"), "{bad}: {err}");
+        }
+        // The configured system slug, whatever it is.
+        env.insert("SYSTEM_TENANT_SLUG", "config".into());
+        env.insert("APEX_TENANT", "config".into());
+        let err = parse(&env).unwrap_err().to_string();
+        assert!(err.contains("system tenant"), "{err}");
+        // Blank = unset.
+        env.insert("APEX_TENANT", "  ".into());
+        assert_eq!(parse(&env).unwrap().apex_tenant, None);
     }
 
     #[test]

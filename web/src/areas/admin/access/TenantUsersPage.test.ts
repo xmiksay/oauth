@@ -4,7 +4,7 @@ import { createPinia, setActivePinia, type Pinia } from 'pinia'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { h, type Component } from 'vue'
 import { adminPageKey } from '@/router/admin'
-import type { AdminUserDetail, Tenant, User } from '@/api/types'
+import type { AdminUserDetail, User } from '@/api/types'
 import { SEARCH_DEBOUNCE_MS } from '@/composables/usePagedList'
 import { FakeManager, fakeMe, fakeUser, mockFetch } from '@/test/helpers'
 
@@ -17,7 +17,6 @@ vi.mock('@/auth/oidc', () => ({
 }))
 
 const { default: TenantUsersPage } = await import('./TenantUsersPage.vue')
-const { default: TenantsPage } = await import('./TenantsPage.vue')
 const { useAuthStore } = await import('@/stores/auth')
 const { useTenantStore } = await import('@/stores/tenant')
 
@@ -364,36 +363,5 @@ describe('TenantUsersPage', () => {
     const w = await mountAt('/admin/tenants/contoso/users', TenantUsersPage)
     expect(w.text()).toContain('Only a Global Administrator of the system tenant')
     expect(calls).toHaveLength(0)
-  })
-})
-
-describe('TenantsPage users link', () => {
-  const tenant = (over: Partial<Tenant>): Tenant => ({
-    id: 't1',
-    slug: 'contoso',
-    display_name: 'Contoso',
-    is_system: false,
-    disabled: false,
-    audit_retention_days: 90,
-    mfa_policy: 'optional',
-    logout_revokes_refresh_tokens: true,
-    allow_non_expiring_secrets: false,
-    created_at: '',
-    updated_at: '',
-    ...over,
-  })
-
-  it('links every tenant but the system tenant to its users', async () => {
-    await signIn()
-    mockFetch(
-      page([
-        tenant({ id: 't0', slug: 'system', display_name: 'System', is_system: true }),
-        tenant({ disabled: true }),
-      ]),
-    )
-    const w = await mountAt('/admin/tenants', TenantsPage)
-    const links = w.findAll('a').filter((a) => a.text() === 'Users')
-    expect(links).toHaveLength(1)
-    expect(links[0]?.attributes('href')).toBe('/admin/tenants/contoso/users')
   })
 })

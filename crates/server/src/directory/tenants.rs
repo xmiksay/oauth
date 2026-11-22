@@ -1,7 +1,7 @@
 //! Tenant creation: the tenant row, its signing keys and built-in apps are
 //! committed together or not at all.
 
-use anyhow::Context;
+use anyhow::{Context, bail};
 use entity::{
     enums::{KeyStatus, SigningAlg},
     tenants,
@@ -169,4 +169,29 @@ pub async fn find_system_tenant(
         .one(conn)
         .await
         .context("looking up system tenant")
+}
+
+/// Startup check of `APEX_TENANT`: it must name an existing, enabled regular
+/// tenant (the apex would otherwise serve nothing, or the system tenant).
+pub async fn ensure_apex_tenant(
+    conn: &impl ConnectionTrait,
+    config: &Config,
+) -> anyhow::Result<()> {
+    let Some(slug) = config.apex_tenant.as_deref() else {
+        return Ok(());
+    };
+    match find_tenant_by_slug(conn, slug).await? {
+        None => bail!(
+            "APEX_TENANT `{slug}`: no such tenant. Create it on the system tenant's admin \
+             center (with APEX_TENANT unset), then set APEX_TENANT"
+        ),
+        Some(t) if t.is_system => {
+            bail!("APEX_TENANT `{slug}` is the system tenant, which can't be served on the apex")
+        }
+        Some(t) if t.disabled => bail!(
+            "APEX_TENANT `{slug}` is disabled; enable it (with APEX_TENANT unset) or unset \
+             APEX_TENANT"
+        ),
+        Some(_) => Ok(()),
+    }
 }

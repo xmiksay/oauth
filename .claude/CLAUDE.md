@@ -55,7 +55,9 @@ See `.env.example` (authoritative, commented). Required: `DATABASE_URL`,
 `false` only with an `http://` `PUBLIC_URL`), `TRUSTED_PROXY_HEADER` (unset),
 `SYSTEM_TENANT_SLUG` (system), `SYSTEM_TENANT_RENAME` (0; `1` lets startup
 rename a stored system tenant to a changed slug — new issuer, see
-[docs/deploy.md](../docs/deploy.md#system-tenant-slug)),
+[docs/deploy.md](../docs/deploy.md#system-tenant-slug)), `APEX_TENANT`
+(unset; a regular tenant served on the apex instead of its subdomain —
+[docs/deploy.md](../docs/deploy.md#apex-tenant)),
 `SMTP_URL` + `SMTP_FROM` (both or neither; unset hides every email feature —
 [docs/email.md](../docs/email.md)). `SMTP_URL` is a secret, `SMTP_FROM`
 plain config. `TELEGRAM_BOT_TOKEN` + `TELEGRAM_WEBHOOK_SECRET` (secret) +
@@ -93,15 +95,22 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   `DirectoryError` (→ `AppError`: 400 / 409 / 404 / 500).
 - Tenancy is by host only: tenant `t` lives at `t.{PUBLIC_URL host}[:port]`, its
   issuer is that origin (`Config::tenant_origin` / `issuer`; `PUBLIC_URL` is an origin,
-  no path). `tenancy::resolve_host` gates every route but `/healthz` / `/readyz`
+  no path) — except `config.apex_tenant` (`APEX_TENANT`), which lives only on the
+  apex (its subdomain → 404). Derive every tenant URL, issuer, CSRF / CORS origin
+  and RP ID from `Config::tenant_origin` / `issuer` / `tenant_rp_id`, never from
+  `public_url` + slug; the SPA learns its tenant from the `oauth-tenant` `<meta>`
+  `spa` writes into `index.html`, other tenants' origins from the Tenant `origin`. `tenancy::resolve_host` gates every route but `/healthz` / `/readyz`
   (authority = absolute-form / `:authority` first, then `Host`, RFC 9112 §3.2.2;
   several `Host` headers → 400; default port normalised; unknown / disabled /
-  other-port / nested hosts and tenants with a now-invalid slug → 404, apex `/` →
-  system admin portal); never read `X-Forwarded-Host` / `Forwarded`. Startup
+  other-port / nested hosts and tenants with a now-invalid slug → 404; apex →
+  the `APEX_TENANT`, or without one `/` → system admin portal; `/telegram/webhook`
+  is apex-only and never a tenant route); never read `X-Forwarded-Host` / `Forwarded`. Startup
   (`db::migrate_and_reconcile`) first reconciles the system tenant's slug with
   `config.system_tenant_slug` (`directory::reconcile_system_slug`: mismatch →
   refuse, or rename with `SYSTEM_TENANT_RENAME=1`), then refuses enabled
-  tenants whose slug fails `slug::validate`. Never hard-code `system`: use
+  tenants whose slug fails `slug::validate` and an `APEX_TENANT` that is missing,
+  disabled or the system tenant (`directory::ensure_apex_tenant`; the tenants API
+  refuses disabling it, 403). Never hard-code `system`: use
   `config.system_tenant_slug` or the tenant's `is_system` (SPA:
   `me.tenant_is_system`). Routes have no tenant
   segment; take the `Tenant` extractor. Built-in SPA redirect URIs derive from

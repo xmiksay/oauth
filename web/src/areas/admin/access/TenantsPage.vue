@@ -40,7 +40,7 @@ async function create() {
   )
   if (!res) return
   creating.value = false
-  createdFor.value = `${res.admin.email} — sign in at ${tenantOrigin(res.tenant.slug)}/admin`
+  createdFor.value = `${res.admin.email} — sign in at ${res.tenant.origin}/admin`
   oneTime.value = [res.one_time_password]
   await list.reload()
 }
@@ -108,6 +108,9 @@ function setDisabled(t: Tenant) {
             </td>
             <td class="mono">
               {{ t.slug }}
+              <div class="hint">
+                {{ t.origin }}
+              </div>
             </td>
             <td>{{ t.disabled ? 'Disabled' : 'Active' }}</td>
             <td class="hidden md:table-cell">

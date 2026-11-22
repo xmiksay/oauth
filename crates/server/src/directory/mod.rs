@@ -16,8 +16,8 @@ use crate::error::AppError;
 pub use system_tenant::{SlugOutcome, Via as SlugVia, reconcile_slug as reconcile_system_slug};
 pub(crate) use tenants::create_system_tenant;
 pub use tenants::{
-    NewTenant, TenantKeys, create_tenant, find_system_tenant, find_tenant_by_slug,
-    generate_tenant_keys, insert_tenant, invalid_enabled_slugs,
+    NewTenant, TenantKeys, create_tenant, ensure_apex_tenant, find_system_tenant,
+    find_tenant_by_slug, generate_tenant_keys, insert_tenant, invalid_enabled_slugs,
 };
 pub use users::{
     NewUser, assign_directory_role, create_user, find_user_by_email, normalize_email,
