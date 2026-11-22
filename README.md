@@ -34,6 +34,10 @@ a one-time password that must be changed at first sign-in):
 make bootstrap ADMIN_EMAIL=you@example.com            # RESET=1 re-issues the password
 ```
 
+A tenant's apps, scopes, roles, groups, assignments and dev users can be kept
+in a YAML file and applied idempotently (`make apply FILE=tenant.yaml
+DRY_RUN=1` first): see [docs/provisioning.md](docs/provisioning.md).
+
 With a Telegram bot configured (`TELEGRAM_*`, see `.env.example`), register its
 webhook once with `make telegram-webhook` (`oauth telegram set-webhook`).
 

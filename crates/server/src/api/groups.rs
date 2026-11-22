@@ -32,19 +32,20 @@ use crate::{
 
 /// Names are unique per tenant case-insensitively (the only unique index a
 /// write can hit), since they can be the `groups` claim.
-const NAME_TAKEN: &str = "another group already has this name (letter case is ignored)";
+pub(crate) const NAME_TAKEN: &str = "another group already has this name (letter case is ignored)";
 
 fn view(g: &groups::Model) -> Value {
     json!({
         "id": g.id,
         "display_name": g.display_name,
         "description": g.description,
+        "managed": g.managed,
         "created_at": ts(&g.created_at),
         "updated_at": ts(&g.updated_at),
     })
 }
 
-pub(super) async fn find_group(
+pub(crate) async fn find_group(
     conn: &impl ConnectionTrait,
     tenant_id: Uuid,
     id: Uuid,
@@ -266,17 +267,7 @@ pub async fn add_member(
     referenced(find_user(&txn, tenant_id, body.user_id).await, "user")?;
     // A membership only a group mapping keeps becomes manual too, so it
     // stays when the mapped claim value goes.
-    let added = txn
-        .execute_raw(Statement::from_sql_and_values(
-            DbBackend::Postgres,
-            r"INSERT INTO group_members (tenant_id, group_id, user_id)
-              VALUES ($1, $2, $3)
-              ON CONFLICT (group_id, user_id) DO UPDATE SET manual = true
-              WHERE NOT group_members.manual",
-            [tenant_id.into(), id.into(), body.user_id.into()],
-        ))
-        .await?;
-    if added.rows_affected() == 0 {
+    if !insert_member(&txn, tenant_id, id, body.user_id, false).await? {
         return Err(AppError::Conflict("the user is already a member".into()));
     }
     caller
@@ -289,6 +280,34 @@ pub async fn add_member(
         .await?;
     txn.commit().await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Adds `user_id` as a manual member (also over a mapped-only membership);
+/// false when it already was one. `managed`: added by `oauth apply`.
+pub(crate) async fn insert_member(
+    conn: &impl ConnectionTrait,
+    tenant_id: Uuid,
+    group_id: Uuid,
+    user_id: Uuid,
+    managed: bool,
+) -> AppResult<bool> {
+    let added = conn
+        .execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r"INSERT INTO group_members (tenant_id, group_id, user_id, managed)
+              VALUES ($1, $2, $3, $4)
+              ON CONFLICT (group_id, user_id) DO UPDATE SET manual = true,
+                  managed = group_members.managed OR EXCLUDED.managed
+              WHERE NOT group_members.manual",
+            [
+                tenant_id.into(),
+                group_id.into(),
+                user_id.into(),
+                managed.into(),
+            ],
+        ))
+        .await?;
+    Ok(added.rows_affected() > 0)
 }
 
 pub async fn remove_member(

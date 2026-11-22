@@ -180,6 +180,7 @@ mod tests {
             disabled: false,
             first_device_at: None,
             webauthn_handle: None,
+            managed: false,
             created_at: now,
             updated_at: now,
         }

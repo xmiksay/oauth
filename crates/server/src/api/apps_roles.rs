@@ -5,7 +5,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use entity::{app_roles, enums::member_type};
+use entity::{app_roles, applications, enums::member_type};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait,
     QueryFilter, QueryOrder, TransactionTrait,
@@ -67,7 +67,7 @@ pub struct RoleBody {
     allowed_member_types: Option<Vec<String>>,
 }
 
-fn member_types(raw: &[String]) -> AppResult<Vec<String>> {
+pub(crate) fn member_types(raw: &[String]) -> AppResult<Vec<String>> {
     const ALLOWED: [&str; 2] = [member_type::USER, member_type::APPLICATION];
     if raw.iter().any(|t| !ALLOWED.contains(&t.as_str())) {
         return Err(AppError::BadRequest(
@@ -88,6 +88,69 @@ fn member_types(raw: &[String]) -> AppResult<Vec<String>> {
     Ok(out)
 }
 
+/// A validated new app role.
+pub(crate) struct NewRole {
+    pub value: String,
+    pub display_name: String,
+    pub description: String,
+    pub allowed_member_types: Vec<String>,
+}
+
+/// Inserts a role under the per-app cap (`managed`: created by `oauth apply`).
+pub(crate) async fn insert_role(
+    conn: &impl ConnectionTrait,
+    app: &applications::Model,
+    new: NewRole,
+    managed: bool,
+) -> AppResult<app_roles::Model> {
+    let existing = app_roles::Entity::find()
+        .filter(app_roles::Column::ApplicationId.eq(app.id))
+        .count(conn)
+        .await?;
+    ensure_below(existing, MAX_ROLES, "app roles")?;
+    let row = app_roles::ActiveModel {
+        id: Set(Uuid::now_v7()),
+        tenant_id: Set(app.tenant_id),
+        application_id: Set(app.id),
+        value: Set(new.value),
+        display_name: Set(new.display_name),
+        description: Set(new.description),
+        allowed_member_types: Set(new.allowed_member_types),
+        managed: Set(managed),
+        ..Default::default()
+    };
+    app_roles::Entity::insert(row)
+        .exec_with_returning(conn)
+        .await
+        .map_err(|e| conflict_on_unique(e, "the app already has a role with this value"))
+}
+
+/// Sets the given (validated) fields that differ; returns their names.
+pub(crate) fn update_role_fields(
+    row: &mut app_roles::ActiveModel,
+    display_name: Option<String>,
+    description: Option<String>,
+    allowed_member_types: Option<Vec<String>>,
+) -> Vec<&'static str> {
+    let mut fields = Vec::new();
+    if let Some(name) = display_name
+        && set_changed(&mut row.display_name, name)
+    {
+        fields.push("display_name");
+    }
+    if let Some(d) = description
+        && set_changed(&mut row.description, d)
+    {
+        fields.push("description");
+    }
+    if let Some(types) = allowed_member_types
+        && set_changed(&mut row.allowed_member_types, types)
+    {
+        fields.push("allowed_member_types");
+    }
+    fields
+}
+
 pub async fn create_role(
     State(state): State<AppState>,
     caller: Caller,
@@ -103,29 +166,18 @@ pub async fn create_role(
         ));
     };
     validate::permission_value(value, "role")?;
-    let row_fields = (display_name(name, "role")?, member_types(types)?);
-    let description = validate::opt_description(body.description.as_deref())?;
+    let name = display_name(name, "role")?;
+    let types = member_types(types)?;
+    let description = validate::opt_description(body.description.as_deref())?.unwrap_or_default();
     let txn = state.db.begin().await?;
     let app = writable_app(&txn, &caller, app_id).await?;
-    let existing = app_roles::Entity::find()
-        .filter(app_roles::Column::ApplicationId.eq(app.id))
-        .count(&txn)
-        .await?;
-    ensure_below(existing, MAX_ROLES, "app roles")?;
-    let row = app_roles::ActiveModel {
-        id: Set(Uuid::now_v7()),
-        tenant_id: Set(app.tenant_id),
-        application_id: Set(app.id),
-        value: Set(value.clone()),
-        display_name: Set(row_fields.0),
-        description: Set(description.unwrap_or_default()),
-        allowed_member_types: Set(row_fields.1),
-        ..Default::default()
+    let new = NewRole {
+        value: value.clone(),
+        display_name: name,
+        description,
+        allowed_member_types: types,
     };
-    let role = app_roles::Entity::insert(row)
-        .exec_with_returning(&txn)
-        .await
-        .map_err(|e| conflict_on_unique(e, "the app already has a role with this value"))?;
+    let role = insert_role(&txn, &app, new, false).await?;
     let details = json!({ "role_id": role.id, "value": role.value });
     caller
         .audit(
@@ -168,7 +220,11 @@ pub async fn update_role(
         .as_deref()
         .map(|n| display_name(n, "role"))
         .transpose()?;
-    let description = validate::opt_description(body.description.as_deref())?;
+    let description = body
+        .description
+        .as_deref()
+        .map(validate::description)
+        .transpose()?;
     let types = body
         .allowed_member_types
         .as_deref()
@@ -177,21 +233,8 @@ pub async fn update_role(
     let txn = state.db.begin().await?;
     let app = writable_app(&txn, &caller, app_id).await?;
     let role = find_role(&txn, app.id, role_id).await?;
-    if name.is_none() && body.description.is_none() && types.is_none() {
-        return Ok(axum::Json(role_view(&role)));
-    }
     let mut row: app_roles::ActiveModel = role.clone().into();
-    let mut changed = false;
-    if let Some(name) = name {
-        changed |= set_changed(&mut row.display_name, name);
-    }
-    if body.description.is_some() {
-        changed |= set_changed(&mut row.description, description.unwrap_or_default());
-    }
-    if let Some(types) = types {
-        changed |= set_changed(&mut row.allowed_member_types, types);
-    }
-    if !changed {
+    if update_role_fields(&mut row, name, description, types).is_empty() {
         return Ok(axum::Json(role_view(&role)));
     }
     let role = row.update(&txn).await?;

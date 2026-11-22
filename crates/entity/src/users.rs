@@ -26,6 +26,8 @@ pub struct Model {
     /// Random 32-byte WebAuthn user handle (passkeys never carry the user
     /// id); generated at the first passkey registration.
     pub webauthn_handle: Option<Vec<u8>>,
+    /// Created or adopted by `oauth apply`, which may delete it.
+    pub managed: bool,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
 }
@@ -44,6 +46,7 @@ impl std::fmt::Debug for Model {
             .field("disabled", &self.disabled)
             .field("first_device_at", &self.first_device_at)
             .field("webauthn_handle", &"<redacted>")
+            .field("managed", &self.managed)
             .field("created_at", &self.created_at)
             .field("updated_at", &self.updated_at)
             .finish()

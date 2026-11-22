@@ -56,6 +56,8 @@ export interface User {
   disabled: boolean
   must_change_password: boolean
   has_password: boolean
+  /** Created or adopted by `oauth apply`: the next apply overwrites edits. */
+  managed: boolean
   created_at: string
   updated_at: string
 }
@@ -174,6 +176,8 @@ export interface IdentityProvider {
   discovery_url: string | null
   client_id: string
   has_secret: boolean
+  /** Created or adopted by `oauth apply`. */
+  managed: boolean
   client_auth: IdpClientAuth
   scopes: string[]
   policy: IdpPolicy
@@ -259,6 +263,8 @@ export interface Group {
   id: string
   display_name: string
   description: string | null
+  /** Created or adopted by `oauth apply`. */
+  managed: boolean
   created_at: string
   updated_at: string
 }
@@ -336,7 +342,7 @@ export interface MyConsent extends ConsentGrant {
 export interface AuditEvent {
   id: string
   at: string
-  actor_type: 'user' | 'application' | 'system'
+  actor_type: 'user' | 'application' | 'system' | 'apply'
   actor_id: string | null
   event_type: string
   target_type: string | null

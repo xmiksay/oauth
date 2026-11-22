@@ -9,7 +9,8 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
   sign-in: [docs/authn.md](../docs/authn.md), passkeys: [docs/passkeys.md](../docs/passkeys.md),
   federation: [docs/federation.md](../docs/federation.md), background jobs: [docs/jobs.md](../docs/jobs.md),
   logout / back-channel logout: [docs/backchannel_logout.md](../docs/backchannel_logout.md), device code: [docs/device_code.md](../docs/device_code.md),
-  CORS: [docs/cors.md](../docs/cors.md), consent + assignment: [docs/consent.md](../docs/consent.md), refresh tokens: [docs/refresh_tokens.md](../docs/refresh_tokens.md)
+  CORS: [docs/cors.md](../docs/cors.md), consent + assignment: [docs/consent.md](../docs/consent.md), refresh tokens: [docs/refresh_tokens.md](../docs/refresh_tokens.md),
+  `oauth apply` / bootstrap options: [docs/provisioning.md](../docs/provisioning.md)
 - Roadmap / milestones: [docs/roadmap.md](../docs/roadmap.md)
 - Deployment / release: [docs/deploy.md](../docs/deploy.md)
 
@@ -17,7 +18,7 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
 
 | Path | What |
 |---|---|
-| `crates/server/` | bin `oauth` (`serve`, `bootstrap`) + lib `oauth_server` (all modules; integration tests use it) |
+| `crates/server/` | bin `oauth` (`serve`, `bootstrap`, `apply`, `telegram`) + lib `oauth_server` (all modules; integration tests use it) |
 | `crates/entity/` | SeaORM entities (one file per table) + `enums.rs` |
 | `crates/migration/` | `sea-orm-migration` Migrator (append-only, raw SQL) |
 | `web/` | Vite + Vue 3 + TS + Tailwind + Pinia SPA (`/` portal, `/login`, `/logout`, `/device`, `/myaccount`, `/admin` on each tenant host); conventions below |
@@ -39,7 +40,8 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
 | `make test-integration` | `cargo test --workspace --test '*'`: one fresh database per test on `TEST_DATABASE_URL` (default the local `postgres://postgres@localhost:5432/postgres`: a TCP superuser URL, Postgres ≥ 17; dropped after the test); `TEST_DATABASE_URL=` (empty) → testcontainers Postgres 17 (Docker; what CI runs) |
 | `make test-db-clean` | drop `oauth_it_*` databases and roles that killed test runs left on `TEST_DATABASE_URL` — only while no tests run (it drops live ones too) |
 | `make docker` | build image (`IMAGE=` to override tag) |
-| `make bootstrap ADMIN_EMAIL=… [RESET=1]` | migrate, then create the system tenant (`SYSTEM_TENANT_SLUG`) + Global Admin (idempotent; `RESET=1` issues a new one-time password) |
+| `make bootstrap ADMIN_EMAIL=… [RESET=1] [TENANT=slug] [PROVISIONING_APP=id [PROVISIONING_ROLE=read\|read-write] [ROTATE=1]]` | migrate, then create the system tenant (`SYSTEM_TENANT_SLUG`, or `TENANT`) + Global Admin and / or a client-credentials app holding a management API role (idempotent; `RESET=1` issues a new one-time password, `ROTATE=1` a new client secret; either is printed once) |
+| `make apply FILE=tenant.yaml [DRY_RUN=1]` | `oauth apply`: declarative tenant state in one transaction ([docs/provisioning.md](../docs/provisioning.md)); `DRY_RUN=1` prints the diff and rolls back |
 | `make telegram-webhook` | `oauth telegram set-webhook`: register `{PUBLIC_URL}/telegram/webhook` + secret with the bot (loads `.env`) |
 
 Toolchains are pinned: `rust-toolchain.toml` (1.99.0) and `.nvmrc` (22). CI reads
@@ -293,6 +295,14 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
 - Writes that must be atomic with token issuance (code consume, refresh
   rotation, login completion) run in one DB transaction; keep new service
   code generic over `ConnectionTrait` so it can join one.
+- `oauth apply` (`provision`) reuses the management API's validators and
+  write helpers (`pub(crate)` in `api::*`) — never a second copy of a rule;
+  a new API setting / rule must reach apply through them. It marks what it
+  creates or adopts `managed` and deletes only managed rows its file no
+  longer declares; it audits as `Actor::Apply`. Secrets never come from the
+  file (`*_env` references, read only on create, names restricted to
+  `provision::spec::ENV_PREFIX` = `OAUTH_APPLY_`; never give a server env
+  var that prefix).
 - Never log request query strings (they carry codes / hints / tx ids);
   `app::request_span` logs the route template.
 - Each file ≤ 400 lines. Backend changes ship with unit tests (`#[cfg(test)]`)

@@ -25,6 +25,7 @@ pub mod metrics;
 pub mod notify;
 pub mod oidc;
 pub mod passkey;
+pub mod provision;
 pub mod secret;
 pub mod serve;
 pub mod spa;

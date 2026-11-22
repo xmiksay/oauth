@@ -55,4 +55,20 @@ describe('GroupsList', () => {
     expect((w.find('#cg-name').element as HTMLInputElement).value).toBe('  ops ')
     expect(router.currentRoute.value.name).toBe('admin-groups')
   })
+
+  it('marks groups managed by oauth apply', async () => {
+    const group = (id: string, managed: boolean) => ({
+      id,
+      display_name: `G ${id}`,
+      description: null,
+      managed,
+      created_at: '',
+      updated_at: '',
+    })
+    groups.list.mockResolvedValue({ items: [group('a', true), group('b', false)], next_cursor: null })
+    const { w } = await mountList()
+    const rows = w.findAll('tbody tr')
+    expect(rows[0]?.text()).toContain('Managed by apply')
+    expect(rows[1]?.text()).not.toContain('Managed by apply')
+  })
 })

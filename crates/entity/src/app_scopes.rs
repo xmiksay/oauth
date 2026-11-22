@@ -12,6 +12,8 @@ pub struct Model {
     pub value: String,
     pub description: String,
     pub admin_consent_required: bool,
+    /// Created or adopted by `oauth apply`, which may delete it.
+    pub managed: bool,
     pub created_at: DateTimeWithTimeZone,
 }
 

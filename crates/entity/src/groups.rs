@@ -10,6 +10,8 @@ pub struct Model {
     pub tenant_id: Uuid,
     pub display_name: String,
     pub description: Option<String>,
+    /// Created or adopted by `oauth apply`, which may delete it.
+    pub managed: bool,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
 }

@@ -12,6 +12,8 @@ pub struct Model {
     pub tenant_id: Uuid,
     pub user_id: Uuid,
     pub role: DirectoryRole,
+    /// Created or adopted by `oauth apply`, which may delete it.
+    pub managed: bool,
     pub created_at: DateTimeWithTimeZone,
 }
 

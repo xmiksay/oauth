@@ -205,9 +205,8 @@ async fn a_supplied_secret_with_form_reserved_characters_works_when_encoded() {
 async fn a_system_admin_sets_the_policy_of_another_tenant() {
     let f = Fixture::new().await;
     let opts = bootstrap::Options {
-        admin_email: "root@example.com".into(),
-        display_name: None,
-        reset_password: false,
+        admin_email: Some("root@example.com".into()),
+        ..Default::default()
     };
     bootstrap::run(&f.db, &f.config, &opts).await.unwrap();
     let system = directory::find_system_tenant(&f.db).await.unwrap().unwrap();

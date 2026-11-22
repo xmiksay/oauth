@@ -23,9 +23,10 @@ const EMAIL: &str = "root@example.com";
 
 fn opts(reset_password: bool) -> Options {
     Options {
-        admin_email: EMAIL.into(),
+        admin_email: Some(EMAIL.into()),
         display_name: Some("Root".into()),
         reset_password,
+        ..Default::default()
     }
 }
 
@@ -46,7 +47,7 @@ async fn bootstrap_is_idempotent_and_resets_only_on_request() {
 
     let first = bootstrap::run(&conn, &config, &opts(false)).await.unwrap();
     assert!(first.tenant_created);
-    let AdminOutcome::Created { password: pw1 } = &first.admin else {
+    let AdminOutcome::Created { password: pw1 } = &first.admin.as_ref().unwrap().outcome else {
         panic!("expected Created, got {:?}", first.admin);
     };
     assert!(first.render().contains(pw1.expose()));
@@ -86,14 +87,18 @@ async fn bootstrap_is_idempotent_and_resets_only_on_request() {
     // Second run: nothing changes, no password printed.
     let second = bootstrap::run(&conn, &config, &opts(false)).await.unwrap();
     assert!(!second.tenant_created);
-    assert_eq!(second.admin, AdminOutcome::Unchanged);
+    assert_eq!(
+        second.admin.as_ref().unwrap().outcome,
+        AdminOutcome::Unchanged
+    );
     assert!(!second.render().contains(pw1.expose()));
     assert_eq!(admin(&conn).await.password_hash.unwrap(), hash1);
     assert_eq!(tenants::Entity::find().count(&conn).await.unwrap(), 1);
 
     // --reset-password issues a new one-time password.
     let third = bootstrap::run(&conn, &config, &opts(true)).await.unwrap();
-    let AdminOutcome::PasswordReset { password: pw2 } = &third.admin else {
+    let AdminOutcome::PasswordReset { password: pw2 } = &third.admin.as_ref().unwrap().outcome
+    else {
         panic!("expected PasswordReset, got {:?}", third.admin);
     };
     assert_ne!(pw1, pw2);
@@ -115,7 +120,8 @@ async fn concurrent_bootstraps_create_one_admin() {
         tokio::spawn(async move { bootstrap::run(&conn, &config, &opts(false)).await })
     };
     let (a, b) = tokio::join!(run(), run());
-    let mut outcomes = [a.unwrap().unwrap().admin, b.unwrap().unwrap().admin];
+    let outcome = |r: bootstrap::Report| r.admin.unwrap().outcome;
+    let mut outcomes = [outcome(a.unwrap().unwrap()), outcome(b.unwrap().unwrap())];
     outcomes.sort_by_key(|o| matches!(o, AdminOutcome::Unchanged));
     assert!(
         matches!(outcomes[0], AdminOutcome::Created { .. }),

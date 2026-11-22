@@ -107,6 +107,7 @@ mod tests {
             value: value.into(),
             description: String::new(),
             admin_consent_required: false,
+            managed: false,
             created_at: chrono::Utc::now().fixed_offset(),
         }
     }

@@ -24,6 +24,7 @@ const group: Group = {
   id: 'g1',
   display_name: 'Ops',
   description: null,
+  managed: false,
   created_at: '',
   updated_at: '',
 }
@@ -61,6 +62,7 @@ const member = {
   disabled: false,
   must_change_password: false,
   has_password: false,
+  managed: false,
   created_at: '',
   updated_at: '',
 }

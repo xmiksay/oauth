@@ -13,7 +13,10 @@ and not tested; the requirements below are what any deployment must meet.
 The image runs `oauth serve` as uid 10001 (read-only root filesystem is fine;
 it writes nothing to disk). One-off commands use the same image:
 `oauth bootstrap --admin-email …` (first Global Admin, prints a one-time
-password) and `oauth telegram set-webhook` (with Telegram).
+password; `--tenant` / `--provisioning-app` for a regular tenant and a
+client-credentials app), `oauth apply -f tenant.yaml` (declarative tenant
+state, [provisioning.md](provisioning.md)) and `oauth telegram set-webhook`
+(with Telegram).
 
 **Hosts and TLS.** Tenant `t` lives at `t.<PUBLIC_URL host>` and the apex
 serves the system redirect (or the [`APEX_TENANT`](#apex-tenant)) and the

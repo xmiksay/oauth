@@ -156,6 +156,7 @@ pub async fn add_user(
             password: Some(PASSWORD),
             must_change_password: must_change,
             email_verified: false,
+            disabled: false,
         },
     )
     .await

@@ -94,7 +94,11 @@ pub struct GrantBody {
 }
 
 /// `requested` ⊆ `required` (or all of `required` when not given).
-fn pick(requested: Option<&[String]>, required: &[String], what: &str) -> AppResult<Vec<String>> {
+pub(crate) fn pick(
+    requested: Option<&[String]>,
+    required: &[String],
+    what: &str,
+) -> AppResult<Vec<String>> {
     match requested {
         None => Ok(required.to_vec()),
         Some(values) => {

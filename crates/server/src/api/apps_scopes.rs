@@ -7,7 +7,7 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use entity::app_scopes;
+use entity::{app_scopes, applications};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait,
     QueryFilter, QueryOrder, Statement, TransactionTrait,
@@ -78,27 +78,11 @@ pub async fn create_scope(
         .value
         .ok_or_else(|| AppError::BadRequest("value is required".into()))?;
     validate::scope_value(&value)?;
-    let description = validate::opt_description(body.description.as_deref())?;
+    let description = validate::opt_description(body.description.as_deref())?.unwrap_or_default();
     let txn = state.db.begin().await?;
     let app = writable_app(&txn, &caller, app_id).await?;
-    let existing = app_scopes::Entity::find()
-        .filter(app_scopes::Column::ApplicationId.eq(app.id))
-        .count(&txn)
-        .await?;
-    ensure_below(existing, MAX_SCOPES, "scopes")?;
-    let row = app_scopes::ActiveModel {
-        id: Set(Uuid::now_v7()),
-        tenant_id: Set(app.tenant_id),
-        application_id: Set(app.id),
-        value: Set(value),
-        description: Set(description.unwrap_or_default()),
-        admin_consent_required: Set(body.admin_consent_required.unwrap_or(false)),
-        ..Default::default()
-    };
-    let scope = app_scopes::Entity::insert(row)
-        .exec_with_returning(&txn)
-        .await
-        .map_err(|e| conflict_on_unique(e, "the app already exposes a scope with this value"))?;
+    let admin = body.admin_consent_required.unwrap_or(false);
+    let scope = insert_scope(&txn, &app, value, description, admin, false).await?;
     let details = json!({ "scope_id": scope.id, "value": scope.value });
     let target = Some(Target::Application(app.id));
     caller
@@ -132,22 +116,16 @@ pub async fn update_scope(
             "a scope's value can't be changed".into(),
         ));
     }
-    let description = validate::opt_description(body.description.as_deref())?;
+    let description = body
+        .description
+        .as_deref()
+        .map(validate::description)
+        .transpose()?;
     let txn = state.db.begin().await?;
     let app = writable_app(&txn, &caller, app_id).await?;
     let scope = find_scope(&txn, app.id, scope_id).await?;
-    if body.description.is_none() && body.admin_consent_required.is_none() {
-        return Ok(axum::Json(scope_view(&scope)));
-    }
     let mut row: app_scopes::ActiveModel = scope.clone().into();
-    let mut changed = false;
-    if body.description.is_some() {
-        changed |= set_changed(&mut row.description, description.unwrap_or_default());
-    }
-    if let Some(admin) = body.admin_consent_required {
-        changed |= set_changed(&mut row.admin_consent_required, admin);
-    }
-    if !changed {
+    if update_scope_fields(&mut row, description, body.admin_consent_required).is_empty() {
         return Ok(axum::Json(scope_view(&scope)));
     }
     let scope = row.update(&txn).await?;
@@ -172,11 +150,79 @@ pub async fn remove_scope(
     let txn = state.db.begin().await?;
     let app = writable_app(&txn, &caller, app_id).await?;
     let scope = find_scope(&txn, app.id, scope_id).await?;
-    app_scopes::Entity::delete_by_id(scope.id)
-        .exec(&txn)
+    delete_scope(&txn, &app, &scope).await?;
+    let details = json!({ "scope_id": scope.id, "value": scope.value });
+    let target = Some(Target::Application(app.id));
+    caller
+        .audit(&txn, EventType::ApplicationScopeRemove, target, details)
         .await?;
-    txn.execute_raw(Statement::from_sql_and_values(
-        txn.get_database_backend(),
+    txn.commit().await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Inserts a validated scope under the per-app cap (`managed`: created by
+/// `oauth apply`).
+pub(crate) async fn insert_scope(
+    conn: &impl ConnectionTrait,
+    app: &applications::Model,
+    value: String,
+    description: String,
+    admin_consent_required: bool,
+    managed: bool,
+) -> AppResult<app_scopes::Model> {
+    let existing = app_scopes::Entity::find()
+        .filter(app_scopes::Column::ApplicationId.eq(app.id))
+        .count(conn)
+        .await?;
+    ensure_below(existing, MAX_SCOPES, "scopes")?;
+    let row = app_scopes::ActiveModel {
+        id: Set(Uuid::now_v7()),
+        tenant_id: Set(app.tenant_id),
+        application_id: Set(app.id),
+        value: Set(value),
+        description: Set(description),
+        admin_consent_required: Set(admin_consent_required),
+        managed: Set(managed),
+        ..Default::default()
+    };
+    app_scopes::Entity::insert(row)
+        .exec_with_returning(conn)
+        .await
+        .map_err(|e| conflict_on_unique(e, "the app already exposes a scope with this value"))
+}
+
+/// Sets the given (validated) fields that differ; returns their names.
+pub(crate) fn update_scope_fields(
+    row: &mut app_scopes::ActiveModel,
+    description: Option<String>,
+    admin_consent_required: Option<bool>,
+) -> Vec<&'static str> {
+    let mut fields = Vec::new();
+    if let Some(d) = description
+        && set_changed(&mut row.description, d)
+    {
+        fields.push("description");
+    }
+    if let Some(admin) = admin_consent_required
+        && set_changed(&mut row.admin_consent_required, admin)
+    {
+        fields.push("admin_consent_required");
+    }
+    fields
+}
+
+/// Deletes the scope, drops it from consent grants and revokes the refresh
+/// tokens carrying it.
+pub(crate) async fn delete_scope(
+    conn: &impl ConnectionTrait,
+    app: &applications::Model,
+    scope: &app_scopes::Model,
+) -> AppResult<()> {
+    app_scopes::Entity::delete_by_id(scope.id)
+        .exec(conn)
+        .await?;
+    conn.execute_raw(Statement::from_sql_and_values(
+        conn.get_database_backend(),
         "UPDATE consent_grants SET scopes = array_remove(scopes, $1), updated_at = now() \
          WHERE tenant_id = $2 AND resource_application_id = $3 AND $1 = ANY(scopes)",
         [
@@ -186,12 +232,6 @@ pub async fn remove_scope(
         ],
     ))
     .await?;
-    refresh::revoke_by_scope(&txn, app.tenant_id, app.id, &scope.value).await?;
-    let details = json!({ "scope_id": scope.id, "value": scope.value });
-    let target = Some(Target::Application(app.id));
-    caller
-        .audit(&txn, EventType::ApplicationScopeRemove, target, details)
-        .await?;
-    txn.commit().await?;
-    Ok(StatusCode::NO_CONTENT)
+    refresh::revoke_by_scope(conn, app.tenant_id, app.id, &scope.value).await?;
+    Ok(())
 }

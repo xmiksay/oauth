@@ -41,7 +41,7 @@ pub enum Principal {
 }
 
 impl Principal {
-    fn of(a: &ara::Model) -> Option<Self> {
+    pub(crate) fn of(a: &ara::Model) -> Option<Self> {
         match (a.user_id, a.group_id, a.client_application_id) {
             (Some(id), None, None) => Some(Self::User(id)),
             (None, Some(id), None) => Some(Self::Group(id)),

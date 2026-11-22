@@ -29,6 +29,7 @@ pub struct NewUser<'a> {
     /// An administrator vouches for the address (`POST users`); every
     /// other path starts unverified.
     pub email_verified: bool,
+    pub disabled: bool,
 }
 
 /// Minimal shape check; deliverability is proven by verification (M1b), not
@@ -73,7 +74,7 @@ pub async fn create_user(
         display_name: Set(display_name),
         password_hash: Set(password_hash),
         must_change_password: Set(new.must_change_password),
-        disabled: Set(false),
+        disabled: Set(new.disabled),
         ..Default::default()
     };
     users::Entity::insert(row)
@@ -211,6 +212,30 @@ pub async fn revoke_credentials(
         .await
         .context("revoking the user's sessions and tokens")?;
     }
+    Ok(())
+}
+
+/// Deletes a user (locked `FOR UPDATE` by the caller, last-Global-Admin
+/// rule checked). Sessions, tokens, memberships, roles and grants cascade;
+/// the ended sessions' Back-Channel Logouts are queued first and their
+/// outbox rows outlive the user.
+pub async fn delete_user(
+    conn: &impl ConnectionTrait,
+    master_key: &[u8; 32],
+    tenant_id: Uuid,
+    user_id: Uuid,
+) -> anyhow::Result<()> {
+    let ended = backchannel::Ended::User {
+        user_id,
+        keep: None,
+    };
+    backchannel::queue(conn, master_key, tenant_id, ended).await?;
+    users::Entity::delete_many()
+        .filter(users::Column::TenantId.eq(tenant_id))
+        .filter(users::Column::Id.eq(user_id))
+        .exec(conn)
+        .await
+        .context("deleting the user")?;
     Ok(())
 }
 

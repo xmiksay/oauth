@@ -114,6 +114,7 @@ describe('UserDetail Telegram', () => {
   const telegramOnly: AdminUserDetail = {
     ...passkeyOnly,
     has_password: true,
+    managed: false,
     mfa: { ...passkeyOnly.mfa, passkeys: 0, telegram: true },
   }
 

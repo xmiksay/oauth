@@ -19,7 +19,7 @@ use crate::{
 };
 
 /// `Some(None)` = explicit `null` (clear), `None` = absent (keep).
-pub(super) fn nullable<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
+pub(crate) fn nullable<'de, D: Deserializer<'de>, T: Deserialize<'de>>(
     d: D,
 ) -> Result<Option<Option<T>>, D::Error> {
     Option::<T>::deserialize(d).map(Some)
@@ -32,26 +32,26 @@ pub struct AppBody {
     pub client_id: Option<String>,
     pub client_type: Option<String>,
     pub display_name: Option<String>,
-    redirect_uris: Option<Vec<String>>,
-    post_logout_redirect_uris: Option<Vec<String>>,
-    web_origins: Option<Vec<String>>,
+    pub redirect_uris: Option<Vec<String>>,
+    pub post_logout_redirect_uris: Option<Vec<String>>,
+    pub web_origins: Option<Vec<String>>,
     #[serde(default, deserialize_with = "nullable")]
-    identifier_uri: Option<Option<String>>,
-    access_token_format: Option<String>,
-    signing_alg: Option<String>,
-    groups_claim_format: Option<String>,
-    id_token_groups: Option<String>,
-    assignment_required: Option<bool>,
-    access_token_ttl_secs: Option<i32>,
-    refresh_token_ttl_secs: Option<i32>,
-    device_code_enabled: Option<bool>,
-    mfa_policy: Option<String>,
+    pub identifier_uri: Option<Option<String>>,
+    pub access_token_format: Option<String>,
+    pub signing_alg: Option<String>,
+    pub groups_claim_format: Option<String>,
+    pub id_token_groups: Option<String>,
+    pub assignment_required: Option<bool>,
+    pub access_token_ttl_secs: Option<i32>,
+    pub refresh_token_ttl_secs: Option<i32>,
+    pub device_code_enabled: Option<bool>,
+    pub mfa_policy: Option<String>,
     #[serde(default, deserialize_with = "nullable")]
-    backchannel_logout_uri: Option<Option<String>>,
-    backchannel_logout_session_required: Option<bool>,
+    pub backchannel_logout_uri: Option<Option<String>>,
+    pub backchannel_logout_session_required: Option<bool>,
 }
 
-pub(super) fn parse<E: ActiveEnum<Value = String>>(
+pub(crate) fn parse<E: ActiveEnum<Value = String>>(
     raw: &str,
     field: &str,
     allowed: &str,
@@ -64,7 +64,7 @@ pub(super) fn parse<E: ActiveEnum<Value = String>>(
 /// `row`; returns the changed names (unchanged values sent back are ignored,
 /// so built-in / privileged-app rules only see real changes).
 /// `allow_http_loopback` admits plain-http loopback back-channel URIs.
-pub(super) fn apply(
+pub(crate) fn apply(
     row: &mut applications::ActiveModel,
     body: &AppBody,
     client_id: &str,

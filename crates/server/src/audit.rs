@@ -135,6 +135,8 @@ pub enum Actor {
     User(Option<Uuid>),
     Application(Uuid),
     System,
+    /// `oauth apply` (declarative provisioning, direct database access).
+    Apply,
 }
 
 pub struct Event {
@@ -153,6 +155,7 @@ pub async fn record(conn: &impl ConnectionTrait, event: Event) -> anyhow::Result
         Actor::User(id) => (ActorType::User, id),
         Actor::Application(id) => (ActorType::Application, Some(id)),
         Actor::System => (ActorType::System, None),
+        Actor::Apply => (ActorType::Apply, None),
     };
     let target = event.target.map(Target::parts);
     let details = match event.details {

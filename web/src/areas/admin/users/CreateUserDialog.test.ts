@@ -19,6 +19,7 @@ const created: User = {
   disabled: false,
   must_change_password: false,
   has_password: false,
+  managed: false,
   created_at: '',
   updated_at: '',
 }

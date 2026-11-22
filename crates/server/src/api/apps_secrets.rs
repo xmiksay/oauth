@@ -10,7 +10,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::Duration;
-use entity::{client_secrets, enums::ClientType, tenants};
+use entity::{applications, client_secrets, enums::ClientType, tenants};
 use sea_orm::{
     ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter,
     QueryOrder, QuerySelect, TransactionTrait,
@@ -39,7 +39,7 @@ use crate::{
 };
 
 /// Entra's default and maximum secret lifetimes.
-const DEFAULT_DAYS: i64 = 180;
+pub(crate) const DEFAULT_DAYS: i64 = 180;
 const MAX_DAYS: i64 = 730;
 const HINT_LEN: usize = 3;
 const NON_EXPIRING_OFF: &str = "this tenant doesn't allow non-expiring secrets";
@@ -164,29 +164,8 @@ pub async fn create(
         ));
     }
     ensure_may_manage_credentials(&txn, &caller, &app).await?;
-    let existing = client_secrets::Entity::find()
-        .filter(client_secrets::Column::ApplicationId.eq(app.id))
-        .count(&txn)
-        .await?;
-    ensure_below(existing, MAX_SECRETS, "secrets")?;
     let caller_supplied = supplied.is_some();
-    let value = match supplied {
-        Some(value) => value,
-        None => Zeroizing::new(secret::random_token()?),
-    };
-    let row = client_secrets::ActiveModel {
-        id: Set(Uuid::now_v7()),
-        tenant_id: Set(app.tenant_id),
-        application_id: Set(app.id),
-        secret_hash: Set(secret::hash(&value)),
-        hint: Set(hint(&value, caller_supplied)),
-        description: Set(description),
-        expires_at: Set(days.map(|d| chrono::Utc::now().fixed_offset() + Duration::days(d))),
-        ..Default::default()
-    };
-    let created = client_secrets::Entity::insert(row)
-        .exec_with_returning(&txn)
-        .await?;
+    let (created, value) = insert(&txn, &app, days, description, supplied).await?;
     caller
         .audit(
             &txn,
@@ -205,6 +184,42 @@ pub async fn create(
         obj.insert("secret".into(), value.as_str().into());
     }
     Ok((StatusCode::CREATED, axum::Json(body)).into_response())
+}
+
+/// Issues a new secret of the (confidential, locked) `app`, within the
+/// per-app cap: `supplied` or a generated value, expiring after `days`
+/// (`None` = never); returns the row and the plaintext.
+pub(crate) async fn insert(
+    conn: &impl ConnectionTrait,
+    app: &applications::Model,
+    days: Option<i64>,
+    description: Option<String>,
+    supplied: Option<Zeroizing<String>>,
+) -> AppResult<(client_secrets::Model, Zeroizing<String>)> {
+    let existing = client_secrets::Entity::find()
+        .filter(client_secrets::Column::ApplicationId.eq(app.id))
+        .count(conn)
+        .await?;
+    ensure_below(existing, MAX_SECRETS, "secrets")?;
+    let caller_supplied = supplied.is_some();
+    let value = match supplied {
+        Some(value) => value,
+        None => Zeroizing::new(secret::random_token()?),
+    };
+    let row = client_secrets::ActiveModel {
+        id: Set(Uuid::now_v7()),
+        tenant_id: Set(app.tenant_id),
+        application_id: Set(app.id),
+        secret_hash: Set(secret::hash(&value)),
+        hint: Set(hint(&value, caller_supplied)),
+        description: Set(description),
+        expires_at: Set(days.map(|d| chrono::Utc::now().fixed_offset() + Duration::days(d))),
+        ..Default::default()
+    };
+    let created = client_secrets::Entity::insert(row)
+        .exec_with_returning(conn)
+        .await?;
+    Ok((created, value))
 }
 
 pub async fn remove(

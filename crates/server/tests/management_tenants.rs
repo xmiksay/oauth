@@ -36,9 +36,8 @@ use serde_json::{Value, json};
 async fn system_admins_manage_tenants() {
     let f = Fixture::new().await;
     let opts = bootstrap::Options {
-        admin_email: "root@example.com".into(),
-        display_name: None,
-        reset_password: false,
+        admin_email: Some("root@example.com".into()),
+        ..Default::default()
     };
     bootstrap::run(&f.db, &f.config, &opts).await.unwrap();
     let system = directory::find_system_tenant(&f.db).await.unwrap().unwrap();
@@ -240,9 +239,8 @@ async fn system_admins_manage_tenants() {
 async fn a_tenant_whose_slug_is_now_invalid_cannot_be_re_enabled() {
     let f = Fixture::new().await;
     let opts = bootstrap::Options {
-        admin_email: "root@example.com".into(),
-        display_name: None,
-        reset_password: false,
+        admin_email: Some("root@example.com".into()),
+        ..Default::default()
     };
     bootstrap::run(&f.db, &f.config, &opts).await.unwrap();
     let system = directory::find_system_tenant(&f.db).await.unwrap().unwrap();

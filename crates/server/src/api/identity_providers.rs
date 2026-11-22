@@ -2,6 +2,8 @@
 //! Any directory role reads, only a GlobalAdmin writes (`Area::IdentityProviders`).
 //! The client secret is write-only: sealed at rest, never returned.
 
+use std::net::IpAddr;
+
 use axum::{
     extract::State,
     http::StatusCode,
@@ -29,7 +31,7 @@ use super::{
 };
 use crate::{
     app::AppState,
-    audit::{EventType, Target},
+    audit::{Actor, EventType, Target},
     authz::{Access, Area},
     error::{AppError, AppResult},
     federation::{group_map, identities, idps, kinds, urls},
@@ -55,6 +57,7 @@ fn view(state: &AppState, caller: &Caller, idp: &identity_providers::Model) -> V
         "hosted_domain": idp.hosted_domain,
         "allowed_tenants": idp.allowed_tenants,
         "trust_upstream_email": idp.trust_upstream_email,
+        "managed": idp.managed,
         "redirect_uri": urls::callback_url(&state.config, &caller.tenant.slug),
         "created_at": ts(&idp.created_at),
         "updated_at": ts(&idp.updated_at),
@@ -91,7 +94,7 @@ async fn find(
 /// FOR UPDATE: sign-ins and links hold it FOR SHARE while they write, so
 /// a repoint (or a mapping change) waits for them, and they see the new
 /// state after it.
-pub(super) async fn lock(
+pub(crate) async fn lock(
     conn: &impl ConnectionTrait,
     tenant_id: Uuid,
     id: Uuid,
@@ -136,32 +139,40 @@ pub async fn get(
     ))
 }
 
-pub async fn create(
-    State(state): State<AppState>,
-    caller: Caller,
-    Json(body): Json<IdpBody>,
-) -> AppResult<Response> {
-    caller.require(Area::IdentityProviders, Access::Write)?;
+/// The kind a create body asks for (default `oidc`), once the fields a
+/// create needs are present (a preset may supply the issuer).
+pub(crate) fn create_kind(body: &IdpBody) -> AppResult<IdpKind> {
     let kind = body
         .kind
         .as_deref()
         .map(idp_validate::kind)
         .transpose()?
         .unwrap_or(IdpKind::Oidc);
-    let default_issuer = idp_rules::default_issuer(kind);
-    let (Some(_), true, Some(_)) = (
-        &body.name,
-        body.issuer.is_some() || default_issuer.is_some(),
-        &body.client_id,
-    ) else {
+    let has_issuer = body.issuer.is_some() || idp_rules::default_issuer(kind).is_some();
+    let (Some(_), true, Some(_)) = (&body.name, has_issuer, &body.client_id) else {
         return Err(AppError::BadRequest(
             "name, issuer and client_id are required".into(),
         ));
     };
-    let tenant_id = caller.tenant_id();
-    let id = Uuid::now_v7();
+    Ok(kind)
+}
+
+/// The kind decides what subjects mean (GitHub's are user ids): it is
+/// fixed at creation.
+pub(crate) fn ensure_same_kind(body: &IdpBody, idp: &identity_providers::Model) -> AppResult<()> {
+    if let Some(raw) = &body.kind
+        && idp_validate::kind(raw)? != idp.kind
+    {
+        return Err(AppError::BadRequest("kind can't be changed".into()));
+    }
+    Ok(())
+}
+
+/// A new provider's defaults for `kind`, before the body's settings apply.
+pub(crate) fn new_row(tenant_id: Uuid, id: Uuid, kind: IdpKind) -> identity_providers::ActiveModel {
+    let default_issuer = idp_rules::default_issuer(kind);
     let now = chrono::Utc::now().fixed_offset();
-    let mut row = identity_providers::ActiveModel {
+    identity_providers::ActiveModel {
         id: Set(id),
         tenant_id: Set(tenant_id),
         kind: Set(kind),
@@ -182,10 +193,22 @@ pub async fn create(
         created_at: Set(now),
         updated_at: Set(now),
         ..Default::default()
-    };
+    }
+}
+
+pub async fn create(
+    State(state): State<AppState>,
+    caller: Caller,
+    Json(body): Json<IdpBody>,
+) -> AppResult<Response> {
+    caller.require(Area::IdentityProviders, Access::Write)?;
+    let kind = create_kind(&body)?;
+    let tenant_id = caller.tenant_id();
+    let id = Uuid::now_v7();
+    let mut row = new_row(tenant_id, id, kind);
     let mut secret = None;
-    apply(&state, &mut row, &body, &mut secret)?;
-    seal(&state, &mut row, tenant_id, id, secret)?;
+    apply(&state.config, &mut row, &body, &mut secret)?;
+    seal(&state.config, &mut row, tenant_id, id, secret)?;
     idp_rules::check_secret(&row)?;
     let txn = state.db.begin().await?;
     if let Set(domains) = &row.email_domains {
@@ -223,16 +246,10 @@ pub async fn update(
     let tenant_id = caller.tenant_id();
     let txn = state.db.begin().await?;
     let idp = lock(&txn, tenant_id, id).await?;
-    // The kind decides what subjects mean (GitHub's are user ids): it is
-    // fixed at creation.
-    if let Some(raw) = &body.kind
-        && idp_validate::kind(raw)? != idp.kind
-    {
-        return Err(AppError::BadRequest("kind can't be changed".into()));
-    }
+    ensure_same_kind(&body, &idp)?;
     let mut row: identity_providers::ActiveModel = idp.clone().into();
     let mut secret = None;
-    let mut fields = apply(&state, &mut row, &body, &mut secret)?;
+    let mut fields = apply(&state.config, &mut row, &body, &mut secret)?;
     let repointed = ["issuer", "client_id", "discovery_url"]
         .iter()
         .any(|f| fields.contains(f));
@@ -265,7 +282,7 @@ pub async fn update(
     if fields.is_empty() {
         return Ok(axum::Json(detailed(&state, &caller, &txn, &idp).await?));
     }
-    seal(&state, &mut row, tenant_id, id, secret)?;
+    seal(&state.config, &mut row, tenant_id, id, secret)?;
     idp_rules::check_secret(&row)?;
     if fields.contains(&"issuer") || fields.contains(&"allowed_tenants") {
         let stored = idp_rules::Row::of(&row).ok_or_else(|| {
@@ -329,35 +346,39 @@ pub async fn remove(
     caller.require(Area::IdentityProviders, Access::Write)?;
     let txn = state.db.begin().await?;
     let idp = lock(&txn, caller.tenant_id(), id).await?;
-    let only_via = identities::users_only_via(&txn, idp.tenant_id, id).await?;
-    // Must run before the delete, not as a cleanup: the FK's `SET NULL
-    // (idp_id)` on a mapped-only row (`manual = false`) would break
-    // `group_members_source_check` and abort the delete.
-    let memberships = group_map::drop_owned(
-        &txn,
-        idp.tenant_id,
-        id,
-        None,
-        None,
-        caller.actor(),
-        caller.ip,
-    )
-    .await?;
-    identity_providers::Entity::delete_by_id(id)
-        .exec(&txn)
-        .await?;
+    let details = delete_locked(&txn, &idp, caller.actor(), caller.ip).await?;
     caller
         .audit(
             &txn,
             EventType::IdentityProviderDelete,
             Some(Target::IdentityProvider(id)),
-            json!({
-                "name": idp.name,
-                "users_only_via": only_via,
-                "memberships_removed": memberships,
-            }),
+            details,
         )
         .await?;
     txn.commit().await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Deletes the (locked) provider with its mapped memberships and linked
+/// identities; returns the audit details.
+pub(crate) async fn delete_locked(
+    conn: &impl ConnectionTrait,
+    idp: &identity_providers::Model,
+    actor: Actor,
+    ip: Option<IpAddr>,
+) -> AppResult<Value> {
+    let only_via = identities::users_only_via(conn, idp.tenant_id, idp.id).await?;
+    // Must run before the delete, not as a cleanup: the FK's `SET NULL
+    // (idp_id)` on a mapped-only row (`manual = false`) would break
+    // `group_members_source_check` and abort the delete.
+    let memberships =
+        group_map::drop_owned(conn, idp.tenant_id, idp.id, None, None, actor, ip).await?;
+    identity_providers::Entity::delete_by_id(idp.id)
+        .exec(conn)
+        .await?;
+    Ok(json!({
+        "name": idp.name,
+        "users_only_via": only_via,
+        "memberships_removed": memberships,
+    }))
 }

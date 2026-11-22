@@ -128,6 +128,43 @@ pub struct CreatePermission {
     value: String,
 }
 
+/// The `(scope_id, app_role_id)` a permission of `kind` = `value` on
+/// `resource_id` names; 400 when the resource has no such scope / role.
+pub(crate) async fn lookup(
+    conn: &impl ConnectionTrait,
+    resource_id: Uuid,
+    kind: &str,
+    value: &str,
+) -> AppResult<(Option<Uuid>, Option<Uuid>)> {
+    match kind {
+        DELEGATED => {
+            let scope = app_scopes::Entity::find()
+                .filter(app_scopes::Column::ApplicationId.eq(resource_id))
+                .filter(app_scopes::Column::Value.eq(value))
+                .one(conn)
+                .await?
+                .ok_or_else(|| {
+                    AppError::BadRequest(format!("the resource exposes no scope `{value}`"))
+                })?;
+            Ok((Some(scope.id), None))
+        }
+        APPLICATION => {
+            let role = app_roles::Entity::find()
+                .filter(app_roles::Column::ApplicationId.eq(resource_id))
+                .filter(app_roles::Column::Value.eq(value))
+                .one(conn)
+                .await?
+                .ok_or_else(|| {
+                    AppError::BadRequest(format!("the resource has no app role `{value}`"))
+                })?;
+            Ok((None, Some(role.id)))
+        }
+        _ => Err(AppError::BadRequest(
+            "type must be `delegated` or `application`".into(),
+        )),
+    }
+}
+
 pub async fn create(
     State(state): State<AppState>,
     caller: Caller,
@@ -148,35 +185,7 @@ pub async fn create(
         find_app(&txn, tenant_id, body.resource_application_id).await,
         "resource application",
     )?;
-    let (scope_id, app_role_id) = match body.kind.as_str() {
-        DELEGATED => {
-            let scope = app_scopes::Entity::find()
-                .filter(app_scopes::Column::ApplicationId.eq(resource.id))
-                .filter(app_scopes::Column::Value.eq(&body.value))
-                .one(&txn)
-                .await?
-                .ok_or_else(|| {
-                    AppError::BadRequest(format!("the resource exposes no scope `{}`", body.value))
-                })?;
-            (Some(scope.id), None)
-        }
-        APPLICATION => {
-            let role = app_roles::Entity::find()
-                .filter(app_roles::Column::ApplicationId.eq(resource.id))
-                .filter(app_roles::Column::Value.eq(&body.value))
-                .one(&txn)
-                .await?
-                .ok_or_else(|| {
-                    AppError::BadRequest(format!("the resource has no app role `{}`", body.value))
-                })?;
-            (None, Some(role.id))
-        }
-        _ => {
-            return Err(AppError::BadRequest(
-                "type must be `delegated` or `application`".into(),
-            ));
-        }
-    };
+    let (scope_id, app_role_id) = lookup(&txn, resource.id, &body.kind, &body.value).await?;
     let row = arp::ActiveModel {
         id: Set(Uuid::now_v7()),
         tenant_id: Set(tenant_id),

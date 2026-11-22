@@ -14,6 +14,8 @@ pub struct Model {
     pub user_id: Option<Uuid>,
     /// Granted scope values of the resource app.
     pub scopes: Vec<String>,
+    /// Created or adopted by `oauth apply`, which may delete it.
+    pub managed: bool,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
 }

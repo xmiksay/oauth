@@ -131,6 +131,7 @@ Additional rules:
 // User (list / create / update)
 { "id", "email", "display_name", "user_type": "member", "email_verified": false,
   "disabled": false, "must_change_password": true, "has_password": true,
+  "managed": false,                         // read-only, see below
   "created_at", "updated_at" }
 // UserDetail (GET users/{id}, GET me) = User +
 { "directory_roles": ["GlobalAdmin"],
@@ -144,11 +145,12 @@ Additional rules:
 { "id", "amr": ["pwd"], "auth_time", "ip", "user_agent", "created_at", "expires_at",
   "current": false }   // `current`: the session the calling token came from (me only)
 // Group
-{ "id", "display_name", "description": null, "created_at", "updated_at" }
+{ "id", "display_name", "description": null, "managed": false, "created_at", "updated_at" }
 // DirectoryRoleAssignment
 { "id", "user_id", "role": "GlobalAdmin|ApplicationAdmin|UserAdmin", "created_at" }
 // Application
 { "id", "client_id", "display_name", "client_type": "confidential|public", "builtin": false,
+  "managed": false,
   "redirect_uris": [], "post_logout_redirect_uris": [], "identifier_uri": null,
   "web_origins": [],                        // explicit CORS origins
   "effective_web_origins": [],              // read-only: web_origins ∪ (public clients) redirect-URI origins
@@ -179,10 +181,17 @@ Additional rules:
 { "id", "client_application_id", "resource_application_id", "user_id": null,
   "scopes": ["Orders.Read"], "created_at", "updated_at" }
 // AuditEvent
-{ "id", "at", "actor_type": "user|application|system", "actor_id": null,
+{ "id", "at", "actor_type": "user|application|system|apply", "actor_id": null,
   "event_type": "user.create", "target_type": "user", "target_id",
   "outcome": "success|failure", "ip": "203.0.113.7", "details": {} }
 ```
+
+`managed` (read-only) marks objects created or adopted by `oauth apply`
+from a tenant file ([provisioning](../provisioning.md)): the next apply
+overwrites what the file declares and deletes them once the file no longer
+does. The API changes them like any other object. Events written by apply
+have `actor_type: apply` (no `actor_id`); those of `oauth bootstrap`,
+`system`.
 
 ## Tenants (system GlobalAdmin, system host only)
 

@@ -95,6 +95,7 @@ mod tests {
             assignment_required: required,
             backchannel_logout_uri: None,
             backchannel_logout_session_required: false,
+            managed: false,
             access_token_ttl_secs: 3600,
             refresh_token_ttl_secs: 3600,
             created_at: now,

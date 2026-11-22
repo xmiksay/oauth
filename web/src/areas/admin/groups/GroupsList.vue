@@ -11,6 +11,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import ListShell from '@/components/ListShell.vue'
 import ModalDialog from '@/components/ModalDialog.vue'
 import ErrorAlert from '@/components/ErrorAlert.vue'
+import ManagedBadge from '@/components/ManagedBadge.vue'
 
 const router = useRouter()
 const { canWriteUsers } = storeToRefs(useAuthStore())
@@ -86,6 +87,7 @@ async function create() {
               >
                 {{ g.display_name }}
               </RouterLink>
+              <ManagedBadge :managed="g.managed" />
             </td>
             <td class="muted">
               {{ g.description }}

@@ -14,6 +14,8 @@ pub struct Model {
     pub description: String,
     /// Subset of [`crate::enums::member_type`] values.
     pub allowed_member_types: Vec<String>,
+    /// Created or adopted by `oauth apply`, which may delete it.
+    pub managed: bool,
     pub created_at: DateTimeWithTimeZone,
 }
 

@@ -26,7 +26,7 @@ NVM = want=$$(cat .nvmrc); have=$$(node --version 2>/dev/null | sed 's/^v\([0-9]
 DOTENV = set -a; [ -f .env ] && . ./.env; set +a;
 
 .PHONY: help build run dev-db web-dev lint lint-rust lint-web fmt test test-unit \
-	test-integration test-db-clean web-test web-build docker bootstrap telegram-webhook clean
+	test-integration test-db-clean web-test web-build docker bootstrap apply telegram-webhook clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -74,9 +74,15 @@ web-build: ## Build the SPA into web/dist
 docker: ## Build the container image ($(IMAGE))
 	docker build -t $(IMAGE) .
 
-bootstrap: ## Create system tenant + Global Admin (idempotent): make bootstrap ADMIN_EMAIL=you@example.com [RESET=1]
-	@[ -n "$(ADMIN_EMAIL)" ] || { echo "usage: make bootstrap ADMIN_EMAIL=you@example.com [RESET=1]" >&2; exit 1; }
-	$(DOTENV) cargo run -- bootstrap --admin-email "$(ADMIN_EMAIL)" $(if $(RESET),--reset-password)
+bootstrap: ## Tenant + Global Admin / provisioning app (idempotent): make bootstrap ADMIN_EMAIL=… [RESET=1] [TENANT=slug] [PROVISIONING_APP=id [PROVISIONING_ROLE=read] [ROTATE=1]]
+	@[ -n "$(ADMIN_EMAIL)$(PROVISIONING_APP)" ] || { echo "usage: make bootstrap ADMIN_EMAIL=you@example.com [RESET=1] [TENANT=slug] [PROVISIONING_APP=client-id [PROVISIONING_ROLE=read|read-write] [ROTATE=1]]" >&2; exit 1; }
+	$(DOTENV) cargo run -- bootstrap $(if $(ADMIN_EMAIL),--admin-email "$(ADMIN_EMAIL)") $(if $(RESET),--reset-password) \
+	  $(if $(TENANT),--tenant "$(TENANT)") $(if $(PROVISIONING_APP),--provisioning-app "$(PROVISIONING_APP)") \
+	  $(if $(PROVISIONING_ROLE),--provisioning-role "$(PROVISIONING_ROLE)") $(if $(ROTATE),--rotate-secret)
+
+apply: ## Apply a declarative tenant file (loads .env): make apply FILE=tenant.yaml [DRY_RUN=1]
+	@[ -n "$(FILE)" ] || { echo "usage: make apply FILE=tenant.yaml [DRY_RUN=1]" >&2; exit 1; }
+	$(DOTENV) cargo run -- apply -f "$(FILE)" $(if $(DRY_RUN),--dry-run)
 
 telegram-webhook: ## Register {PUBLIC_URL}/telegram/webhook with the Telegram bot (loads .env; needs TELEGRAM_*)
 	$(DOTENV) cargo run -- telegram set-webhook

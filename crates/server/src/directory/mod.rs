@@ -24,7 +24,7 @@ pub use tenants::{
     find_tenant_by_slug, generate_tenant_keys, insert_tenant, invalid_enabled_slugs,
 };
 pub use users::{
-    NewUser, assign_directory_role, create_user, find_user_by_email, normalize_email,
+    NewUser, assign_directory_role, create_user, delete_user, find_user_by_email, normalize_email,
     revoke_credentials, set_password, set_password_keeping,
 };
 

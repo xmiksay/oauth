@@ -1,0 +1,89 @@
+# Example tenant file for `oauth apply -f docs/examples/tenant.yaml --dry-run`.
+# Contract: docs/provisioning.md. Unknown fields are errors; secrets are never
+# written here (`*_env` names an environment variable instead, and that name
+# must start with OAUTH_APPLY_ so the server's own secrets stay out of reach).
+tenant: contoso
+
+users:
+  - email: dev@contoso.example
+    display_name: Dev User
+    password_env: OAUTH_APPLY_DEV_PASSWORD   # used only when the user is created
+    must_change_password: false   # needs password_env; default true: replace it at first sign-in
+  - email: ops@contoso.example
+    display_name: Ops
+    disabled: false
+
+groups:
+  - display_name: Engineers
+    description: Everyone building Inventory
+    members: [dev@contoso.example]
+
+identity_providers:
+  - name: Corporate SSO
+    issuer: https://login.corp.example
+    client_id: contoso-oauth
+    client_secret_env: OAUTH_APPLY_CORP_SSO_SECRET   # set only while the provider has none
+    policy: link_only
+    email_domains: [corp.example]
+  - name: Google
+    kind: google                         # preset: issuer and scopes default
+    client_id: 1234.apps.googleusercontent.com
+    client_secret_env: OAUTH_APPLY_GOOGLE_SECRET
+    hosted_domain: contoso.example       # only accounts of this Workspace domain
+    trust_upstream_email: true
+
+applications:
+  - client_id: inventory-api
+    display_name: Inventory API
+    identifier_uri: api://inventory-api
+    groups_claim_format: name
+    scopes:
+      - { value: Inventory.Read, description: Read stock levels }
+      - { value: Inventory.Write, description: Change stock, admin_consent_required: true }
+    roles:
+      - value: Inventory.Admin
+        display_name: Inventory administrator
+        allowed_member_types: [user]
+      - value: Inventory.Sync
+        display_name: Synchronisation job
+        allowed_member_types: [application]
+
+  - client_id: inventory-web
+    display_name: Inventory
+    client_type: confidential
+    redirect_uris: [https://inventory.contoso.example/auth/callback]
+    post_logout_redirect_uris: [https://inventory.contoso.example/]
+    web_origins: [https://inventory.contoso.example]
+    access_token_ttl_secs: 900
+    mfa_policy: required
+    assignment_required: true            # only assigned users and groups sign in
+    roles:                               # ... so it needs a role to assign
+      - value: Inventory.User
+        display_name: Inventory user
+        allowed_member_types: [user]
+    required_permissions:
+      - { resource: inventory-api, type: delegated, value: Inventory.Read }
+      - { resource: inventory-api, type: delegated, value: Inventory.Write }
+
+  - client_id: inventory-cli
+    display_name: Inventory CLI
+    client_type: public
+    device_code_enabled: true
+    required_permissions:
+      - { resource: inventory-api, type: delegated, value: Inventory.Read }
+
+  - client_id: inventory-sync
+    display_name: Inventory sync job
+    required_permissions:
+      - { resource: inventory-api, type: application, value: Inventory.Sync }
+
+directory_roles:
+  - { user: ops@contoso.example, role: UserAdmin }
+
+role_assignments:
+  - { resource: inventory-api, role: Inventory.Admin, group: Engineers }
+  - { resource: inventory-web, role: Inventory.User, group: Engineers }
+
+admin_consents:
+  - { client: inventory-web, resource: inventory-api }   # all required scopes
+  - { client: inventory-sync, resource: inventory-api, app_roles: [Inventory.Sync] }

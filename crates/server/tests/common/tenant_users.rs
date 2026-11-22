@@ -23,9 +23,8 @@ pub async fn setup() -> (Fixture, tenants::Model, users::Model, String) {
 
 pub async fn setup_on(f: Fixture) -> (Fixture, tenants::Model, users::Model, String) {
     let opts = bootstrap::Options {
-        admin_email: "root@example.com".into(),
-        display_name: None,
-        reset_password: false,
+        admin_email: Some("root@example.com".into()),
+        ..Default::default()
     };
     bootstrap::run(&f.db, &f.config, &opts).await.unwrap();
     let system = directory::find_system_tenant(&f.db).await.unwrap().unwrap();

@@ -10,6 +10,8 @@ pub struct Model {
     pub group_id: Uuid,
     #[sea_orm(primary_key, auto_increment = false)]
     pub user_id: Uuid,
+    /// Created or adopted by `oauth apply`, which may delete it.
+    pub managed: bool,
     pub created_at: DateTimeWithTimeZone,
     /// Added by an administrator (kept whatever the mappings say).
     pub manual: bool,

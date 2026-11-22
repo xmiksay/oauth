@@ -140,6 +140,7 @@ async fn legacy_mappings_on_an_open_provider_decide_nothing() {
         created_at: Set(chrono::Utc::now().fixed_offset()),
         manual: Set(false),
         idp_id: Set(Some(uuid(&json!(idp)))),
+        managed: Set(false),
     }
     .insert(&fed.f.db)
     .await

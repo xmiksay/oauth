@@ -73,6 +73,7 @@ mod tests {
                     disabled: false,
                     first_device_at: None,
                     webauthn_handle: Some(bytes.clone()),
+                    managed: false,
                     created_at: now(),
                     updated_at: now(),
                 }
@@ -236,6 +237,7 @@ mod tests {
                     allowed_tenants: vec![],
                     trust_upstream_email: false,
                     generation: 1,
+                    managed: false,
                     created_at: now(),
                     updated_at: now(),
                 }

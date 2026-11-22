@@ -223,6 +223,7 @@ describe('auth store', () => {
       disabled: false,
       must_change_password: false,
       has_password: true,
+      managed: false,
       created_at: '',
       updated_at: '',
       mfa: { totp: false, totp_pending: false, recovery_codes_remaining: 0, passkeys: 0, telegram: false },

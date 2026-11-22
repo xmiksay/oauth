@@ -335,6 +335,7 @@ async fn jit(
         password: None,
         must_change_password: false,
         email_verified: false,
+        disabled: false,
     };
     let mut user = match directory::create_user(&txn, ctx.tenant.id, new).await {
         Ok(user) => user,

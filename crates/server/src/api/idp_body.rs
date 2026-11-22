@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use super::{app_body::nullable, idp_rules as rules, idp_validate as v, set_changed};
 use crate::{
-    app::AppState,
+    config::Config,
     error::{AppError, AppResult},
     federation::idps,
 };
@@ -77,12 +77,12 @@ pub async fn ensure_domains_free(
 /// Applies the body's fields to `row` (validated); returns the changed
 /// field names. `secret` = the new plaintext secret, if one is set.
 pub fn apply(
-    state: &AppState,
+    config: &Config,
     row: &mut identity_providers::ActiveModel,
     body: &IdpBody,
     secret: &mut Option<String>,
 ) -> AppResult<Vec<&'static str>> {
-    let loopback = state.config.idp_allow_http_loopback;
+    let loopback = config.idp_allow_http_loopback;
     let mut fields = Vec::new();
     let mut mark = |changed: bool, name: &'static str| {
         if changed {
@@ -181,7 +181,7 @@ pub fn apply(
 }
 
 pub fn seal(
-    state: &AppState,
+    config: &Config,
     row: &mut identity_providers::ActiveModel,
     tenant_id: Uuid,
     id: Uuid,
@@ -189,7 +189,7 @@ pub fn seal(
 ) -> AppResult<()> {
     if let Some(plain) = secret {
         let plain = zeroize::Zeroizing::new(plain);
-        let sealed = idps::seal_secret(&state.config.master_key, tenant_id, id, &plain)?;
+        let sealed = idps::seal_secret(&config.master_key, tenant_id, id, &plain)?;
         row.client_secret_sealed = Set(Some(sealed));
     }
     Ok(())

@@ -67,6 +67,46 @@ pub async fn migrate_and_reconcile(db: &DatabaseConnection, config: &Config) -> 
     Ok(())
 }
 
+/// Errors unless every migration of this binary is applied: `oauth apply`
+/// writes the schema it was built for and must not migrate itself (a dry
+/// run changes nothing), so on an older database it stops before any write
+/// instead of failing halfway on a missing column.
+pub async fn ensure_migrated(conn: &impl ConnectionTrait) -> anyhow::Result<()> {
+    const HINT: &str = "run `oauth serve` or `oauth bootstrap` first to migrate it";
+    let backend = conn.get_database_backend();
+    let exists = conn
+        .query_one_raw(Statement::from_string(
+            backend,
+            "SELECT to_regclass('seaql_migrations') IS NOT NULL AS present",
+        ))
+        .await
+        .context("checking the schema version")?
+        .map(|row| row.try_get::<bool>("", "present"))
+        .transpose()?
+        .unwrap_or(false);
+    if !exists {
+        anyhow::bail!("the database has no schema yet: {HINT}");
+    }
+    let applied: std::collections::HashSet<String> = conn
+        .query_all_raw(Statement::from_string(
+            backend,
+            "SELECT version FROM seaql_migrations",
+        ))
+        .await
+        .context("checking the schema version")?
+        .iter()
+        .map(|row| row.try_get::<String>("", "version"))
+        .collect::<Result<_, _>>()?;
+    let pending = Migrator::migrations()
+        .iter()
+        .filter(|m| !applied.contains(m.name()))
+        .count();
+    if pending > 0 {
+        anyhow::bail!("the database schema is {pending} migration(s) behind: {HINT}");
+    }
+    Ok(())
+}
+
 async fn begin_migrated(db: &DatabaseConnection) -> anyhow::Result<DatabaseTransaction> {
     let txn = db.begin().await.context("starting migration transaction")?;
     txn.execute_raw(Statement::from_sql_and_values(

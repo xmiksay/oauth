@@ -39,6 +39,8 @@ pub struct Model {
     pub trust_upstream_email: bool,
     /// Bumped on every repoint (issuer, client id, discovery URL).
     pub generation: i64,
+    /// Created or adopted by `oauth apply`, which may delete it.
+    pub managed: bool,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
 }

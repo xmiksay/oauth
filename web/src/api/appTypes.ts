@@ -16,6 +16,8 @@ export interface Application {
   display_name: string
   client_type: ClientType
   builtin: boolean
+  /** Created or adopted by `oauth apply`. */
+  managed: boolean
   redirect_uris: string[]
   post_logout_redirect_uris: string[]
   /** Explicit CORS origins. */
