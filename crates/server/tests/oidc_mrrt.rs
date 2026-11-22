@@ -11,67 +11,26 @@
 //! resource the user consented to for the client, on live consent and MFA.
 mod common;
 
-use axum::http::StatusCode;
+use axum::http::{Method, StatusCode};
 use common::{
     flow::Fixture,
+    mgmt::{call, mint_user_token},
+    mrrt::{
+        LEDGER, consent_to_ledger, error, live_ledger_tokens, orders_refresh_token, redeem_ok,
+        set_mfa,
+    },
     seed::{add_app, add_scope},
 };
-use entity::{
-    applications, consent_grants,
-    enums::{AccessTokenFormat, AppMfaPolicy, ClientType, SigningAlg},
-    opaque_access_tokens,
-};
+use entity::enums::{AccessTokenFormat, AppMfaPolicy, ClientType, SigningAlg};
 use oauth_server::{
     consent,
     directory::{self, NewTenant},
-    tokens::refresh,
 };
-use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
-use serde_json::Value;
-
-const LEDGER: &str = "api://ledger/Ledger.Read";
-
-fn error(reply: &(StatusCode, Value)) -> (StatusCode, Option<&str>) {
-    (reply.0, reply.1["error"].as_str())
-}
-
-/// Redeems `rt` for `scope`, expecting success; returns the rotated token.
-async fn redeem_ok(f: &Fixture, rt: &str, scope: &str) -> (String, Value) {
-    let (status, body) = f.refresh(rt, Some(scope)).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    (body["refresh_token"].as_str().unwrap().to_owned(), body)
-}
-
-async fn consent_to_ledger(f: &Fixture) {
-    let values = ["Ledger.Read".to_owned()];
-    consent::store_grant(
-        &f.db,
-        f.tenant.id,
-        f.web.id,
-        f.ledger.id,
-        Some(f.user.id),
-        &values,
-    )
-    .await
-    .unwrap();
-}
-
-async fn set_mfa(f: &Fixture, app: &applications::Model, policy: AppMfaPolicy) {
-    let mut row: applications::ActiveModel = app.clone().into();
-    row.mfa_policy = Set(policy);
-    row.update(&f.db).await.unwrap();
-}
 
 #[tokio::test]
 async fn refresh_token_spans_consented_resources() {
     let f = Fixture::new().await;
-    let (_, tokens) = f
-        .web_tokens(
-            "openid offline_access api://orders/Orders.Read",
-            "ann@example.com",
-        )
-        .await;
-    let rt = tokens["refresh_token"].as_str().unwrap().to_owned();
+    let rt = orders_refresh_token(&f).await;
 
     // Not consented for this client yet: refused, and the token survives.
     let reply = f.refresh(&rt, Some(LEDGER)).await;
@@ -125,29 +84,27 @@ async fn refresh_token_spans_consented_resources() {
     );
     let rt = body["refresh_token"].as_str().unwrap().to_owned();
 
-    // Withdrawing the ledger consent (as `DELETE …/consents/{id}` does)
-    // revokes its tokens; the orders family lives on but can't reach the
-    // ledger any more.
-    let grant = consent_grants::Entity::find()
-        .filter(consent_grants::Column::ResourceApplicationId.eq(f.ledger.id))
-        .one(&f.db)
-        .await
+    // Withdrawing the ledger consent (the user, through `me`) revokes its
+    // opaque tokens; the orders family lives on but can't reach the ledger
+    // any more.
+    assert_eq!(live_ledger_tokens(&f).await, 1, "the ledger token is live");
+    let tok = Some(mint_user_token(&f.db, &f.config, &f.tenant, &f.user).await);
+    let me = "/api/v1/me/consents";
+    let (_, consents) = call(&f.app, Method::GET, me, tok.as_deref(), None).await;
+    let grant = consents["items"]
+        .as_array()
         .unwrap()
-        .unwrap();
-    consent_grants::Entity::delete_by_id(grant.id)
-        .exec(&f.db)
-        .await
-        .unwrap();
-    refresh::revoke_grant(&f.db, f.tenant.id, f.web.id, f.ledger.id, Some(f.user.id))
-        .await
-        .unwrap();
-    let live = opaque_access_tokens::Entity::find()
-        .filter(opaque_access_tokens::Column::ResourceApplicationId.eq(f.ledger.id))
-        .filter(opaque_access_tokens::Column::RevokedAt.is_null())
-        .all(&f.db)
-        .await
-        .unwrap();
-    assert!(live.is_empty(), "the ledger access token is revoked");
+        .iter()
+        .find(|g| g["resource_application_id"] == f.ledger.id.to_string())
+        .unwrap_or_else(|| panic!("no ledger grant: {consents}"));
+    let path = format!("{me}/{}", grant["id"].as_str().unwrap());
+    let (status, _) = call(&f.app, Method::DELETE, &path, tok.as_deref(), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        live_ledger_tokens(&f).await,
+        0,
+        "the ledger token is revoked"
+    );
     let reply = f.refresh(&rt, Some(LEDGER)).await;
     assert_eq!(
         error(&reply),

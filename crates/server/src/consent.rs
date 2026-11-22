@@ -11,7 +11,8 @@ use std::collections::HashSet;
 use anyhow::Context;
 use entity::{app_scopes, consent_grants};
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, Statement, sea_query::Condition,
+    ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QuerySelect, Statement,
+    sea_query::Condition,
 };
 use uuid::Uuid;
 
@@ -59,14 +60,18 @@ pub fn evaluate(
 }
 
 /// Union of the user's own grant and the tenant-wide admin grant.
+/// `lock` = `FOR SHARE` on the grant rows (inside a transaction): a
+/// concurrent withdrawal then waits for that transaction to commit, so its
+/// token revocation sees whatever the transaction issued on the grant.
 pub async fn granted_scopes(
     conn: &impl ConnectionTrait,
     tenant_id: Uuid,
     client_app_id: Uuid,
     resource_app_id: Uuid,
     user_id: Uuid,
+    lock: bool,
 ) -> anyhow::Result<HashSet<String>> {
-    let grants = consent_grants::Entity::find()
+    let mut select = consent_grants::Entity::find()
         .filter(consent_grants::Column::TenantId.eq(tenant_id))
         .filter(consent_grants::Column::ClientApplicationId.eq(client_app_id))
         .filter(consent_grants::Column::ResourceApplicationId.eq(resource_app_id))
@@ -74,10 +79,11 @@ pub async fn granted_scopes(
             Condition::any()
                 .add(consent_grants::Column::UserId.is_null())
                 .add(consent_grants::Column::UserId.eq(user_id)),
-        )
-        .all(conn)
-        .await
-        .context("loading consent grants")?;
+        );
+    if lock {
+        select = select.lock_shared();
+    }
+    let grants = select.all(conn).await.context("loading consent grants")?;
     Ok(grants.into_iter().flat_map(|g| g.scopes).collect())
 }
 

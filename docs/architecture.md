@@ -262,9 +262,11 @@ need no consent (grants are keyed by a resource app).
   still can't exceed the grant. Nothing about the other resource is stored:
   the rotated token keeps the family's grant, so a withdrawn consent stops
   the next redemption (and its revocation hits the opaque tokens it
-  produced, which carry that resource).
-  Scope / user / consent / MFA checks happen before rotation, so a rejected
-  request doesn't burn it. Rotation and issuance share one DB transaction, so of two
+  produced, which carry that resource). The consent rows are read
+  `FOR SHARE` in the issuing transaction, so a withdrawal racing a
+  redemption waits for it and then revokes the token it issued.
+  Scope / user / consent / MFA checks happen before rotation (a rejected
+  request rolls back), so a rejected request doesn't burn it. Rotation and issuance share one DB transaction, so of two
   concurrent redemptions the loser sees the token rotated and revokes the
   family including the winner's new token. A rotation refuses (→ reuse
   path) when any token of its family is revoked, and family revocation
@@ -414,8 +416,10 @@ reason code; rate-limited attempts are not logged) and forced password
 changes; the token endpoint records refresh-token reuse and code replay.
 Withdrawing a consent grant revokes the client's refresh families and
 opaque access tokens for the resource (one user, or everyone for an admin
-grant); deleting a scope revokes the families holding it, and refresh
-never re-mints a scope the resource no longer exposes.
+grant); deleting a scope revokes the families holding it and every opaque
+access token for the resource carrying it (incl. ones minted by a
+multi-resource refresh from another resource's family), and refresh never
+re-mints a scope the resource no longer exposes.
 
 ## Sign-in methods
 
