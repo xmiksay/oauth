@@ -128,6 +128,8 @@ pub async fn begin_totp(
 ) -> AuthnResult<Response> {
     let ctx = Ctx::new(&state, &tenant, ip, &headers);
     let (_, user) = load(&ctx, &tx_id, false).await?;
+    // Each call replaces the pending secret (one the user may be scanning).
+    limit(&ctx, &rate_limit::user_key(user.id)).await?;
     let key = &state.config.master_key;
     let view = me_mfa::start_enrollment(&state.db, key, &tenant.display_name, &user)
         .await
@@ -203,6 +205,8 @@ pub async fn passkey_options(
 ) -> AuthnResult<Response> {
     let ctx = Ctx::new(&state, &tenant, ip, &headers);
     let (_, user) = load(&ctx, &tx_id, false).await?;
+    // Each call stores a challenge row.
+    limit(&ctx, &rate_limit::user_key(user.id)).await?;
     let handle = store::ensure_handle(&state.db, &user).await?;
     let scope = Scope::User {
         purpose: WebauthnPurpose::Register,
@@ -287,7 +291,10 @@ pub async fn passkey(
         what,
     )
     .await?;
-    txn.commit().await?;
+    // Stored with the credential: should `proceed` fail, a retry goes on
+    // through `enroll/continue` instead of registering another passkey.
     tx.row.amr = tx::with_second_factor(&tx.row.amr, passkey::amr(&credential));
+    tx::set_amr(&txn, tx.row.id, LoginStage::MfaEnroll, tx.row.amr.clone()).await?;
+    txn.commit().await?;
     after_enrolment(&ctx, tx, &user).await
 }

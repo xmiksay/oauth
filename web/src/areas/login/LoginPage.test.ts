@@ -26,6 +26,7 @@ const passwordView: TxView = {
   tx: 'tx-1',
   step: 'password',
   factors: ['password'],
+  enrolled: false,
   tenant: { slug: 'contoso', display_name: 'Contoso' },
   client: { client_id: 'shop', display_name: 'Shop' },
   user: null,
@@ -253,3 +254,25 @@ async function forgot(w: Awaited<ReturnType<typeof mountPage>>) {
   await w.findAll('button').find((b) => b.text() === 'Forgot password?')?.trigger('click')
   await flushPromises()
 }
+
+describe('LoginPage MFA enrolment', () => {
+  const enrollView: TxView = {
+    ...passwordView,
+    step: 'mfa_enroll',
+    user: { email: 'ann@example.com', display_name: 'Ann' },
+    factors: ['totp', 'passkey'],
+  }
+
+  it('offers the enrolment until the view says a factor is set up', async () => {
+    api.get.mockResolvedValue(enrollView)
+    const w = await mountPage()
+    expect(w.text()).toContain('requires a second way')
+    expect(w.text()).not.toContain('is set up')
+  })
+
+  it('continues once the view says enrolled, whatever factors lists', async () => {
+    api.get.mockResolvedValue({ ...enrollView, enrolled: true })
+    const w = await mountPage()
+    expect(w.text()).toContain('is set up')
+  })
+})

@@ -37,6 +37,8 @@ export interface TxView {
   features: { password_reset: boolean; federation: boolean }
   /** Methods the current step accepts. */
   factors: LoginFactor[]
+  /** At step `mfa_enroll`: a factor was set up; only `enroll/continue` remains. */
+  enrolled: boolean
   /** Identity providers offered as buttons at the password step. */
   idps: IdpRef[]
   /** The authorize request named this provider (`idp=` / a mapped `domain_hint=`). */

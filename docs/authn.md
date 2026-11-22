@@ -62,8 +62,11 @@ device flow would reuse a session:
   the authorization code (60 s) isn't issued while the user saves them.
 - A single-factor session is stepped up instead of reused. If the user has
   a factor: a transaction at `mfa` for the session's user (keeping its
-  `amr` / `auth_time`) whose completion replaces the session with a
-  multi-factor one — only if that session is still live then (locked in
+  `amr` / `auth_time`) whose completion upgrades that session in place: same
+  id (the `sid` claim; its refresh tokens and codes stay bound to it, so
+  signing it out still revokes them), the multi-factor `amr`, `auth_time` =
+  the step-up's completion (when the second factor was just verified), a
+  rotated cookie value and a renewed lifetime — only if that session is still live then (locked in
   the completing DB transaction; a session signed out or revoked meanwhile
   ends the sign-in with `login_required`). If they have none: a fresh
   sign-in at `password` (as `prompt=login`), never enrolment on the session

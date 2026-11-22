@@ -48,6 +48,7 @@ the API answers with a `redirect`, which the SPA follows
     "scopes": [{ "value": "Orders.Read", "description": "Read your orders" }]
   },
   "factors": ["password", "passkey"],
+  "enrolled": false,
   "idps": [{ "id": "0192…", "name": "Contoso SSO" }],
   "idp_hint": null,
   "link": null,
@@ -68,7 +69,10 @@ it reveals nothing); at `mfa` the subset of `["totp", "recovery",
 "passkey", "telegram"]` the user has (`telegram`: a linked chat; on a server
 without a bot only when the user has no other factor, and it then answers
 `503 telegram_unavailable` — [../telegram.md](../telegram.md)); at `link`
-`["password", "passkey"]`; `[]` at other steps.
+`["password", "passkey"]`; at `mfa_enroll` `["totp", "passkey"]` until a
+factor was set up; `[]` at other steps. `enrolled` is `true` only at
+`mfa_enroll` once a factor was set up (only `enroll/continue` remains);
+render that step from this flag, not from `factors`.
 `idps` (password step only): enabled, visible identity providers for "Sign in
 with …" buttons. `idp_hint` (password step only): the enabled provider the
 authorize request named with `idp={id}` or `domain_hint={domain}`, else `null`.
@@ -192,7 +196,7 @@ reused or stepped-up session ended while the transaction was pending).
 | `telegram/send` | `{}` | step `mfa` (user has `telegram`): sends a 6-digit code to the linked chat, replacing an earlier one; `200 { "sent": true, "expires_in": 300 }` (not a step view). `502 delivery_failed` when Telegram didn't take it (retry), `400 invalid_request` when no chat is linked, `503 telegram_unavailable` without a bot |
 | `telegram` | `{ "code": "123456" }` | step `mfa`: the code last sent (5 min, single use, 5 guesses — then send a new one; spaces ignored) |
 | `enroll/totp` | `{}` | step `mfa_enroll`: a new pending TOTP secret (replacing an unconfirmed one), `200 { "secret", "otpauth_uri", "digits", "period", "algorithm" }` (not a step view; show once). `409 conflict` when a TOTP is already confirmed |
-| `enroll/totp/confirm` | `{ "code": "123456" }` | step `mfa_enroll`: a current code of the pending secret activates it and makes the sign-in multi-factor; `200 { "recovery_codes": [10 codes] }` only (not a step view; show once). The transaction stays at `mfa_enroll` (its view's `factors` is then `[]`) until `enroll/continue`, so no code expires while the user saves them. `401 invalid_code`, `409 conflict` without a pending secret |
+| `enroll/totp/confirm` | `{ "code": "123456" }` | step `mfa_enroll`: a current code of the pending secret activates it and makes the sign-in multi-factor; `200 { "recovery_codes": [10 codes] }` only (not a step view; show once). The transaction stays at `mfa_enroll` (its view's `enrolled` is then `true`) until `enroll/continue`, so no code expires while the user saves them. `401 invalid_code`, `409 conflict` without a pending secret |
 | `enroll/continue` | `{}` | step `mfa_enroll` after `enroll/totp/confirm`: the step view or redirect that follows. `409 wrong_step` before a factor was set up (and the enrolment calls answer `409` after) |
 | `enroll/passkey/options` | `{}` | step `mfa_enroll`: `200 { "publicKey": PublicKeyCredentialCreationOptionsJSON }` (not a step view) |
 | `enroll/passkey` | `{ "credential": RegistrationJSON, "name"? }` | step `mfa_enroll`: stores the new passkey; it is this sign-in's second factor |
@@ -212,7 +216,8 @@ factor) or `mfa_enroll` (they don't: set up TOTP or a passkey, which then
 counts as the second factor), before `change_password` / `consent`. A user
 who already has a single-factor session is stepped up: if they have a
 factor, `/authorize` starts a transaction at `mfa` for the session's user
-(no password again) and its completion replaces the session (`login_required`
+(no password again) and its completion upgrades that session in place (same
+id / `sid`, multi-factor `amr`, `auth_time` = now, rotated cookie; `login_required`
 redirect if that session ended meanwhile); if they have none, a fresh
 sign-in at `password` (enrolment always follows a first factor proven in the
 same transaction, never a session alone). With `prompt=none` it answers
@@ -249,7 +254,7 @@ successes too. IPv6 clients are bucketed per /64.
 
 | Bucket | Limit | Applies to |
 |---|---|---|
-| client IP, per tenant | 30 / 5 min | `password`, `totp`, `recovery`, `passkey`, `telegram`, `enroll/totp/confirm`, `enroll/passkey`, `change-password` |
+| client IP, per tenant | 30 / 5 min | `password`, `totp`, `recovery`, `passkey`, `telegram`, `enroll/totp`, `enroll/totp/confirm`, `enroll/passkey/options`, `enroll/passkey`, `change-password` |
 | account, per tenant | 10 / 15 min | same; keyed by user id once the email (or the passkey's credential, or the transaction) resolves it, else by the trimmed, lower-cased email (or the credential id) |
 | user, per tenant | 3 / 15 min | `telegram/send` (across transactions) |
 | client IP, per tenant | 60 / 5 min | `/oauth2/authorize` requests that create a login transaction → `429` JSON (`rate_limited`), not a redirect |

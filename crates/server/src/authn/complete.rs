@@ -217,35 +217,41 @@ async fn finish(
     let session = match origin {
         Some(existing) if !tx.row.step_up => existing,
         origin => {
-            // A step-up replaces the session it continued.
-            if let Some(old) = origin {
-                session::delete(&txn, old.id).await?;
-            }
             let user_id = tx
                 .row
                 .user_id
                 .filter(|id| *id == user.id)
                 .ok_or(AuthnError::WrongStep)?;
-            let auth_time = tx.row.auth_time.ok_or(AuthnError::WrongStep)?;
-            // A fresh sign-in (prompt=login, max_age, another account)
-            // replaces whatever session this browser had.
-            if let Some(old) = session::from_cookie(&txn, config, ctx.tenant, ctx.headers).await? {
+            // Whatever other session the browser's cookie names (another
+            // account meanwhile) is replaced.
+            if let Some(old) = session::from_cookie(&txn, config, ctx.tenant, ctx.headers).await?
+                && origin.as_ref().is_none_or(|o| o.id != old.id)
+            {
                 session::delete(&txn, old.id).await?;
             }
-            let (created, token) = session::create(
-                &txn,
-                config,
-                NewSession {
-                    tenant_id: ctx.tenant.id,
-                    user_id,
-                    amr: &tx.row.amr,
-                    auth_time,
-                    ip: ctx.ip,
-                    user_agent: ctx.user_agent,
-                    min_expires_at: None,
-                },
-            )
-            .await?;
+            let (created, token) = match origin {
+                // A step-up keeps the session it continued (so `sid` and
+                // the session's refresh tokens stay bound to it); the
+                // second factor was just verified, so `auth_time` is now.
+                Some(old) => {
+                    let now = chrono::Utc::now().fixed_offset();
+                    session::step_up(&txn, config, old, &tx.row.amr, now).await?
+                }
+                // A fresh sign-in (prompt=login, max_age, another account).
+                None => {
+                    let auth_time = tx.row.auth_time.ok_or(AuthnError::WrongStep)?;
+                    let new = NewSession {
+                        tenant_id: ctx.tenant.id,
+                        user_id,
+                        amr: &tx.row.amr,
+                        auth_time,
+                        ip: ctx.ip,
+                        user_agent: ctx.user_agent,
+                        min_expires_at: None,
+                    };
+                    session::create(&txn, config, new).await?
+                }
+            };
             cookies.push(cookie::set(config, Kind::Session, &token)?);
             cookies.push(device::on_sign_in(&txn, ctx, user).await?);
             let details = json!({

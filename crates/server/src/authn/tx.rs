@@ -350,6 +350,7 @@ pub async fn view(state: &AppState, tenant: &Tenant, tx: &LoadedTx) -> AuthnResu
         "user": user.map(|u| json!({ "email": u.email, "display_name": u.display_name })),
         "consent": consent,
         "factors": super::passkey::factors(state, tx).await?,
+        "enrolled": stage == LoginStage::MfaEnroll && super::mfa_policy::is_mfa(&tx.row.amr),
         "idps": buttons,
         "idp_hint": hint.map(brief),
         "link": link,
