@@ -178,7 +178,8 @@ A mapping is `claim` (a top-level ID token claim, e.g. `groups`, `roles`)
 + `value` + a group of the tenant; several mappings may grant one group,
 at most 100 per provider.
 
-On every federated sign-in of a linked identity, and at JIT creation, the
+On every federated sign-in — of a linked identity, at JIT creation, and
+when stage `link` links a parked identity and completes the sign-in — the
 user's memberships follow the token: the user joins each group whose
 mapping's value appears in its claim (exact, case-sensitive match; the
 claim may be a string or an array of strings) and leaves each group this
@@ -209,14 +210,24 @@ without control characters (others skipped); only the claims the
 provider's mappings name are read. Entra's group overage (`_claim_names`
 pointing at Graph) is not followed — the claim then counts as absent.
 
-Not a sign-in, so no mapping is applied: linking an identity at stage
-`link` or from My Account (the next sign-in through the provider applies
-them). A new mapping applies from each user's next sign-in. Deleting a
+The claim names are taken from the mappings when the token is verified,
+before the writing transaction; a parked identity keeps the bounded
+values (and which claims were read) until stage `link` completes. If the
+mappings change in between, a mapping on a claim that wasn't read can't
+be decided: the membership of its group is neither added nor removed by
+this sign-in (the next one decides), so a mapping moved to another claim
+never drops a membership it still grants.
+
+Not a sign-in, so no mapping is applied: linking an identity from My
+Account (the next sign-in through the provider applies them). A new
+mapping applies from each user's next sign-in. Deleting a
 mapping removes the memberships it kept at once, unless another mapping
 of the provider grants the same group. A **repoint**, deleting the
 provider and unlinking a user's identity drop the memberships the
 provider's mappings kept (of everyone / of that user; manual ones lose
-just the mark), counted as `memberships_removed` in the audit event.
+just the mark), counted as `memberships_removed` in the audit event, and
+each removed membership is audited by itself as well (`group.member_remove`
+by the administrator, `user_id`, `idp_id`, `via: "federation"`).
 Deleting a group removes its mappings.
 
 ## Lockout

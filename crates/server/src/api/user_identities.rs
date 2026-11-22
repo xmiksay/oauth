@@ -77,8 +77,16 @@ pub async fn unlink(
         .exec(conn)
         .await?;
     // Nothing would keep them in line any more.
-    let memberships =
-        group_map::drop_owned(conn, user.tenant_id, identity.idp_id, Some(user.id), None).await?;
+    let memberships = group_map::drop_owned(
+        conn,
+        user.tenant_id,
+        identity.idp_id,
+        Some(user.id),
+        None,
+        caller.actor(),
+        caller.ip,
+    )
+    .await?;
     caller
         .audit(
             conn,

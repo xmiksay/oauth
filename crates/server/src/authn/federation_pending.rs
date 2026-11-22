@@ -18,6 +18,7 @@ use super::{AuthnError, AuthnResult, ctx::Ctx, federation_login::audit_user, tx}
 use crate::{
     audit,
     federation::{
+        group_map,
         identities::{self, LinkError, NewIdentity, Pending},
         idps,
     },
@@ -202,6 +203,9 @@ pub async fn link_pending(
         Err(LinkError::AlreadyLinked) => return Err(AuthnError::AlreadyLinked),
         Err(LinkError::Internal(err)) => return Err(err.into()),
     }
+    // A sign-in through the provider: its mappings apply, under the
+    // `FOR SHARE` lock `usable_idp` took.
+    group_map::sync(txn, ctx.tenant.id, idp.id, user.id, ctx.ip, &pending.mapped).await?;
     let details = json!({ "idp_id": idp.id, "via": "sign_in" });
     audit_user(txn, ctx, user, audit::EventType::UserIdentityLink, details).await?;
     let facts = [("Identity provider", idp.name.clone())];

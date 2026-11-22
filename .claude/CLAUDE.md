@@ -148,7 +148,10 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   Group mappings (`federation::group_map`): a sign-in only adds / removes
   `group_members` rows carrying its own `idp_id` (never `manual` ones), in
   its writing transaction under `lock_current`; mapping writes lock the IdP
-  `FOR UPDATE`; repoint, IdP delete and unlink call `group_map::drop_owned`.
+  `FOR UPDATE`; repoint, IdP delete and unlink call `group_map::drop_owned`
+  (audits each removed membership). Stage `link` applies the claim values
+  parked with the identity (`Pending.mapped`); a mapping on a claim the
+  token wasn't read for leaves its group to the next sign-in.
 - Device code grant (`device_flow`, `oidc::device_authorization` /
   `device_grant`, `authn::device_code`; [docs/device_code.md](../docs/device_code.md)):
   the browser side is an ordinary login transaction whose `AuthRequest.device`

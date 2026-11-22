@@ -45,6 +45,15 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers())
 
 describe('GroupMappings', () => {
+  it('has a claim pattern the browser compiles (the `v` flag)', async () => {
+    const w = await mountIt()
+    const pattern = w.find('input[pattern]').attributes('pattern') ?? ''
+    const re = new RegExp(`^(?:${pattern})$`, 'v')
+    expect(re.test('groups')).toBe(true)
+    expect(re.test('https://example.com/claims/roles')).toBe(true)
+    expect(re.test('bad claim')).toBe(false)
+  })
+
   it('lists mappings with their group', async () => {
     const w = await mountIt()
     expect(identityProviders.mappings).toHaveBeenCalledWith('idp1', expect.anything())

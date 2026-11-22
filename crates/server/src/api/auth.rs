@@ -75,7 +75,7 @@ impl Caller {
         }
     }
 
-    fn actor(&self) -> Actor {
+    pub fn actor(&self) -> Actor {
         match &self.principal {
             Principal::User { id, .. } => Actor::User(Some(*id)),
             Principal::App { id, .. } => Actor::Application(*id),

@@ -261,7 +261,7 @@ can be the `groups` claim (`groups_claim_format`).
 | `GET groups` *paged* `?search=` | – | `Group`s |
 | `POST groups` | `{ display_name, description? }` | 201 `Group` (409 if the name is taken) |
 | `GET groups/{id}` · `PATCH groups/{id}` · `DELETE groups/{id}` | `{ display_name?, description? }` | `Group` / 204 (409 if the new name is taken) |
-| `GET groups/{id}/members` *paged* | – | `User`s |
+| `GET groups/{id}/members` *paged* | – | `User`s, each with the membership's source: `manual` (an administrator added it) and `idp_id` (kept by that identity provider's group mappings, else `null`; a mapped membership removed by hand comes back at the user's next sign-in) |
 | `POST groups/{id}/members` | `{ user_id }` | 204 (409 if already a member; a membership only a federation group mapping kept becomes manual as well, so it stays when the mapping lets go) |
 | `DELETE groups/{id}/members/{user_id}` | – | 204 (also a mapped membership; a mapping adds it again at the user's next sign-in while the claim value is there) |
 
@@ -340,7 +340,7 @@ exclusive, RFC 3339) → `AuditEvent`s.
 | `identity_provider.create`, `identity_provider.update`, `identity_provider.delete` | GlobalAdmin → identity provider | `name`, `issuer`, `policy` / `fields`, `identities_removed`, `memberships_removed` / `users_only_via`, `memberships_removed` |
 | `identity_provider.group_mapping_add`, `identity_provider.group_mapping_remove` | GlobalAdmin → identity provider | `mapping_id`, `claim`, `value`, `group_id`, `group_display_name` (add) / `memberships_removed` (remove) |
 | `user.email_verify_request`, `user.email_verify`, `user.email_change_request`, `user.email_change_complete`, `user.password_reset_request`, `user.password_reset_complete`, `user.invite_accept`, `user.notification_prefs_update` | user → self (link redemptions: by the link's user, with the caller's IP) | `email` / `new_email` / `events` |
-| `group.create`, `group.update`, `group.delete`, `group.member_add`, `group.member_remove` | → group (a federation group mapping on sign-in: user → group) | `display_name`, `fields`, `user_id`; by a mapping also `via: "federation"`, `idp_id` |
+| `group.create`, `group.update`, `group.delete`, `group.member_add`, `group.member_remove` | → group (a federation group mapping on sign-in: user → group; a repoint, IdP / mapping delete or unlink dropping mapped memberships: admin / user → group) | `display_name`, `fields`, `user_id`; by a mapping also `via: "federation"`, `idp_id` |
 | `directory_role.assign`, `directory_role.unassign` | → user | `role`, `assignment_id` |
 | `application.create`, `application.update`, `application.delete`, `application.secret_add`, `application.secret_remove`, `application.scope_add`, `application.scope_update`, `application.scope_remove`, `application.role_add`, `application.role_update`, `application.role_remove`, `application.permission_add`, `application.permission_remove` | → application | `client_id`, `fields`, `secret_id`, `scope_id`/`role_id` + `value`, `permission_id` |
 | `app_role_assignment.create`, `app_role_assignment.delete` | → assignment | create: `resource_client_id`, `role`, `principal_type`, `principal_id`; delete: `resource_client_id`, `app_role_id` |

@@ -235,7 +235,8 @@ pub async fn update(
     let (removed, memberships) = if repointed {
         (
             identities::unlink_all(&txn, tenant_id, id).await?,
-            group_map::drop_owned(&txn, tenant_id, id, None, None).await?,
+            group_map::drop_owned(&txn, tenant_id, id, None, None, caller.actor(), caller.ip)
+                .await?,
         )
     } else {
         (0, 0)
@@ -273,7 +274,16 @@ pub async fn remove(
     let only_via = identities::users_only_via(&txn, idp.tenant_id, id).await?;
     // The FK would only clear the mark; memberships nothing but this
     // provider kept go with it.
-    let memberships = group_map::drop_owned(&txn, idp.tenant_id, id, None, None).await?;
+    let memberships = group_map::drop_owned(
+        &txn,
+        idp.tenant_id,
+        id,
+        None,
+        None,
+        caller.actor(),
+        caller.ip,
+    )
+    .await?;
     identity_providers::Entity::delete_by_id(id)
         .exec(&txn)
         .await?;

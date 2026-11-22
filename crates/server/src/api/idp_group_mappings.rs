@@ -205,7 +205,17 @@ pub async fn remove(
     let removed = if still_granted {
         0
     } else {
-        group_map::drop_owned(&txn, tenant_id, idp_id, None, Some(mapping.group_id)).await?
+        let group = Some(mapping.group_id);
+        group_map::drop_owned(
+            &txn,
+            tenant_id,
+            idp_id,
+            None,
+            group,
+            caller.actor(),
+            caller.ip,
+        )
+        .await?
     };
     caller
         .audit(

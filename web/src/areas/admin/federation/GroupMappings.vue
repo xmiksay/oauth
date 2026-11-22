@@ -61,7 +61,7 @@ function remove(id: string) {
           class="input"
           required
           maxlength="64"
-          pattern="[A-Za-z0-9_.:/\-]+"
+          pattern="[A-Za-z0-9_.:\/\-]+"
         >
       </div>
       <div>

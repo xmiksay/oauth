@@ -8,6 +8,7 @@ pub mod cors;
 pub mod device;
 pub mod federation;
 pub mod flow;
+pub mod groups;
 pub mod mail;
 pub mod mgmt;
 pub mod mrrt;

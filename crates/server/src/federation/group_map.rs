@@ -16,6 +16,7 @@ use sea_orm::{
     ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder,
     QuerySelect, sea_query::Expr,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
@@ -28,14 +29,24 @@ pub const MAX_CLAIM_VALUES: usize = 256;
 /// Mappings per identity provider.
 pub const MAX_MAPPINGS: u64 = 100;
 
-/// Upstream claim name → its string values.
-pub type ClaimValues = BTreeMap<String, BTreeSet<String>>;
+/// What a verified token said for a provider's mappings: the claim names
+/// that were read (those the mappings named when the token was checked)
+/// and their string values. Kept with a parked identity until stage `link`
+/// completes the sign-in.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Mapped {
+    pub read: BTreeSet<String>,
+    pub values: BTreeMap<String, BTreeSet<String>>,
+}
 
 /// The values of `names` in a verified token's `claims`: a string or an
 /// array of strings, at most [`MAX_CLAIM_VALUES`] entries, each 1–256 bytes
 /// without control characters (others are skipped).
-pub fn extract(claims: &Map<String, Value>, names: &[String]) -> ClaimValues {
-    let mut out = ClaimValues::new();
+pub fn extract(claims: &Map<String, Value>, names: &[String]) -> Mapped {
+    let mut out = Mapped {
+        read: names.iter().cloned().collect(),
+        values: BTreeMap::new(),
+    };
     for name in names {
         let values: BTreeSet<String> = match claims.get(name) {
             Some(Value::String(v)) => profile::clean_token(v).into_iter().collect(),
@@ -48,19 +59,33 @@ pub fn extract(claims: &Map<String, Value>, names: &[String]) -> ClaimValues {
             _ => continue,
         };
         if !values.is_empty() {
-            out.insert(name.clone(), values);
+            out.values.insert(name.clone(), values);
         }
     }
     out
 }
 
-/// The groups `mappings` grant for `values`.
-pub fn wanted(mappings: &[idp_group_mappings::Model], values: &ClaimValues) -> BTreeSet<Uuid> {
-    mappings
-        .iter()
-        .filter(|m| values.get(&m.claim).is_some_and(|v| v.contains(&m.value)))
-        .map(|m| m.group_id)
-        .collect()
+/// The groups `mappings` grant for `mapped` and, apart, those a mapping on
+/// a claim that wasn't read could grant (mappings changed after the token
+/// was checked): their memberships are left for the next sign-in.
+pub fn wanted(
+    mappings: &[idp_group_mappings::Model],
+    mapped: &Mapped,
+) -> (BTreeSet<Uuid>, BTreeSet<Uuid>) {
+    let mut wanted = BTreeSet::new();
+    let mut undecided = BTreeSet::new();
+    for m in mappings {
+        if !mapped.read.contains(&m.claim) {
+            undecided.insert(m.group_id);
+        } else if mapped
+            .values
+            .get(&m.claim)
+            .is_some_and(|v| v.contains(&m.value))
+        {
+            wanted.insert(m.group_id);
+        }
+    }
+    (wanted, undecided)
 }
 
 pub async fn list(
@@ -111,9 +136,9 @@ pub async fn sync(
     idp_id: Uuid,
     user_id: Uuid,
     ip: Option<IpAddr>,
-    values: &ClaimValues,
+    mapped: &Mapped,
 ) -> anyhow::Result<Changes> {
-    let changes = apply(conn, tenant_id, idp_id, user_id, values).await?;
+    let changes = apply(conn, tenant_id, idp_id, user_id, mapped).await?;
     let added = changes
         .added
         .iter()
@@ -137,7 +162,7 @@ pub async fn sync(
     Ok(changes)
 }
 
-/// Brings `user_id`'s memberships owned by `idp_id` in line with `values`.
+/// Brings `user_id`'s memberships owned by `idp_id` in line with `mapped`.
 /// Run in the sign-in transaction, after `idps::lock_current`: mapping
 /// writes lock the provider `FOR UPDATE`, so the mappings read here stay
 /// the current ones until it commits.
@@ -146,9 +171,9 @@ pub async fn apply(
     tenant_id: Uuid,
     idp_id: Uuid,
     user_id: Uuid,
-    values: &ClaimValues,
+    mapped: &Mapped,
 ) -> anyhow::Result<Changes> {
-    let wanted = wanted(&list(conn, tenant_id, idp_id).await?, values);
+    let (wanted, undecided) = wanted(&list(conn, tenant_id, idp_id).await?, mapped);
     let owned = group_members::Entity::find()
         .filter(group_members::Column::TenantId.eq(tenant_id))
         .filter(group_members::Column::UserId.eq(user_id))
@@ -157,7 +182,10 @@ pub async fn apply(
         .await
         .context("loading mapped memberships")?;
     let mut changes = Changes::default();
-    for row in owned.iter().filter(|m| !wanted.contains(&m.group_id)) {
+    let gone = |m: &&group_members::Model| {
+        !wanted.contains(&m.group_id) && !undecided.contains(&m.group_id)
+    };
+    for row in owned.iter().filter(gone) {
         let filter = sea_orm::Condition::all()
             .add(group_members::Column::TenantId.eq(tenant_id))
             .add(group_members::Column::GroupId.eq(row.group_id))
@@ -225,13 +253,16 @@ async fn unmark(conn: &impl ConnectionTrait, filter: sea_orm::Condition) -> anyh
 /// Drops the memberships `idp_id`'s mappings keep — of one user (`Some`,
 /// an unlinked identity) or of everyone (a repoint, a deleted provider) —
 /// and, when `group_id` is given, only in that group (a deleted mapping).
-/// Manual ones lose just the mark. Returns the memberships removed.
+/// Manual ones lose just the mark. Each removal is audited
+/// (`group.member_remove` by `actor`); returns how many there were.
 pub async fn drop_owned(
     conn: &impl ConnectionTrait,
     tenant_id: Uuid,
     idp_id: Uuid,
     user_id: Option<Uuid>,
     group_id: Option<Uuid>,
+    actor: audit::Actor,
+    ip: Option<IpAddr>,
 ) -> anyhow::Result<u64> {
     let mut filter = sea_orm::Condition::all()
         .add(group_members::Column::TenantId.eq(tenant_id))
@@ -244,11 +275,23 @@ pub async fn drop_owned(
     }
     let removed = group_members::Entity::delete_many()
         .filter(filter.clone().add(group_members::Column::Manual.eq(false)))
-        .exec(conn)
+        .exec_with_returning(conn)
         .await
         .context("dropping mapped memberships")?;
     unmark(conn, filter).await?;
-    Ok(removed.rows_affected)
+    for row in &removed {
+        let event = audit::Event {
+            tenant_id,
+            actor,
+            event_type: EventType::GroupMemberRemove,
+            target: Some(audit::Target::Group(row.group_id)),
+            outcome: Outcome::Success,
+            ip,
+            details: json!({ "user_id": row.user_id, "via": "federation", "idp_id": idp_id }),
+        };
+        audit::record(conn, event).await?;
+    }
+    Ok(u64::try_from(removed.len()).unwrap_or(u64::MAX))
 }
 
 #[cfg(test)]
@@ -288,6 +331,8 @@ mod tests {
             claims,
             &names(&["groups", "roles", "big", "obj", "missing"]),
         );
+        assert_eq!(got.read.len(), 5);
+        let got = got.values;
         assert_eq!(got["groups"], BTreeSet::from(["a".into(), "b".into()]));
         assert_eq!(got["roles"], BTreeSet::from(["admin".into()]));
         assert_eq!(got["big"].len(), MAX_CLAIM_VALUES);
@@ -307,7 +352,35 @@ mod tests {
         ];
         let claims = json!({ "groups": ["eng", "dev", "ops"] });
         let values = extract(claims.as_object().unwrap(), &names(&["groups", "roles"]));
-        assert_eq!(wanted(&mappings, &values), BTreeSet::from([g1]));
-        assert!(wanted(&mappings, &ClaimValues::new()).is_empty());
+        assert_eq!(
+            wanted(&mappings, &values),
+            (BTreeSet::from([g1]), BTreeSet::new())
+        );
+        let none = extract(
+            claims.as_object().unwrap(),
+            &names(&["groups", "roles", "x"]),
+        );
+        let none = Mapped {
+            values: BTreeMap::new(),
+            ..none
+        };
+        assert!(wanted(&mappings, &none).0.is_empty());
+    }
+
+    #[test]
+    fn mappings_on_claims_not_read_leave_their_groups_undecided() {
+        let (g1, g2) = (Uuid::now_v7(), Uuid::now_v7());
+        let mappings = [mapping("groups", "eng", g1), mapping("roles", "ops", g2)];
+        let claims = json!({ "groups": ["eng"], "roles": ["ops"] });
+        let values = extract(claims.as_object().unwrap(), &names(&["groups"]));
+        assert_eq!(
+            wanted(&mappings, &values),
+            (BTreeSet::from([g1]), BTreeSet::from([g2]))
+        );
+        // A parked identity from before group mappings read nothing.
+        assert_eq!(
+            wanted(&mappings, &Mapped::default()),
+            (BTreeSet::new(), BTreeSet::from([g1, g2]))
+        );
     }
 }

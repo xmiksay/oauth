@@ -6,6 +6,7 @@ import type {
   DirectoryRole,
   DirectoryRoleAssignment,
   Group,
+  GroupMember,
   Items,
   PageQuery,
   Paged,
@@ -63,7 +64,7 @@ export const groups = {
     t.patch<Group>(p`groups/${id}`, body),
   remove: (id: string) => t.del(p`groups/${id}`),
   members: (id: string, q: PageQuery = {}) =>
-    t.get<Paged<User>>(`${p`groups/${id}/members`}${query({ ...q })}`),
+    t.get<Paged<GroupMember>>(`${p`groups/${id}/members`}${query({ ...q })}`),
   addMember: (id: string, userId: string) =>
     t.post<void>(p`groups/${id}/members`, { user_id: userId }),
   removeMember: (id: string, userId: string) => t.del(p`groups/${id}/members/${userId}`),
