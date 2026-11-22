@@ -44,9 +44,9 @@ const MAX_DAYS: i64 = 730;
 const HINT_LEN: usize = 3;
 const NON_EXPIRING_OFF: &str = "this tenant doesn't allow non-expiring secrets";
 
-/// A generated value's first characters. A supplied value may sit right at
-/// the entropy minimum, so its own characters would leak part of it: its
-/// hint is the start of its SHA-256 in hex instead.
+/// A generated value's first characters. The server can't tell how much of
+/// a supplied value is really random, so its own characters might leak a
+/// meaningful part of it: its hint is the start of its SHA-256 in hex instead.
 fn hint(value: &str, supplied: bool) -> String {
     if !supplied {
         return value.chars().take(HINT_LEN).collect();

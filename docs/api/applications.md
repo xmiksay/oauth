@@ -101,9 +101,11 @@ Public clients can't have secrets (400).
   at most 256 characters, decoding to at least 32 bytes — else 400 (the
   message never repeats the value). `openssl rand -base64 32` or
   `openssl rand -hex 32` pass. The server can't prove a value random, so it
-  also refuses the shapes a hand-picked one takes: decoded bytes that
-  repeat a unit of half their length or less (`"password"` × 8 is valid
-  base64 of a 6-byte period), a run of 8+ consecutive ascending or
+  also refuses the shapes a hand-picked one takes: decoded bytes, or the
+  text itself with ASCII case folded, that repeat a unit of half their
+  length or less (`"password"` × 8 is valid base64 of a 6-byte period;
+  `"MyCompanySecretKey2026"` × 2 repeats only in the text, since base64
+  turns 4 characters into 3 bytes), a run of 8+ consecutive ascending or
   descending characters (`abcdefgh`, `0123456789`), and text under 128 bits
   of *estimated* entropy (length × the Shannon entropy of its character
   distribution: small-alphabet or skewed values). 32 hex digits (16 bytes),
@@ -113,9 +115,13 @@ Public clients can't have secrets (400).
   generator. It is stored exactly like a generated
   one (SHA-256 + 3-character `hint`) and never echoed: the response has no
   `"secret"`. Its `hint` is the first 3 hex digits of that SHA-256, not of
-  the value (a value at the entropy minimum can't spare 18 bits to every
-  directory reader and expiry email). Without `secret` the server generates 256 random bits and
-  returns them once, as before. Clients using `client_secret_basic` must
+  the value (the server can't tell how much of a supplied value is really
+  random, so it shows readers nothing derived from the value's own
+  characters). Without `secret` the server generates 256 random bits and
+  returns them once, as before. Secrets supplied before this rule (#81)
+  are not re-validated — only their hash is stored — so rotate any
+  caller-supplied secret registered earlier. Failed client authentication
+  is not rate-limited yet (#84). Clients using `client_secret_basic` must
   form-urlencode a value with reserved characters (RFC 6749 §2.3.1).
 - **Non-expiring** (`never_expires: true`, exclusive with
   `expires_in_days`): only where the tenant's `allow_non_expiring_secrets`

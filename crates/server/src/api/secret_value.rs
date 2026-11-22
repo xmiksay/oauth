@@ -5,6 +5,10 @@
 //! random; the checks below reject the predictable shapes a human or a
 //! template produces when it picks a "strong looking" string instead
 //! (repeated units, alphabet runs, small alphabets, words with punctuation).
+//! A repeated unit is looked for twice: in the decoded bytes, and in the text
+//! itself with ASCII case folded, because base64 maps 4 characters to 3 bytes
+//! and so hides a repeated word whose length isn't a multiple of 4
+//! (`"password1"` × 5 has no short byte period).
 
 use base64::{
     Engine,
@@ -103,9 +107,15 @@ pub fn longest_sequential_run(value: &str) -> usize {
     longest
 }
 
-/// 400 unless `value` is base64 / base64url / hex of at least 32 bytes that
-/// don't repeat a shorter unit, with no long alphabet run and at least 128
-/// estimated bits. The message never contains the value.
+/// Whether `bytes` repeat a unit of at most half their length (`abab`, `abcabca`).
+fn repeats(bytes: &[u8]) -> bool {
+    shortest_period(bytes) <= bytes.len() / 2
+}
+
+/// 400 unless `value` is base64 / base64url / hex of at least 32 bytes,
+/// neither those bytes nor the case-folded text repeat a unit of half their
+/// length or less, with no long alphabet run and at least 128 estimated
+/// bits. The message never contains the value.
 pub fn validate(value: &str) -> AppResult<()> {
     if value.len() > MAX_LEN {
         return Err(AppError::BadRequest(format!(
@@ -116,7 +126,9 @@ pub fn validate(value: &str) -> AppResult<()> {
     if bytes.len() < MIN_BYTES {
         return Err(AppError::BadRequest(FORMAT.into()));
     }
-    if shortest_period(&bytes) <= bytes.len() / 2
+    let folded = Zeroizing::new(value.to_ascii_lowercase());
+    if repeats(&bytes)
+        || repeats(folded.as_bytes())
         || longest_sequential_run(value) >= MAX_RUN
         || estimated_bits(value) < MIN_BITS
     {
@@ -172,6 +184,25 @@ mod tests {
     }
 
     #[test]
+    fn repeated_words_off_the_base64_grid_fail() {
+        let probes = [
+            format!("{}pas", "password1".repeat(5)),
+            "passwordpassword1".repeat(4),
+            "MyCompanySecretKey2026".repeat(2),
+            // Case changes don't hide the repetition.
+            format!("{}{}", "MyCompanySecretKey2026", "mycompanysecretkey2026"),
+        ];
+        for value in &probes {
+            // Valid base64 of 32+ bytes whose bytes don't repeat: only the
+            // text-level check catches them.
+            let bytes = decode(value).unwrap();
+            assert!(bytes.len() >= MIN_BYTES, "{value}");
+            assert!(!repeats(&bytes), "{value}");
+            assert!(validate(value).is_err(), "{value}");
+        }
+    }
+
+    #[test]
     fn weak_values_fail() {
         let hex32 = "9f86d081884c7d659a2feaa0c55ad015";
         let base64_24_bytes = "2fWH6CRxNI9OZg3nSFittXX4ugYKS+tH";
@@ -207,6 +238,7 @@ mod tests {
         assert_eq!(shortest_period(b"aaaa"), 1);
         assert_eq!(shortest_period(b"abcabcab"), 3);
         assert_eq!(shortest_period(b"abcd"), 4);
+        assert!(repeats(b"abab") && repeats(b"abcabca") && !repeats(b"abcabd"));
         assert_eq!(longest_sequential_run(""), 0);
         assert_eq!(longest_sequential_run("z"), 1);
         assert_eq!(longest_sequential_run("xabcdy"), 4);
