@@ -10,6 +10,7 @@
 pub mod discovery;
 pub mod exchange;
 pub mod flow;
+pub mod group_map;
 pub mod id_token;
 pub mod identities;
 pub mod idps;

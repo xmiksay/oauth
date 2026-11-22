@@ -194,7 +194,9 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   disable and delete confirmations repeat. It also shows `linked_users`; a save that repoints the
   provider (`issuer`, `client_id` or `discovery_url`) first asks for confirmation
   (`relinkWarning`) when `linked_users > 0` (the server unlinks them all) or when the issuer /
-  discovery URL moves without a new secret while one is stored (the server drops it). The admin user detail lists `identities` ("Linked
+  discovery URL moves without a new secret while one is stored (the server drops it). Below it,
+  `GroupMappings` lists the provider's group mappings (`usePagedList`) and, for a Global Admin,
+  adds one (claim, value, a group from `PrincipalPicker`) or removes one after confirming. The admin user detail lists `identities` ("Linked
   identities", unlink for `canWriteUsers`; the server's 409 for the last sign-in method shows in
   the dialog). My Account → Security has `LinkedAccountsSection` (hidden when nothing is linked or
   available): "Link {name}" → `ReauthPrompt` → `POST me/identities/{idpId}/link` → full-page

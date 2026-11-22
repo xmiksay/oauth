@@ -53,6 +53,8 @@ export const AUDIT_EVENT_TYPES = [
   'identity_provider.create',
   'identity_provider.update',
   'identity_provider.delete',
+  'identity_provider.group_mapping_add',
+  'identity_provider.group_mapping_remove',
   'consent.grant',
   'consent.revoke',
 ]

@@ -47,6 +47,26 @@ describe('identity provider resources', () => {
     expect(calls[0]?.headers.Authorization).toBe('Bearer tok')
   })
 
+  it('lists, adds and removes group mappings', async () => {
+    const calls = mockFetch(
+      { body: { items: [], next_cursor: null } },
+      { status: 201, body: { id: 'm' } },
+      { status: 204 },
+    )
+    await identityProviders.mappings('a/b', { limit: 25, cursor: 'c1', search: 'x' })
+    await identityProviders.addMapping('a/b', { claim: 'groups', value: 'eng', group_id: 'g' })
+    await identityProviders.removeMapping('a/b', 'm/1')
+    expect(calls.map((c) => [c.method, c.url, c.body])).toEqual([
+      ['GET', `${T}/identity-providers/a%2Fb/group-mappings?limit=25&cursor=c1`, undefined],
+      [
+        'POST',
+        `${T}/identity-providers/a%2Fb/group-mappings`,
+        { claim: 'groups', value: 'eng', group_id: 'g' },
+      ],
+      ['DELETE', `${T}/identity-providers/a%2Fb/group-mappings/m%2F1`, undefined],
+    ])
+  })
+
   it("unlinks a user's identity", async () => {
     const calls = mockFetch({ status: 204 })
     await users.unlinkIdentity('u1', 'li 1')

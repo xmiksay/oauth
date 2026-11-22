@@ -5,7 +5,14 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import type { DirectoryRole } from '@/api/types'
 import { fakeIdp, fakeMe } from '@/test/helpers'
 
-const identityProviders = { get: vi.fn(), update: vi.fn(), remove: vi.fn() }
+const identityProviders = {
+  get: vi.fn(),
+  update: vi.fn(),
+  remove: vi.fn(),
+  mappings: vi.fn(),
+  addMapping: vi.fn(),
+  removeMapping: vi.fn(),
+}
 vi.mock('@/api/identityProviders', () => ({ identityProviders }))
 
 const { default: IdentityProviderDetail } = await import('./IdentityProviderDetail.vue')
@@ -45,6 +52,7 @@ beforeEach(() => {
   document.body.innerHTML = ''
   Object.values(identityProviders).forEach((f) => f.mockReset())
   identityProviders.get.mockResolvedValue(fakeIdp())
+  identityProviders.mappings.mockResolvedValue({ items: [], next_cursor: null })
 })
 
 describe('IdentityProviderDetail', () => {

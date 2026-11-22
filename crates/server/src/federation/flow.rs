@@ -121,6 +121,7 @@ pub async fn finish(
     consumed: &Consumed,
     params: &HashMap<String, String>,
     reauth: Reauth,
+    mapped_claims: &[String],
 ) -> Result<Claims, Failure> {
     if params.contains_key("error") {
         return Err(Failure("upstream_error"));
@@ -156,6 +157,7 @@ pub async fn finish(
         nonce: &consumed.row.nonce,
         now,
         min_auth_time: reauth.min_auth_time(consumed.row.created_at.timestamp(), now),
+        mapped_claims,
     };
     upstream.verify_id_token(&meta, &id_token, &expected).await
 }

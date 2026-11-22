@@ -70,6 +70,8 @@ pub struct Account {
     pub acr: Option<String>,
     /// `auth_time` as seconds relative to now; `None` = no claim.
     pub auth_time: Option<i64>,
+    /// More claims merged into the ID token (e.g. `groups`).
+    pub extra: Value,
 }
 
 impl Account {
@@ -82,6 +84,7 @@ impl Account {
             amr: vec!["pwd".into()],
             acr: None,
             auth_time: None,
+            extra: Value::Null,
         }
     }
 }
@@ -179,6 +182,11 @@ fn id_token(inner: &Inner, grant: &Grant) -> String {
     }
     if let Some(acr) = &a.acr {
         claims["acr"] = json!(acr);
+    }
+    if let Some(extra) = a.extra.as_object() {
+        for (k, v) in extra {
+            claims[k] = v.clone();
+        }
     }
     match &inner.tweak {
         Tweak::Issuer(iss) => claims["iss"] = json!(iss),

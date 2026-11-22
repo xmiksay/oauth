@@ -145,6 +145,10 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   that belongs to a user. The client secret is write-only (`has_secret`).
   The last-sign-in-method rule is `federation::identities::Methods` —
   anything removing a password, passkey or identity goes through it.
+  Group mappings (`federation::group_map`): a sign-in only adds / removes
+  `group_members` rows carrying its own `idp_id` (never `manual` ones), in
+  its writing transaction under `lock_current`; mapping writes lock the IdP
+  `FOR UPDATE`; repoint, IdP delete and unlink call `group_map::drop_owned`.
 - Device code grant (`device_flow`, `oidc::device_authorization` /
   `device_grant`, `authn::device_code`; [docs/device_code.md](../docs/device_code.md)):
   the browser side is an ordinary login transaction whose `AuthRequest.device`

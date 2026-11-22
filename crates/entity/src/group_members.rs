@@ -11,6 +11,12 @@ pub struct Model {
     #[sea_orm(primary_key, auto_increment = false)]
     pub user_id: Uuid,
     pub created_at: DateTimeWithTimeZone,
+    /// Added by an administrator (kept whatever the mappings say).
+    pub manual: bool,
+    /// Kept by this identity provider's group mappings; a sign-in through
+    /// it removes the row (or just this mark, when `manual`) once the
+    /// mapped claim value is gone.
+    pub idp_id: Option<Uuid>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

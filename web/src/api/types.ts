@@ -199,6 +199,23 @@ export interface IdentityProviderInput {
 
 export type IdentityProviderPatch = Partial<IdentityProviderInput>
 
+/** An upstream claim value that puts the signed-in user into a local group. */
+export interface IdpGroupMapping {
+  id: string
+  idp_id: string
+  claim: string
+  value: string
+  group_id: string
+  group_display_name: string | null
+  created_at: string
+}
+
+export interface IdpGroupMappingInput {
+  claim: string
+  value: string
+  group_id: string
+}
+
 export interface Session {
   id: string
   amr: string[]

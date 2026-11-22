@@ -8,7 +8,7 @@ use jsonwebtoken::{
 };
 use serde_json::{Map, Value};
 
-use super::{Failure, Upstream, discovery::Metadata, profile};
+use super::{Failure, Upstream, discovery::Metadata, group_map, profile};
 use crate::secret;
 
 /// Allowed clock difference to the provider, both ways.
@@ -27,6 +27,9 @@ pub struct Expected<'a> {
     /// token's `auth_time` must be present and no earlier than this (unix
     /// seconds, minus the skew).
     pub min_auth_time: Option<i64>,
+    /// Claims the provider's group mappings read; their bounded values come
+    /// back in [`Claims::mapped`].
+    pub mapped_claims: &'a [String],
 }
 
 /// The claims we use from a verified token.
@@ -40,6 +43,8 @@ pub struct Claims {
     pub acr: Option<String>,
     /// The upstream `auth_time`, never later than now.
     pub auth_time: Option<i64>,
+    /// Values of the claims group mappings read (`group_map::extract`).
+    pub mapped: group_map::ClaimValues,
 }
 
 fn str_claim<'a>(claims: &'a Map<String, Value>, name: &str) -> Option<&'a str> {
@@ -139,6 +144,7 @@ pub fn check_claims(
         amr,
         acr: str_claim(claims, "acr").and_then(profile::clean_token),
         auth_time,
+        mapped: group_map::extract(claims, expected.mapped_claims),
     })
 }
 
@@ -215,6 +221,7 @@ mod tests {
             nonce: "n-123",
             now: NOW,
             min_auth_time: None,
+            mapped_claims: &[],
         }
     }
 

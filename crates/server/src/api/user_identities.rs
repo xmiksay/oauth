@@ -18,7 +18,7 @@ use crate::{
     audit::{EventType, Target},
     authz::{Access, Area},
     error::{AppError, AppResult},
-    federation::{identities, idps},
+    federation::{group_map, identities, idps},
 };
 
 /// `subject` only for administrators (`admin`): users know who they are.
@@ -76,12 +76,20 @@ pub async fn unlink(
     user_identities::Entity::delete_by_id(identity.id)
         .exec(conn)
         .await?;
+    // Nothing would keep them in line any more.
+    let memberships =
+        group_map::drop_owned(conn, user.tenant_id, identity.idp_id, Some(user.id), None).await?;
     caller
         .audit(
             conn,
             EventType::UserIdentityUnlink,
             Some(Target::User(user.id)),
-            json!({ "identity_id": identity.id, "idp_id": identity.idp_id, "via": via }),
+            json!({
+                "identity_id": identity.id,
+                "idp_id": identity.idp_id,
+                "via": via,
+                "memberships_removed": memberships,
+            }),
         )
         .await
 }

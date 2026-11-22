@@ -18,6 +18,7 @@ import ConfirmButton from '@/components/ConfirmButton.vue'
 import CopyButton from '@/components/CopyButton.vue'
 import ModalDialog from '@/components/ModalDialog.vue'
 import IdpForm from './IdpForm.vue'
+import GroupMappings from './GroupMappings.vue'
 import { POLICY_LABELS, changedIdpFields, lockoutWarning, relinkWarning } from './idpForm'
 
 const route = useRoute()
@@ -196,6 +197,11 @@ async function remove() {
           </dl>
         </div>
       </div>
+      <GroupMappings
+        class="mt-4"
+        :idp-id="idp.id"
+        :can-write="isGlobalAdmin"
+      />
     </template>
     <ModalDialog
       :open="pending !== null"
