@@ -244,7 +244,7 @@ earlier session of this browser (e.g. after `prompt=login`).
 | 401 | `invalid_credentials` | Wrong email or password, or unknown email — never distinguished (unknown accounts are verified against a dummy argon2 hash to equalise timing) |
 | 401 | `invalid_credentials` | Any rejected passkey assertion (unknown, other account's, wrong origin / RP, no user verification, bad signature, used / expired challenge, counter regression) — never distinguished; the audit log has the reason |
 | 401 | `invalid_code` | Wrong / reused TOTP code or recovery code; wrong, expired, used or dead (5 guesses) Telegram code; a wrong code confirming a TOTP enrolment |
-| 403 | `account_disabled` | Correct password, but the user is disabled |
+| 403 | `account_disabled` | Correct password, but the user is disabled — also from any step that completes the sign-in (or `consent`) when the user was disabled while it ran (nothing is issued; the transaction is not consumed) |
 | 403 | `csrf_rejected` | `Origin` missing or not the tenant's `{origin}` |
 | 404 | `not_found` | Unknown, expired, finished or foreign transaction (`no-store`). An unknown or disabled tenant (host) also answers `404 {"error":"not_found","error_description":"resource not found"}`, from the tenant resolver (without `no-store`) |
 | 409 | `wrong_step` | The transaction is at another step (or a concurrent call advanced it) |

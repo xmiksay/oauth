@@ -103,7 +103,13 @@ pub(super) async fn active_user(
         .await
         .context("loading user")?
         .filter(|u| !u.disabled)
-        .ok_or_else(|| OAuthError::invalid_grant("the user is disabled or no longer exists"))
+        .ok_or_else(inactive_user)
+}
+
+/// The `invalid_grant` for a user who is disabled or gone — also when
+/// `backchannel::lock_user` finds that after [`active_user`] passed.
+pub(super) fn inactive_user() -> OAuthError {
+    OAuthError::invalid_grant("the user is disabled or no longer exists")
 }
 
 /// `invalid_grant` unless the user is assigned where required
@@ -186,6 +192,14 @@ async fn authorization_code(
     // on the code's row lock until we commit, then finds it consumed and
     // revokes what we issued — no token of a replayed code survives.
     let txn = conn.begin().await?;
+    // `user` was read before the lock: a disable that committed meanwhile
+    // shows only here (it also ends the session `record_client` checks).
+    if !backchannel::lock_user(&txn, tenant.id, row.user_id)
+        .await?
+        .is_active()
+    {
+        return Err(inactive_user());
+    }
     // The code's session must still be live, and stays so (its row lock is
     // held to commit): a logout either already ended it — the code is dead
     // with it — or waits for us and then revokes and announces our tokens.

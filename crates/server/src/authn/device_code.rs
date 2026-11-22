@@ -207,6 +207,13 @@ pub async fn approve(
 
 /// Denies the device request (the user declined, or the scopes need an
 /// administrator's consent); the device's next poll gets `access_denied`.
+///
+/// Takes the user lock before the device row (order user → session →
+/// request, `backchannel::lock_user`, as `oidc::device_grant` does): the
+/// update's FK on `user_id` would otherwise take it after the row lock and
+/// deadlock against the user's deletion. A caller that locks anything later
+/// in that order first (a login transaction) must lock the user before it.
+/// A user deleted meanwhile leaves nothing to record.
 pub async fn deny(
     conn: &impl ConnectionTrait,
     ctx: &Ctx<'_>,
@@ -215,6 +222,10 @@ pub async fn deny(
     user_id: Uuid,
     reason: &'static str,
 ) -> anyhow::Result<()> {
+    let user = crate::backchannel::lock_user(conn, ctx.tenant.id, user_id).await?;
+    if user == crate::backchannel::UserLock::Gone {
+        return Ok(());
+    }
     if device_flow::decide(conn, ctx.tenant.id, device_id, user_id, Decision::Deny).await? {
         let details = json!({ "device_authorization_id": device_id, "reason": reason });
         record(

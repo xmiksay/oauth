@@ -78,9 +78,23 @@ transaction, the session it builds on or the one it replaces), a
 federated sign-in (after the IdP lock, before touching the identity and
 applying group mappings), the refresh grant (right after `BEGIN`, before a
 multi-resource refresh locks consent rows) and the device code grant (the
-approving user before the request row). A
+approving user before the request row), and denying a device request
+(`authn::device_code::deny`, which writes the user into the request row;
+callers that also claim a login transaction lock the user before it). A
 refresh that loses this race gets a plain `invalid_grant` — a token
 revoked (not rotated) meanwhile is no replay, so no reuse alarm.
+
+`lock_user` returns the user's state as read under the lock
+(`UserLock::{Active, Disabled, Gone}`): a disable or deletion that committed
+while the caller waited is only visible from there on — a `disabled` read
+before the lock is stale. So every issuing path refuses unless the user is
+`Active`: sign-in completion answers `403 account_disabled` (no session, no
+code, the login transaction stays unclaimed), the code and refresh grants
+`invalid_grant` ("the user is disabled or no longer exists"), a federated
+sign-in the `account_disabled` refusal (no group mappings written),
+`record_client` reports the session as ended, and the device code grant
+reads the user after `lock_request` took the lock. A device denial for a
+user deleted meanwhile records nothing (the row stays pending).
 
 The outbox row: `recipient` = application id, `kind` =
 `backchannel_logout`, sealed body `{"sid", "sub"}`, 24 h lifetime.

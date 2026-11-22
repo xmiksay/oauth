@@ -12,7 +12,7 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, TransactionTrait};
 use super::{
     error::{ErrorCode, OAuthError, OAuthResult},
     mrrt, scope,
-    token::{active_user, ensure_assigned, load_app},
+    token::{active_user, ensure_assigned, inactive_user, load_app},
 };
 use crate::{
     app::AppState,
@@ -98,7 +98,14 @@ pub async fn grant(
     // The user first (global order user → consent / session → tokens, see
     // `backchannel::lock_user`): `mrrt::resolve` locks consent rows, which
     // deleting the user (holding it `FOR UPDATE`) cascades to.
-    backchannel::lock_user(&txn, tenant.id, row.user_id).await?;
+    // `user` was read before the lock: a disable that committed meanwhile
+    // shows only here.
+    if !backchannel::lock_user(&txn, tenant.id, row.user_id)
+        .await?
+        .is_active()
+    {
+        return Err(inactive_user());
+    }
     let (oidc, resource, values) = match params.get("scope") {
         None => (original_oidc, original_resource, original_values),
         Some(raw) => {

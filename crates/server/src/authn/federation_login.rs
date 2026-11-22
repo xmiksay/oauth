@@ -255,8 +255,15 @@ async fn sign_in(
     // Same configuration, and the identity still linked (a repoint unlinks).
     let current = idps::lock_current(&txn, ctx.tenant.id, idp.id, idp.generation).await?;
     // Then the user (IdP → user → …, `backchannel::lock_user`): the identity
-    // and membership rows written below cascade from it on deletion.
-    crate::backchannel::lock_user(&txn, ctx.tenant.id, user.id).await?;
+    // and membership rows written below cascade from it on deletion. One
+    // disabled meanwhile gets nothing written.
+    if !crate::backchannel::lock_user(&txn, ctx.tenant.id, user.id)
+        .await?
+        .is_active()
+    {
+        drop(txn);
+        return refuse(ctx, idp, Some(user.id), Refusal::Disabled).await;
+    }
     if current.is_none() || !identities::touch(&txn, identity, claims.email.as_deref()).await? {
         drop(txn);
         return fail(ctx, idp, "idp_repointed").await;
