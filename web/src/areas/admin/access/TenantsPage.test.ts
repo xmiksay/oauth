@@ -87,4 +87,27 @@ describe('TenantsPage', () => {
     expect(w.text()).not.toContain('https://prod.')
     expect(w.text()).toContain('https://contoso.id.example.com')
   })
+
+  it("tells the new admin to sign in at the server's origin for the tenant", async () => {
+    const created = tenant({ id: 't3', slug: 'prod', origin: 'https://id.example.com' })
+    const calls = mockFetch(
+      page([]),
+      {
+        status: 201,
+        body: { tenant: created, admin: { email: 'ann@prod.test' }, one_time_password: 'OTP' },
+      },
+      page([created]),
+    )
+    const w = await mountPage()
+    await w.findAll('button').find((b) => b.text() === 'New tenant')?.trigger('click')
+    await w.find('#nt-slug').setValue('prod')
+    await w.find('#nt-name').setValue('Prod')
+    await w.find('#nt-email').setValue('ann@prod.test')
+    await w.find('form#create-tenant').trigger('submit')
+    await flushPromises()
+    expect(calls[1]?.method).toBe('POST')
+    const dialog = w.findComponent({ name: 'SecretOnceDialog' })
+    expect(dialog.props('values')).toEqual(['OTP'])
+    expect(dialog.props('description')).toBe('ann@prod.test — sign in at https://id.example.com/admin')
+  })
 })

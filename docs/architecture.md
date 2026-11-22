@@ -80,7 +80,7 @@ proxy sits in front; the server ignores the forwarded host either way).
 | `POST /api/authn/password-reset`, `POST /api/authn/email/{verify,reset,invite,invite/passkey/options,invite/passkey}` — email links (the token is the credential), same contract | app | `authn::{reset,email}` |
 | `POST /api/authn/device` — a device's user code entered on `/device` → login transaction, same contract | app | `authn::device_code` |
 | `/api/v1/{settings,users,groups,directory-roles,applications,identity-providers,role-assignments,consents,audit-events}[/…]`, `/api/v1/me[/…]`, and on the system host only `/api/v1/tenants[/{slug}[/users[/…]]]` (system Global Admins) — management REST API, bearer tokens for the host tenant's `management-api`; contract in [api/management.md](api/management.md) (+ [applications](api/applications.md), [identity providers](api/identity_providers.md)) | app | `api` |
-| `/` (the portal; apex `/` redirects, above) and `/{login,logout,device,myaccount,admin}[/…]` → `index.html` with `<meta name="oauth-tenant" content="{slug}">` (`Cache-Control: no-cache`) (incl. the public link pages `/login/reset`, `/login/invite`, `/myaccount/verify-email`) | app | `spa` |
+| `/` (the portal; apex `/` redirects without `APEX_TENANT`, above; with it the apex serves that tenant's SPA), `/index.html` and `/{login,logout,device,myaccount,admin}[/…]` → `index.html` with `<meta name="oauth-tenant" content="{slug}">` (`Cache-Control: no-cache`) (incl. the public link pages `/login/reset`, `/login/invite`, `/myaccount/verify-email`) | app | `spa` |
 | any other path → static file from `WEB_DIST_DIR`, else 404 | app | `spa` |
 | `GET /metrics` — Prometheus text format | metrics | `metrics` |
 

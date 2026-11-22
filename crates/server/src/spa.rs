@@ -1,8 +1,9 @@
 //! Serves the built Vue SPA (`web/dist`) on tenant hosts (the host gate in
 //! `app.rs` keeps it off the apex unless `APEX_TENANT` puts a tenant there).
 //! `/` (the portal / dashboard) and client-side routes under
-//! `/login|logout|device|myaccount|admin` fall back to `index.html`; anything
-//! else is looked up as a static asset.
+//! `/login|logout|device|myaccount|admin` fall back to `index.html` (as does
+//! `/index.html` itself, so every HTML entry point carries the tenant meta);
+//! anything else is looked up as a static asset.
 
 use std::{path::Path, sync::Arc};
 
@@ -34,7 +35,9 @@ pub fn router<S: Clone + Send + Sync + 'static>(dist: &Path) -> Router<S> {
         tracing::warn!(dir = %dist.display(), "SPA build not found; frontend routes will 404");
     }
     let page = get(move |req: Request| index_page(index.clone(), req));
-    let mut router = Router::new().route("/", page.clone());
+    let mut router = Router::new()
+        .route("/", page.clone())
+        .route("/index.html", page.clone());
     for area in SPA_AREAS {
         router = router
             .route(&format!("/{area}"), page.clone())
