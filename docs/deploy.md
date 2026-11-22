@@ -35,7 +35,7 @@ right-most entry is used: exactly one proxy hop) only when such a proxy sets
 it; otherwise leave it unset and the TCP peer address is the client IP
 (ingress-nginx: keep `use-forwarded-headers` off unless another trusted proxy
 sits in front of it). The trust model is in
-[architecture.md](architecture.md#http-surface-current).
+[http.md](http.md).
 
 **Ports and probes.** `LISTEN_ADDR` (default `0.0.0.0:8080`) serves the app;
 `METRICS_ADDR` (default `0.0.0.0:9090`) serves only `GET /metrics`

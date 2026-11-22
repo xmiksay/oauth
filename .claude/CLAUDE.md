@@ -5,7 +5,7 @@ tenants, app registrations, delegated scopes + app roles, groups, consent and
 directory roles. Rust (Axum, SeaORM, Postgres) backend + Vue 3 SPA served
 same-origin. Repo: `github.com:xmiksay/oauth`.
 
-- Architecture: [docs/architecture.md](../docs/architecture.md), SPA: [docs/frontend.md](../docs/frontend.md),
+- Architecture: [docs/architecture.md](../docs/architecture.md), HTTP surface: [docs/http.md](../docs/http.md), SPA: [docs/frontend.md](../docs/frontend.md),
   sign-in: [docs/authn.md](../docs/authn.md), passkeys: [docs/passkeys.md](../docs/passkeys.md),
   federation: [docs/federation.md](../docs/federation.md), background jobs: [docs/jobs.md](../docs/jobs.md),
   logout / back-channel logout: [docs/backchannel_logout.md](../docs/backchannel_logout.md), device code: [docs/device_code.md](../docs/device_code.md),
