@@ -1,6 +1,7 @@
 //! `grant_type=refresh_token`: rotation with family reuse detection and
 //! optional down-scoping (RFC 6749 §6). The new refresh token keeps the
-//! grant's original scopes; only the access token is narrowed.
+//! grant's original scopes; only the access token is narrowed — or, for
+//! scopes of another resource, minted for that resource (`mrrt`).
 
 use std::{collections::HashMap, net::IpAddr};
 
@@ -9,7 +10,7 @@ use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, TransactionTrait};
 
 use super::{
     error::{ErrorCode, OAuthError, OAuthResult},
-    scope,
+    mrrt, scope,
     token::{active_user, load_app},
 };
 use crate::{
@@ -22,38 +23,31 @@ use crate::{
     },
 };
 
-fn invalid_scope(msg: &str) -> OAuthError {
+pub(super) fn invalid_scope(msg: &str) -> OAuthError {
     OAuthError::new(ErrorCode::InvalidScope, msg)
 }
 
-/// Narrows `(oidc, resource values)` of the original grant to what `raw`
-/// asks for. `resource_prefix_ok` says whether the requested resource is the
-/// grant's resource.
-fn narrow(
+/// The requested OIDC scopes, which must be within the original grant.
+fn narrow_oidc(
     original_oidc: &[String],
-    original_values: &[String],
     requested: &scope::RequestedScopes,
-    resource_prefix_ok: bool,
-) -> OAuthResult<(Vec<String>, Option<Vec<String>>)> {
+) -> OAuthResult<Vec<String>> {
     if !requested.oidc.iter().all(|s| original_oidc.contains(s)) {
         return Err(invalid_scope("scope exceeds the original grant"));
     }
-    let values = match &requested.resource {
-        None => None,
-        Some(_) if !resource_prefix_ok => {
-            return Err(invalid_scope("scope exceeds the original grant"));
-        }
-        Some((_, values)) if values.iter().any(|v| v == scope::DEFAULT) => {
-            Some(original_values.to_vec())
-        }
-        Some((_, values)) => {
-            if !values.iter().all(|v| original_values.contains(v)) {
-                return Err(invalid_scope("scope exceeds the original grant"));
-            }
-            Some(values.clone())
-        }
-    };
-    Ok((requested.oidc.clone(), values))
+    Ok(requested.oidc.clone())
+}
+
+/// Narrows the grant's own resource values to `requested` (`.default` =
+/// all of them).
+fn narrow_values(original_values: &[String], requested: &[String]) -> OAuthResult<Vec<String>> {
+    if requested.iter().any(|v| v == scope::DEFAULT) {
+        return Ok(original_values.to_vec());
+    }
+    if !requested.iter().all(|v| original_values.contains(v)) {
+        return Err(invalid_scope("scope exceeds the original grant"));
+    }
+    Ok(requested.to_vec())
 }
 
 pub async fn grant(
@@ -97,16 +91,24 @@ pub async fn grant(
         None => (original_oidc, original_resource, original_values),
         Some(raw) => {
             let requested = scope::parse(raw).map_err(|m| invalid_scope(&m))?;
-            let prefix_ok = match (&requested.resource, &original_resource) {
-                (Some((prefix, _)), Some(res)) => scope::find_resource(conn, tenant.id, prefix)
-                    .await?
-                    .is_some_and(|found| found.id == res.id),
-                _ => false,
-            };
-            let (oidc, values) = narrow(&original_oidc, &original_values, &requested, prefix_ok)?;
-            match values {
-                Some(values) => (oidc, original_resource, values),
+            let oidc = narrow_oidc(&original_oidc, &requested)?;
+            match &requested.resource {
                 None => (oidc, None, Vec::new()),
+                Some((prefix, values)) => {
+                    let found = scope::find_resource(conn, tenant.id, prefix).await?;
+                    match (found, original_resource) {
+                        (Some(found), Some(orig)) if found.id == orig.id => {
+                            (oidc, Some(orig), narrow_values(&original_values, values)?)
+                        }
+                        // Another resource than the grant's: Entra-style
+                        // multi-resource refresh, on live consent.
+                        (found, _) => {
+                            let (res, values) =
+                                mrrt::resolve(conn, tenant, client, &row, found, values).await?;
+                            (oidc, Some(res), values)
+                        }
+                    }
+                }
             }
         }
     };
@@ -210,26 +212,14 @@ mod tests {
         let oidc = s(&["openid", "offline_access"]);
         let values = s(&["read", "write"]);
         let req = scope::parse("openid api://x/read").unwrap();
+        assert_eq!(narrow_oidc(&oidc, &req).unwrap(), s(&["openid"]));
+        assert_eq!(narrow_values(&values, &s(&["read"])).unwrap(), s(&["read"]));
         assert_eq!(
-            narrow(&oidc, &values, &req, true).unwrap(),
-            (s(&["openid"]), Some(s(&["read"])))
+            narrow_values(&values, &s(&[scope::DEFAULT])).unwrap(),
+            values
         );
-        let req = scope::parse("api://x/.default").unwrap();
-        assert_eq!(
-            narrow(&oidc, &values, &req, true).unwrap().1,
-            Some(values.clone())
-        );
-        let req = scope::parse("openid").unwrap();
-        assert_eq!(
-            narrow(&oidc, &values, &req, true).unwrap(),
-            (s(&["openid"]), None)
-        );
-        for bad in ["email", "api://x/delete"] {
-            let req = scope::parse(bad).unwrap();
-            assert!(narrow(&oidc, &values, &req, true).is_err(), "{bad}");
-        }
-        // Another resource than the grant's.
-        let req = scope::parse("api://other/read").unwrap();
-        assert!(narrow(&oidc, &values, &req, false).is_err());
+        let req = scope::parse("email").unwrap();
+        assert!(narrow_oidc(&oidc, &req).is_err());
+        assert!(narrow_values(&values, &s(&["delete"])).is_err());
     }
 }

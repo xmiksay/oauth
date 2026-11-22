@@ -9,6 +9,7 @@ mod discovery;
 pub mod error;
 mod introspect;
 mod logout;
+mod mrrt;
 pub mod params;
 pub mod pkce;
 pub mod redirect;

@@ -52,7 +52,9 @@ Validation:
   it on built-in apps too): `required` makes every sign-in to the app — as
   the client, or when its scopes are requested as the resource — multi-factor
   even under a tenant policy of `optional` (forced enrolment / step-up as in
-  [../authn.md](../authn.md#mfa-policy)). There is no `optional`: an app can
+  [../authn.md](../authn.md#mfa-policy)); a refresh token of a single-factor
+  sign-in is refused (`invalid_grant`) when redeemed for the app as another
+  resource (multi-resource refresh). There is no `optional`: an app can
   only tighten the tenant's `mfa_policy`.
 
 ## Secrets

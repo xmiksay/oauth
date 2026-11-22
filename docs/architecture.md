@@ -104,7 +104,7 @@ Implemented:
 | `tenancy` | `resolve_host` middleware (host → active tenant, apex redirect, else 404) and the `Tenant` extractor reading its result |
 | `secret` | Random bearer secrets (256-bit, base64url), random UUIDv4 handles, SHA-256 storage hash, constant-time compare |
 | `cors` | CORS on discovery / JWKS / userinfo / token / revoke only: `validate_origin`, `origin_of` (a redirect URI's origin), `effective_origins` (explicit ∪ a public client's redirect-URI origins), `tenant_allows`; `http` (preflight handlers, `tenant_wide` middleware, `for_client` for token / revoke) — see [CORS](#cors) |
-| `oidc` | Protocol endpoints; `params` (duplicate-rejecting form/query parsing, `AuthRequest`), `pkce`, `redirect` (matching + building), `scope` (parsing, resource resolution, `resolve_request` shared by authorize and device authorization), `client_auth`, `error` (`OAuthError`, RFC 6749 JSON + `WWW-Authenticate`, `no-store`), `device_authorization` / `device_grant` (RFC 8628) |
+| `oidc` | Protocol endpoints; `params` (duplicate-rejecting form/query parsing, `AuthRequest`), `pkce`, `redirect` (matching + building), `scope` (parsing, resource resolution, `resolve_request` shared by authorize and device authorization), `mrrt` (refresh token redeemed for another consented resource), `client_auth`, `error` (`OAuthError`, RFC 6749 JSON + `WWW-Authenticate`, `no-store`), `device_authorization` / `device_grant` (RFC 8628) |
 | `device_flow` | Device authorization state: `user_code` (alphabet, normalising, hashing), issue (code pair, user code unique per tenant), lookup by user code, the decision (CAS on `pending`), poll bookkeeping (`slow_down`), consumption |
 | `mail` | `Mailer` trait (`Email`, `MailError` transient/permanent) + `SmtpMailer` (lettre, rustls on AWS-LC, webpki roots, 15 s command timeout); `templates` (plain-text link messages and security notices); `outbox` (`enqueue` on the caller's transaction, body sealed, backoff schedule); `tokens` (email link tokens: issue voids the user's older ones of that purpose, atomic single-use `consume` scoped to the tenant); `links::send` (token + message + outbox row) |
 | `notify` | Security notices (`notify::event`, `email_changed` to the old address) honouring `notification_prefs` (no row = on); email only to a verified address, Telegram to a linked chat |
@@ -208,7 +208,8 @@ FKs: sessions and codes are swept while the tokens they produced live on.
   that, errors redirect with `error`, `error_description`, `state` and `iss`
   (RFC 9207, also on success).
 - Scopes: `openid profile email offline_access` plus scopes of at most one
-  resource app, `{identifier_uri}/{value}` or `api://{client_id}/{value}`;
+  resource app per request (one refresh token still spans resources, see
+  the token endpoint), `{identifier_uri}/{value}` or `api://{client_id}/{value}`;
   `{resource}/.default` = the client's registered required delegated
   permissions on it. At least one scope is required.
 - `prompt=none|login|consent` (`none` alone), `max_age`. With a valid session
@@ -248,8 +249,22 @@ need no consent (grants are keyed by a resource app).
   `refresh_token_ttl_secs` from the first issue). Presenting a rotated token
   revokes the whole family. `scope` may narrow the access token (never
   widen); the new refresh token keeps the original scopes and resource.
-  Scope / user checks happen before rotation, so a rejected request doesn't
-  burn it. Rotation and issuance share one DB transaction, so of two
+  **Multi-resource refresh** (Entra-style, `oidc::mrrt`): `scope` naming
+  another resource than the grant's (still one resource per request, so
+  every access token has one `aud`) mints an access token for it when
+  every requested value (`.default` = the client's required permissions on
+  it, as at authorize) is covered **now** by the user's or the tenant-wide
+  admin consent for this client (built-in clients: pre-consented), and the
+  token's sign-in `amr` is multi-factor if the tenant, the client or that
+  resource requires MFA; otherwise `invalid_grant` ("sign in
+  interactively"). Unknown resources (incl. other tenants' apps), values it
+  doesn't expose and an empty `.default` → `invalid_scope`; OIDC scopes
+  still can't exceed the grant. Nothing about the other resource is stored:
+  the rotated token keeps the family's grant, so a withdrawn consent stops
+  the next redemption (and its revocation hits the opaque tokens it
+  produced, which carry that resource).
+  Scope / user / consent / MFA checks happen before rotation, so a rejected
+  request doesn't burn it. Rotation and issuance share one DB transaction, so of two
   concurrent redemptions the loser sees the token rotated and revokes the
   family including the winner's new token. A rotation refuses (→ reuse
   path) when any token of its family is revoked, and family revocation

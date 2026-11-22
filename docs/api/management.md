@@ -309,8 +309,10 @@ Consent on the management API: GlobalAdmin only.
 `DELETE` removes the grant (user or admin) and revokes what the client got
 under it: all refresh-token families and opaque access tokens of
 (client, resource) — for the grant's user, or for **every** user when it is
-the admin grant (their tokens may rest on it). JWT access tokens can't be
-recalled and expire. App role assignments made by a consent are removed via
+the admin grant (their tokens may rest on it). Refresh tokens of other
+resources survive, but can no longer be redeemed for this one
+(multi-resource refresh checks consent on every redemption). JWT access
+tokens can't be recalled and expire. App role assignments made by a consent are removed via
 `DELETE role-assignments/{id}`.
 
 ## Identity providers — read: any directory role; write: GlobalAdmin (delegated) only; apps: none
