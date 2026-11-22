@@ -208,8 +208,8 @@ tenant 404 everywhere (sign-in, tokens, API); the system tenant and the
 `APEX_TENANT` ([../deploy.md](../deploy.md#apex-tenant)) can't be disabled
 (403). `origin` is the tenant's origin and issuer, which for the `APEX_TENANT`
 is the apex (`PUBLIC_URL`); clients link to tenants by it. A disabled tenant whose slug fails today's rules (created
-before they existed, e.g. `www`) or is a retired system tenant slug can't be re-enabled (`disabled: false` →
-400): the server refuses to start with such a tenant enabled.
+before they existed, e.g. `www`) or is a slug the system tenant was renamed away from can't be
+re-enabled (`disabled: false` → 400): the server refuses to start with such a tenant enabled.
 
 `/api/v1/tenants/{slug}/users` lets a system GlobalAdmin help a locked-out
 user (typically a tenant's own GlobalAdmin) of another tenant: unknown slug →

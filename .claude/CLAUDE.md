@@ -102,7 +102,8 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   `spa` writes into `index.html`, other tenants' origins from the Tenant `origin`. `tenancy::resolve_host` gates every route but `/healthz` / `/readyz`
   (authority = absolute-form / `:authority` first, then `Host`, RFC 9112 §3.2.2;
   several `Host` headers → 400; default port normalised; unknown / disabled /
-  other-port / nested hosts and tenants with a now-invalid slug → 404; apex →
+  other-port / nested hosts, tenants with a now-invalid slug and regular
+  tenants on a retired system tenant slug → 404; apex →
   the `APEX_TENANT`, or without one `/` → system admin portal; `/telegram/webhook`
   is apex-only and never a tenant route); never read `X-Forwarded-Host` / `Forwarded`. Startup
   (`db::migrate_and_reconcile`) first reconciles the system tenant's slug with

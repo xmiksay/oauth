@@ -10,8 +10,9 @@ absolute-form target / HTTP/2 `:authority` if present, else `Host` (RFC 9112 §3
 than one `Host` header → 400. It must match exactly: ASCII case-insensitive, the scheme's
 default port (`:443` for https, `:80` for http) spelled out counts as none; another port, trailing dot, nested label or
 IP literal → 404. `X-Forwarded-Host` / `Forwarded` are never trusted. Unknown or disabled
-tenants are 404 everywhere, and so are enabled tenants whose slug today's rules reject
-(startup refuses to run with any — rename or disable them). Without `APEX_TENANT` the apex serves
+tenants are 404 everywhere, and so are enabled tenants whose slug today's rules reject or
+that hold a slug the system tenant was renamed away from (`retired_tenant_slugs`; startup
+refuses to run with any — rename or disable them). Without `APEX_TENANT` the apex serves
 only `GET /` → 302 `{scheme}://{SYSTEM_TENANT_SLUG}.{host}/admin` and the Telegram webhook (404 on tenant
 hosts); with it, the webhook and that tenant's routes (startup refuses an `APEX_TENANT` that is
 the system tenant, missing or disabled). Other paths below are per tenant host.
