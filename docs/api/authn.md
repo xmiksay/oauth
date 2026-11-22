@@ -188,7 +188,7 @@ existing session). Protocol errors that belong to the client are also a
 `state`, `iss`: `access_denied` (user declined, an admin-only scope lacks
 admin consent — "admin approval required for: …", or the user is not
 assigned to the client or resource app — see
-[Assignment required](../architecture.md#assignment-required); checked
+[Assignment required](../consent.md#assignment-required); checked
 again when consent is approved, so no grant is stored), `login_required` (a
 reused or stepped-up session ended while the transaction was pending).
 

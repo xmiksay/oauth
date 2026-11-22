@@ -8,7 +8,8 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
 - Architecture: [docs/architecture.md](../docs/architecture.md), SPA: [docs/frontend.md](../docs/frontend.md),
   sign-in: [docs/authn.md](../docs/authn.md), passkeys: [docs/passkeys.md](../docs/passkeys.md),
   federation: [docs/federation.md](../docs/federation.md),
-  logout / back-channel logout: [docs/backchannel_logout.md](../docs/backchannel_logout.md), device code: [docs/device_code.md](../docs/device_code.md)
+  logout / back-channel logout: [docs/backchannel_logout.md](../docs/backchannel_logout.md), device code: [docs/device_code.md](../docs/device_code.md),
+  CORS: [docs/cors.md](../docs/cors.md), consent + assignment: [docs/consent.md](../docs/consent.md), refresh tokens: [docs/refresh_tokens.md](../docs/refresh_tokens.md)
 - Roadmap / milestones: [docs/roadmap.md](../docs/roadmap.md)
 - Deployment / release: [docs/deploy.md](../docs/deploy.md)
 
@@ -258,7 +259,7 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   `__Host-oauth_tx`, `__Host-oauth_dev`, `Path=/`) — never add a `Domain` (it would share them
   across tenant hosts) or a narrower `Path`. The login API / logout POST
   CSRF check wants `Origin` = the tenant's origin.
-- CORS (`cors`, [architecture](../docs/architecture.md#cors)) only on discovery,
+- CORS (`cors`, [cors.md](../docs/cors.md)) only on discovery,
   JWKS, token, revoke and userinfo — never on the login / management APIs.
   An app's allowed origins = `web_origins` ∪ (public clients) its redirect
   URIs' origins, computed per request; token / revoke echo only an origin of
