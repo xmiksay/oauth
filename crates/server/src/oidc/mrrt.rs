@@ -7,7 +7,7 @@
 //! grant, so every such redemption is re-checked against live consent.
 
 use entity::{app_scopes, applications, refresh_tokens};
-use sea_orm::ConnectionTrait;
+use sea_orm::DatabaseTransaction;
 
 use super::{
     error::{OAuthError, OAuthResult},
@@ -57,8 +57,11 @@ impl From<Refusal> for OAuthError {
 /// The resource and expanded scope values `row` may be redeemed for.
 /// `found` = the resource the scope prefix names in this tenant (apps of
 /// other tenants are never found: `scope::find_resource` filters by tenant).
+/// `txn` must be the transaction that issues the token: the consent rows
+/// are read `FOR SHARE`, so a withdrawal racing this redemption waits for
+/// its commit and then revokes the opaque token it issued.
 pub(super) async fn resolve(
-    conn: &impl ConnectionTrait,
+    txn: &DatabaseTransaction,
     tenant: &Tenant,
     client: &applications::Model,
     row: &refresh_tokens::Model,
@@ -66,19 +69,21 @@ pub(super) async fn resolve(
     values: &[String],
 ) -> OAuthResult<(applications::Model, Vec<String>)> {
     let resource = found.ok_or_else(|| invalid_scope("unknown resource"))?;
-    let scopes = scope::resolve_delegated(conn, client.id, &resource, values)
+    let scopes = scope::resolve_delegated(txn, client.id, &resource, values)
         .await?
         .ok_or_else(|| invalid_scope("the resource does not expose a requested scope"))?;
     // Built-in clients are pre-consented, as at authorize.
     let decision = if client.builtin {
         Decision::Granted
     } else {
+        // Locked: see `refresh_grant::grant` (the caller's transaction).
         let granted =
-            consent::granted_scopes(conn, tenant.id, client.id, resource.id, row.user_id).await?;
+            consent::granted_scopes(txn, tenant.id, client.id, resource.id, row.user_id, true)
+                .await?;
         consent::evaluate(&scopes, &granted, false)
     };
     let mfa_missing = !mfa_policy::is_mfa(&row.amr)
-        && mfa_policy::required(conn, tenant, client.id, Some(resource.id)).await?;
+        && mfa_policy::required(txn, tenant, client.id, Some(resource.id)).await?;
     if let Some(r) = refusal(&scopes, &decision, mfa_missing) {
         return Err(r.into());
     }

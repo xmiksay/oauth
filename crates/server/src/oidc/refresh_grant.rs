@@ -87,6 +87,13 @@ pub async fn grant(
         original_values.retain(|v| exposed.contains(v));
     }
 
+    // Rotation and issuance share ONE transaction: a concurrent redemption
+    // of the same token blocks on its row lock until we commit, then sees it
+    // rotated and revokes the family — including the token we just issued.
+    // It opens before the scope checks so another resource's consent is read
+    // under lock (`mrrt::resolve`); a request rejected before `mark_rotated`
+    // rolls back and does not burn the token.
+    let txn = conn.begin().await?;
     let (oidc, resource, values) = match params.get("scope") {
         None => (original_oidc, original_resource, original_values),
         Some(raw) => {
@@ -104,7 +111,7 @@ pub async fn grant(
                         // multi-resource refresh, on live consent.
                         (found, _) => {
                             let (res, values) =
-                                mrrt::resolve(conn, tenant, client, &row, found, values).await?;
+                                mrrt::resolve(&txn, tenant, client, &row, found, values).await?;
                             (oidc, Some(res), values)
                         }
                     }
@@ -112,12 +119,6 @@ pub async fn grant(
             }
         }
     };
-    // Only now: a request rejected above (bad scope, disabled user) must not
-    // burn the token. Rotation and issuance share ONE transaction: a
-    // concurrent redemption of the same token blocks on its row lock until
-    // we commit, then sees it rotated and revokes the family — including the
-    // token we just issued.
-    let txn = conn.begin().await?;
     if !refresh::mark_rotated(&txn, row.id).await? {
         let err = reuse(state, tenant, &txn, &row, client, ip).await?;
         txn.commit().await?;

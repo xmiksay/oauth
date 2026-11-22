@@ -74,7 +74,7 @@ Public clients can't have secrets (400).
 | `GET applications/{id}/scopes` | – | `{ items: Scope[] }` |
 | `POST applications/{id}/scopes` | `{ value, description?, admin_consent_required? (false) }` | 201 `Scope` |
 | `PATCH applications/{id}/scopes/{scope_id}` | `{ description?, admin_consent_required? }` | `Scope` |
-| `DELETE applications/{id}/scopes/{scope_id}` | – | 204; the value is also removed from consent grants, required permissions naming it cascade, and refresh-token families whose grant held it are revoked (with their opaque access tokens). Refresh never re-mints a scope the resource no longer exposes |
+| `DELETE applications/{id}/scopes/{scope_id}` | – | 204; the value is also removed from consent grants, required permissions naming it cascade, refresh-token families whose grant held it are revoked (with their opaque access tokens), and so is every other opaque access token for the app carrying the scope (minted by a multi-resource refresh). Refresh never re-mints a scope the resource no longer exposes |
 | `GET applications/{id}/roles` | – | `{ items: AppRole[] }` |
 | `POST applications/{id}/roles` | `{ value, display_name, description?, allowed_member_types }` | 201 `AppRole` |
 | `PATCH applications/{id}/roles/{role_id}` | `{ display_name?, description?, allowed_member_types? }` | `AppRole` |

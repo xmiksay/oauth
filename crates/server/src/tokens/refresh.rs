@@ -219,20 +219,34 @@ pub async fn revoke_grant(
 }
 
 /// A deleted scope: every family of `resource_app_id` whose grant holds
-/// `value`, and their opaque access tokens.
+/// `value`, their opaque access tokens, and every other opaque access token
+/// for the resource carrying `value` (minted through a multi-resource
+/// refresh, so it belongs to a family of another resource).
 pub async fn revoke_by_scope(
     conn: &impl ConnectionTrait,
     tenant_id: Uuid,
     resource_app_id: Uuid,
     value: &str,
 ) -> anyhow::Result<()> {
+    let values = [tenant_id.into(), resource_app_id.into(), value.into()];
     revoke_families_where(
         conn,
         "SELECT family_id FROM refresh_tokens \
          WHERE tenant_id = $1 AND resource_application_id = $2 AND $3 = ANY(scopes)",
-        &[tenant_id.into(), resource_app_id.into(), value.into()],
+        &values,
     )
+    .await?;
+    // `scp` is the space-separated delegated scope claim.
+    conn.execute_raw(Statement::from_sql_and_values(
+        conn.get_database_backend(),
+        "UPDATE opaque_access_tokens SET revoked_at = now() \
+         WHERE revoked_at IS NULL AND tenant_id = $1 AND resource_application_id = $2 \
+           AND $3 = ANY(string_to_array(claims->>'scp', ' '))",
+        values.to_vec(),
+    ))
     .await
+    .context("revoking opaque tokens of a deleted scope")?;
+    Ok(())
 }
 
 /// A signed-out device: the refresh families started in `session_id` and

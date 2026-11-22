@@ -10,6 +10,7 @@ pub mod federation;
 pub mod flow;
 pub mod mail;
 pub mod mgmt;
+pub mod mrrt;
 pub mod passkeys;
 pub mod seed;
 pub mod telegram;
