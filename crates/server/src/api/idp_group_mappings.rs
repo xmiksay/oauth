@@ -134,12 +134,7 @@ pub async fn create(
         ));
     }
     let group = referenced(find_group(&txn, tenant_id, body.group_id).await, "group")?;
-    let count = idp_group_mappings::Entity::find()
-        .filter(idp_group_mappings::Column::TenantId.eq(tenant_id))
-        .filter(idp_group_mappings::Column::IdpId.eq(idp_id))
-        .count(&txn)
-        .await?;
-    if count >= group_map::MAX_MAPPINGS {
+    if group_map::count(&txn, tenant_id, idp_id).await? >= group_map::MAX_MAPPINGS {
         return Err(AppError::Conflict(format!(
             "an identity provider can have at most {} group mappings",
             group_map::MAX_MAPPINGS

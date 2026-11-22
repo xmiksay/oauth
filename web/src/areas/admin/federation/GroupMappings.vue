@@ -9,8 +9,11 @@ import ConfirmButton from '@/components/ConfirmButton.vue'
 import ListShell from '@/components/ListShell.vue'
 import PrincipalPicker, { type Picked } from '@/components/PrincipalPicker.vue'
 
-/** Upstream claim value → local group mappings of one identity provider. */
-const props = defineProps<{ idpId: string; canWrite: boolean }>()
+/**
+ * Upstream claim value → local group mappings of one identity provider. `openToAnyTenant`: a
+ * multi-tenant Entra provider without allowed tenants, where the server refuses new mappings.
+ */
+const props = defineProps<{ idpId: string; canWrite: boolean; openToAnyTenant?: boolean }>()
 
 const mappings = usePagedList<IdpGroupMapping>((q) => identityProviders.mappings(props.idpId, q))
 const saver = useAction()
@@ -44,8 +47,15 @@ function remove(id: string) {
       (exact match) is added to the group, and removed again once it doesn't. Memberships added
       by hand are never removed.
     </p>
+    <p
+      v-if="canWrite && openToAnyTenant"
+      class="muted text-sm"
+      data-testid="needs-allowed-tenants"
+    >
+      Set allowed tenants first: any Entra tenant could grant itself these groups.
+    </p>
     <form
-      v-if="canWrite"
+      v-else-if="canWrite"
       class="grid gap-3 sm:grid-cols-2"
       data-testid="add-mapping"
       @submit.prevent="add"

@@ -21,13 +21,13 @@ const mapping: IdpGroupMapping = {
   created_at: '2026-11-22T10:00:00Z',
 }
 
-async function mountIt(canWrite = true) {
+async function mountIt(canWrite = true, openToAnyTenant = false) {
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [{ path: '/g/:id', name: 'admin-group', component: { template: '<div />' } }],
   })
   const w = mount(GroupMappings, {
-    props: { idpId: 'idp1', canWrite },
+    props: { idpId: 'idp1', canWrite, openToAnyTenant },
     global: { plugins: [router] },
     attachTo: document.body,
   })
@@ -104,5 +104,12 @@ describe('GroupMappings', () => {
     const w = await mountIt(false)
     expect(w.find('[data-testid=add-mapping]').exists()).toBe(false)
     expect(w.findAll('button').filter((b) => b.text() === 'Remove')).toHaveLength(0)
+  })
+
+  it('explains instead of offering a mapping on an Entra provider open to every tenant', async () => {
+    const w = await mountIt(true, true)
+    expect(w.find('[data-testid=add-mapping]').exists()).toBe(false)
+    expect(w.find('[data-testid=needs-allowed-tenants]').text()).toContain('allowed tenants')
+    expect(w.findAll('button').filter((b) => b.text() === 'Remove')).toHaveLength(1)
   })
 })

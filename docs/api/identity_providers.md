@@ -58,8 +58,8 @@ itself the groups); the same `(claim, value, group)` twice is 409,
 as is a 101st mapping of one provider. Mappings are not edited — delete and
 add. A new mapping applies from each user's next sign-in.
 
-Every write locks the provider row; a repoint bumps its internal
-generation, so a sign-in or link verified against the old configuration
+Every write locks the provider row; a repoint, or a change of
+`allowed_tenants` / `hosted_domain`, bumps its internal generation, so a sign-in or link verified against the old configuration
 fails (`upstream_failed`, audit reason `idp_repointed`) instead of landing.
 Audit: `identity_provider.create` (`name`, `kind`, `issuer`, `policy`) / `update` (`fields`, `identities_removed`,
 `memberships_removed`) / `delete` (`users_only_via`, `memberships_removed`)

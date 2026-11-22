@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use uuid::Uuid;
 
-pub use db::{Changes, apply, drop_owned, list, pairs, sync};
+pub use db::{Changes, apply, count, drop_owned, list, pairs, sync};
 
 use super::profile;
 

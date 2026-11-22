@@ -100,7 +100,10 @@ also removes the stored client secret unless the same PATCH sets a new one,
 so a repoint can't send the old provider's secret elsewhere. The API
 reports `linked_users`; the admin UI asks before such a change.
 
-A repoint also bumps the provider's `generation`. Round trips and parked
+A repoint also bumps the provider's `generation`, and so does any change of
+`allowed_tenants` or `hosted_domain` (without unlinking anyone): a callback
+verified against a wider list must not land, or a de-listed tenant would
+still get mapped groups. Round trips and parked
 identities remember the generation they were verified at; the writing
 transaction of a sign-in, JIT, in-flow link or My Account link locks the
 provider row `FOR SHARE` and requires it unchanged (an update locks it
@@ -317,7 +320,7 @@ provider doesn't count as one.
 
 | Table | Notes |
 |---|---|
-| `identity_providers` | `name` unique per tenant, `kind` oidc\|google\|entra\|github (fixed at creation), `hosted_domain` (google only), `allowed_tenants[]` (entra only), `trust_upstream_email`, `enabled`, `visible`, `issuer`, `discovery_url`, `client_id`, `client_secret_sealed`, `client_auth` post\|basic, `scopes[]`, `policy` jit\|link_only\|deny, `trust_upstream_mfa`, `mfa_acr`, `email_domains[]`, `generation` (bumped by a repoint) |
+| `identity_providers` | `name` unique per tenant, `kind` oidc\|google\|entra\|github (fixed at creation), `hosted_domain` (google only), `allowed_tenants[]` (entra only), `trust_upstream_email`, `enabled`, `visible`, `issuer`, `discovery_url`, `client_id`, `client_secret_sealed`, `client_auth` post\|basic, `scopes[]`, `policy` jit\|link_only\|deny, `trust_upstream_mfa`, `mfa_acr`, `email_domains[]`, `generation` (bumped by a repoint or an `allowed_tenants` / `hosted_domain` change) |
 | `user_identities` | (tenant, IdP, `subject`) unique, (tenant, user, IdP) unique, `email` (as last seen upstream, informational), `linked_at`, `last_used_at`; cascades with the user or the IdP |
 | `idp_group_mappings` | `(tenant, IdP, claim, value, group)` unique, composite FKs to the IdP and the group (cascade); `claim` `^[A-Za-z0-9_.:/-]{1,64}$`, `value` 1–256 bytes |
 | `group_members.manual` / `.idp_id` | source of a membership: added by an administrator and/or kept by that IdP's mappings (`CHECK (manual OR idp_id IS NOT NULL)`, composite FK to the IdP `ON DELETE SET NULL (idp_id)`) |
