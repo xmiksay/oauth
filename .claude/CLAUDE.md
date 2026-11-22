@@ -283,7 +283,8 @@ Layout: `src/api/` (HTTP), `src/auth/oidc.ts` (UserManager settings, `SPA_SCOPE`
 `src/areas/{portal,login,email,logout,device,myaccount,admin}/` (pages; `portal` = `/`; admin split into
 `users/ groups/ apps/ access/ federation/`), `src/router/` (`admin.ts` = admin child routes),
 `src/lib/format.ts` (pure helpers), `src/lib/navigate.ts` (full-page navigation, mocked in
-tests), `src/test/helpers.ts` (fetch / UserManager fakes).
+tests), `src/test/helpers.ts` (fetch / UserManager fakes, shared
+fixtures like `fakeApp` / `fakeMe`: add a field there, not per test).
 
 - All HTTP goes through `api/client.ts` (`request`, `ApiError`, `errorMessage`);
   management calls through `api/management.ts` (`authed` adds the bearer token
