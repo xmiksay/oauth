@@ -1,6 +1,6 @@
 //! CORS for cross-origin SPAs on the protocol endpoints an SPA needs
 //! (discovery, JWKS, token, revoke, userinfo) — never on the login or
-//! management APIs. Contract: `docs/architecture.md` (CORS).
+//! management APIs. Contract: `docs/cors.md`.
 //!
 //! An app's effective allowed origins are its explicit `web_origins` plus,
 //! for a public client, the origins of its redirect URIs (computed on every
