@@ -26,6 +26,9 @@ pub struct NewUser<'a> {
     /// `None` creates a user without a local password.
     pub password: Option<&'a str>,
     pub must_change_password: bool,
+    /// An administrator vouches for the address (`POST users`); every
+    /// other path starts unverified.
+    pub email_verified: bool,
 }
 
 /// Minimal shape check; deliverability is proven by verification (M1b), not
@@ -66,7 +69,7 @@ pub async fn create_user(
         tenant_id: Set(tenant_id),
         user_type: Set(UserType::Member),
         email: Set(email.clone()),
-        email_verified: Set(false),
+        email_verified: Set(new.email_verified),
         display_name: Set(display_name),
         password_hash: Set(password_hash),
         must_change_password: Set(new.must_change_password),

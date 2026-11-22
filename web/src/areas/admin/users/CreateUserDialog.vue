@@ -20,6 +20,7 @@ const invite = ref(false)
 const setPassword = ref(false)
 const password = ref('')
 const mustChange = ref(true)
+const emailVerified = ref(false)
 const { busy, error, run } = useAction()
 
 watch(
@@ -32,6 +33,7 @@ watch(
     setPassword.value = false
     password.value = ''
     mustChange.value = true
+    emailVerified.value = false
     error.value = null
   },
 )
@@ -49,6 +51,7 @@ async function submit() {
     users.create({
       email: email.value.trim(),
       display_name: displayName.value.trim(),
+      ...(emailVerified.value ? { email_verified: true } : {}),
       ...(inviting
         ? { invite: true as const }
         : setPassword.value
@@ -97,6 +100,14 @@ async function submit() {
           required
         >
       </div>
+      <label class="flex items-center gap-2 text-sm">
+        <input
+          v-model="emailVerified"
+          type="checkbox"
+          data-testid="cu-verified"
+        >
+        Mark the email as verified (no verification link is sent)
+      </label>
       <label
         v-if="canInvite"
         class="flex items-center gap-2 text-sm"

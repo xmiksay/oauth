@@ -8,6 +8,7 @@ import { fakeMe, fakePasskey } from '@/test/helpers'
 
 const users = {
   get: vi.fn(),
+  update: vi.fn(),
   resetMfa: vi.fn(),
   passkeys: vi.fn(),
   sessions: vi.fn(),
@@ -84,6 +85,28 @@ describe('UserDetail passkeys', () => {
     await button(w, 'Reset MFA')[1]?.trigger('click')
     await flushPromises()
     expect(w.find('[role=alert]').text()).toMatch(/Set a password first \(reset password\)/)
+  })
+})
+
+describe('UserDetail email verification', () => {
+  it('shows the state and lets a user admin mark the email verified', async () => {
+    users.get
+      .mockResolvedValueOnce({ ...passkeyOnly, email_verified: false })
+      .mockResolvedValue(passkeyOnly)
+    users.update.mockResolvedValue(passkeyOnly)
+    const w = await mountPage()
+    expect(w.text()).toContain('Email unverified')
+    await button(w, 'Mark email verified')[0]?.trigger('click')
+    await button(w, 'Mark email verified')[1]?.trigger('click')
+    await flushPromises()
+    expect(users.update).toHaveBeenCalledWith('u1', { email_verified: true })
+    expect(w.text()).toContain('Email verified')
+    expect(button(w, 'Mark email unverified')).toHaveLength(1)
+  })
+
+  it('offers no toggle without user write access', async () => {
+    const w = await mountPage([])
+    expect(button(w, 'Mark email verified')).toHaveLength(0)
   })
 })
 

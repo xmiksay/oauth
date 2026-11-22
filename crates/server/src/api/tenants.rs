@@ -144,6 +144,7 @@ pub async fn create(
             display_name: admin_name,
             password: Some(&one_time),
             must_change_password: true,
+            email_verified: false,
         },
     )
     .await?;

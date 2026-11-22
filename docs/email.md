@@ -24,7 +24,7 @@ with the webpki root set.
 
 | Flow | Trigger → link | Redeemed by |
 |---|---|---|
-| Verify | admin create (non-invite) / admin email change of a user with a password (resets `email_verified`) / `POST me/verify-email` → `/myaccount/verify-email`, 24 h | `POST /api/authn/email/verify`: marks verified |
+| Verify | admin create (non-invite, not `email_verified: true`) / admin email change of a user with a password (resets `email_verified` unless the request sets it) / `POST me/verify-email` → `/myaccount/verify-email`, 24 h | `POST /api/authn/email/verify`: marks verified |
 | Reset | `POST /api/authn/password-reset` → `/login/reset`, 30 min | `POST /api/authn/email/reset`: `directory::set_password` (all sessions + refresh / opaque tokens revoked, `must_change_password` cleared, pending reset / invite links voided), verified, notice |
 | Invite | `POST users {invite: true}` / `POST users/{id}/invite` (voids the older link) / admin email change of a user without a password or passkey (re-invites at the new address) → `/login/invite`, 7 d | `POST /api/authn/email/invite`: sets the first password, verified — or `…/invite/passkey` ([passkeys](passkeys.md)): registers a passkey instead, verified; refused once the user has a password or a passkey |
 | Change | `POST me/email` (re-auth; always 202, so it can't probe for accounts) → link to the NEW address `/myaccount/verify-email`, 24 h | `POST /api/authn/email/verify`: email replaced + verified (409 if taken meanwhile), every other link voided, notice to the OLD address if it was verified |

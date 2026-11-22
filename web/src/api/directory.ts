@@ -25,6 +25,7 @@ export interface CreatedUser {
 export type UserCreate = {
   email: string
   display_name: string
+  email_verified?: boolean
 } & (
   | { invite: true }
   | { invite?: false; password?: string; must_change_password?: boolean }
@@ -39,8 +40,10 @@ export const users = {
   list: (q: PageQuery = {}) => t.get<Paged<User>>(`users${query({ ...q })}`),
   get: (id: string) => t.get<AdminUserDetail>(p`users/${id}`),
   create: (body: UserCreate) => t.post<CreatedUser>('users', body),
-  update: (id: string, body: { display_name?: string; email?: string; disabled?: boolean }) =>
-    t.patch<User>(p`users/${id}`, body),
+  update: (
+    id: string,
+    body: { display_name?: string; email?: string; disabled?: boolean; email_verified?: boolean },
+  ) => t.patch<User>(p`users/${id}`, body),
   remove: (id: string) => t.del(p`users/${id}`),
   resetPassword: (id: string, body: { password?: string; must_change_password?: boolean } = {}) =>
     t.post<PasswordReset>(p`users/${id}/reset-password`, body),
