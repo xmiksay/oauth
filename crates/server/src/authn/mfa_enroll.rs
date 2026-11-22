@@ -109,6 +109,16 @@ async fn record(
     .await
 }
 
+/// Rate limit of the enrolment setup calls: the IP and the user's own
+/// enrolment bucket, not the account bucket of the sign-in's attempts.
+async fn limit_setup(ctx: &Ctx<'_>, user: &users::Model) -> AuthnResult<()> {
+    let buckets = [
+        (rate_limit::ip_key(ctx.ip), rate_limit::PER_IP),
+        (rate_limit::enroll_key(user.id), rate_limit::ENROLL_PER_USER),
+    ];
+    super::email::limit(ctx, &buckets).await
+}
+
 /// The sign-in's MFA is complete (`tx.row.amr`): continue as after `mfa`.
 async fn after_enrolment(ctx: &Ctx<'_>, tx: LoadedTx, user: &users::Model) -> AuthnResult<Outcome> {
     let next = user
@@ -129,7 +139,7 @@ pub async fn begin_totp(
     let ctx = Ctx::new(&state, &tenant, ip, &headers);
     let (_, user) = load(&ctx, &tx_id, false).await?;
     // Each call replaces the pending secret (one the user may be scanning).
-    limit(&ctx, &rate_limit::user_key(user.id)).await?;
+    limit_setup(&ctx, &user).await?;
     let key = &state.config.master_key;
     let view = me_mfa::start_enrollment(&state.db, key, &tenant.display_name, &user)
         .await
@@ -163,13 +173,16 @@ pub async fn confirm_totp(
     let key = &state.config.master_key;
     let codes = match me_mfa::activate(&txn, key, &user, &pending, &body.code).await {
         Ok(codes) => codes,
-        Err(err) => {
+        // Only a wrong code is the user's failed attempt; a conflict or an
+        // internal error isn't audited as one.
+        Err(err @ AppError::BadRequest(_)) => {
             drop(txn);
             let details = json!({ "reason": "enroll_failed", "factor": "totp" });
             ctx.audit_sign_in(&state.db, Some(user.id), AuditOutcome::Failure, details)
                 .await?;
             return Err(enroll_error(err));
         }
+        Err(err) => return Err(enroll_error(err)),
     };
     let details = json!({ "via": "sign_in" });
     let what = "authenticator app added";
@@ -206,7 +219,7 @@ pub async fn passkey_options(
     let ctx = Ctx::new(&state, &tenant, ip, &headers);
     let (_, user) = load(&ctx, &tx_id, false).await?;
     // Each call stores a challenge row.
-    limit(&ctx, &rate_limit::user_key(user.id)).await?;
+    limit_setup(&ctx, &user).await?;
     let handle = store::ensure_handle(&state.db, &user).await?;
     let scope = Scope::User {
         purpose: WebauthnPurpose::Register,
@@ -297,4 +310,26 @@ pub async fn passkey(
     tx::set_amr(&txn, tx.row.id, LoginStage::MfaEnroll, tx.row.amr.clone()).await?;
     txn.commit().await?;
     after_enrolment(&ctx, tx, &user).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enrolment_errors_keep_their_login_api_meaning() {
+        let bad = enroll_error(AppError::BadRequest("invalid code".into()));
+        assert!(matches!(bad, AuthnError::InvalidCode));
+        let changed = enroll_error(AppError::Conflict("changed".into()));
+        assert!(matches!(changed, AuthnError::Conflict(m) if m == "changed"));
+        let limited = enroll_error(AppError::RateLimited { retry_after: 7 });
+        assert!(matches!(
+            limited,
+            AuthnError::RateLimited { retry_after: 7 }
+        ));
+        assert!(matches!(
+            enroll_error(AppError::NotFound),
+            AuthnError::NotFound
+        ));
+    }
 }

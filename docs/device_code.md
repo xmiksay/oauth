@@ -2,7 +2,7 @@
 
 Part of the [architecture](architecture.md); the browser-side contract is in
 [api/authn.md](api/authn.md#device-code), the `device_code_enabled` flag in
-[api/management.md](api/management.md).
+[api/applications.md](api/applications.md).
 
 RFC 8628, for apps that opted in (`device_code_enabled`, set through the
 management API; for an app holding management-API grants only by a

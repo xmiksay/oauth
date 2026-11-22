@@ -58,7 +58,7 @@ plain config. `TELEGRAM_BOT_TOKEN` + `TELEGRAM_WEBHOOK_SECRET` (secret) +
 Telegram feature; `TELEGRAM_API_URL` (https://api.telegram.org; http only to
 loopback) — [docs/telegram.md](../docs/telegram.md).
 Login API contract for the SPA: [docs/api/authn.md](../docs/api/authn.md); management API:
-[docs/api/management.md](../docs/api/management.md) (+ [me.md](../docs/api/me.md), [identity_providers.md](../docs/api/identity_providers.md)). Env vars are parsed and validated in
+[docs/api/management.md](../docs/api/management.md) (+ [me.md](../docs/api/me.md), [applications.md](../docs/api/applications.md), [identity_providers.md](../docs/api/identity_providers.md)). Env vars are parsed and validated in
 `crates/server/src/config/` (`env.rs`, `smtp.rs`, `telegram.rs`, `public_url.rs`); adding a var means updating `.env.example`,
 the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.yml` and this list.
 
