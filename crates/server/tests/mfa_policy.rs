@@ -11,12 +11,12 @@
 //! single-factor session, `acr` in tokens.
 mod common;
 
-use axum::http::StatusCode;
+use axum::http::{Method, StatusCode};
 use common::{
     authenticator::{Alg, Authenticator, Tweak},
     browser::{Browser, authorize_url, current_totp, query_of},
     flow::{Fixture, PASSWORD, T, WEB_CB},
-    mgmt::{audited, base32_decode},
+    mgmt::{audited, base32_decode, call, mint_user_token},
 };
 use entity::{
     applications,
@@ -105,6 +105,7 @@ async fn required_tenant_forces_totp_enrolment_before_the_code() {
     let (tx, resp) = password(&mut browser, OPENID).await;
     assert_eq!(resp["step"], "mfa_enroll", "{resp}");
     assert_eq!(resp["factors"], json!(["totp", "passkey"]));
+    assert_eq!(resp["enrolled"], false);
     // Nothing else is accepted at this stage.
     let (status, _) = browser.step(&tx, "totp", json!({ "code": "123456" })).await;
     assert_eq!(status, StatusCode::CONFLICT);
@@ -135,7 +136,7 @@ async fn required_tenant_forces_totp_enrolment_before_the_code() {
     assert_eq!(status, StatusCode::OK);
     let view: Value = serde_json::from_str(&view).unwrap();
     assert_eq!(view["step"], "mfa_enroll", "{view}");
-    assert_eq!(view["factors"], json!([]));
+    assert_eq!(view["enrolled"], true, "{view}");
     let (status, _) = browser.step(&tx, "enroll/totp", json!({})).await;
     assert_eq!(status, StatusCode::CONFLICT, "already enrolled");
     let (status, done) = browser.step(&tx, "enroll/continue", json!({})).await;
@@ -171,6 +172,26 @@ async fn required_tenant_accepts_a_new_passkey_as_the_second_factor() {
     assert_eq!(claims["acr"], "mfa");
     let registered = audited(&f.db, "user.mfa.passkey_register", f.user.id).await;
     assert_eq!(registered[0]["via"], "sign_in");
+}
+
+#[tokio::test]
+async fn enrolment_setup_calls_are_rate_limited() {
+    let f = Fixture::new().await;
+    tenant_policy(&f, MfaPolicy::Required).await;
+    let mut browser = f.browser();
+    let (tx, _) = password(&mut browser, OPENID).await;
+    // Each call writes a row (and `enroll/totp` replaces the pending
+    // secret): they share the account's attempt bucket.
+    let mut answered = Vec::new();
+    // One more than the account's 10 attempts per 15 min.
+    for _ in 0..11 {
+        let (status, _) = browser.step(&tx, "enroll/totp", json!({})).await;
+        answered.push(status);
+    }
+    assert!(answered.contains(&StatusCode::OK), "{answered:?}");
+    assert_eq!(answered.last(), Some(&StatusCode::TOO_MANY_REQUESTS));
+    let (status, _) = browser.step(&tx, "enroll/passkey/options", json!({})).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
 }
 
 #[tokio::test]
@@ -271,4 +292,44 @@ async fn a_step_up_fails_once_its_session_ended() {
     assert_eq!(query_of(redirect)["error"], "login_required", "{redirect}");
     let left = sessions::Entity::find().filter(sessions::Column::UserId.eq(f.user.id));
     assert_eq!(left.count(&f.db).await.unwrap(), 0, "no session from it");
+}
+
+#[tokio::test]
+async fn a_step_up_keeps_the_session_its_refresh_tokens_belong_to() {
+    let f = Fixture::new().await;
+    let (mut browser, tokens) = f
+        .web_tokens("openid offline_access", "ann@example.com")
+        .await;
+    let old_refresh = tokens["refresh_token"].as_str().unwrap().to_owned();
+    let mine = || sessions::Entity::find().filter(sessions::Column::UserId.eq(f.user.id));
+    let single = mine().one(&f.db).await.unwrap().unwrap();
+    // Signed in an hour ago, so a fresh `auth_time` is told apart.
+    let hour_ago = chrono::Utc::now().fixed_offset() - chrono::Duration::hours(1);
+    let mut row: sessions::ActiveModel = single.clone().into();
+    row.auth_time = Set(hour_ago);
+    row.update(&f.db).await.unwrap();
+    app_policy(&f, &f.web, AppMfaPolicy::Required).await;
+    f.enroll_totp(&f.user).await;
+    let tx = browser.authorize(&url(OPENID, &[])).await.unwrap();
+    let (status, resp) = browser
+        .step(&tx, "totp", json!({ "code": current_totp() }))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    let claims = id_claims(&f, resp["redirect"].as_str().unwrap()).await;
+    assert_eq!(claims["sid"], single.id.to_string());
+    assert!(claims["auth_time"].as_i64().unwrap() > hour_ago.timestamp() + 60);
+    let all = mine().all(&f.db).await.unwrap();
+    assert_eq!(all.len(), 1);
+    assert_eq!(all[0].id, single.id);
+    assert_eq!(all[0].amr, ["pwd", "otp", "mfa"]);
+    // Signing the (stepped-up) session out ends its pre-step-up tokens too.
+    let token = mint_user_token(&f.db, &f.config, &f.tenant, &f.user).await;
+    let path = format!("/api/v1/me/sessions/{}", single.id);
+    let (status, _) = call(&f.app, Method::DELETE, &path, Some(&token), None).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, body) = f.refresh(&old_refresh, None).await;
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::BAD_REQUEST, Some("invalid_grant"))
+    );
 }

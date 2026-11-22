@@ -9,6 +9,7 @@ export function view(step: LoginStep, extra: Partial<TxView> = {}): TxView {
     tx: 'tx-1',
     step,
     factors: FACTORS[step],
+    enrolled: false,
     tenant: { slug: 'contoso', display_name: 'Contoso' },
     client: { client_id: 'shop', display_name: 'Shop' },
     user:

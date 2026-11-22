@@ -102,6 +102,7 @@ describe('login API client', () => {
         tx: 'x',
         step: 'password',
         factors: ['password'],
+        enrolled: false,
         tenant: { slug: 't', display_name: 'T' },
         client: { client_id: 'c', display_name: 'C' },
         user: null,

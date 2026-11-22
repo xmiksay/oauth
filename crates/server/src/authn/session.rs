@@ -8,7 +8,8 @@ use axum::http::HeaderMap;
 use chrono::{DateTime, Duration, FixedOffset};
 use entity::{sessions, tenants, users};
 use sea_orm::{
-    ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QuerySelect,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
+    QuerySelect,
 };
 use uuid::Uuid;
 
@@ -65,6 +66,29 @@ pub async fn create(
         .await
         .context("creating session")?;
     Ok((session, token))
+}
+
+/// A step-up of `session`: the same row (its id is the `sid` claim and what
+/// its refresh tokens and codes point at, so signing the session out still
+/// ends them) with the multi-factor `amr`, the step-up's `auth_time`, a
+/// rotated cookie value and a renewed lifetime. Returns it with the cookie.
+pub async fn step_up(
+    conn: &impl ConnectionTrait,
+    config: &Config,
+    session: sessions::Model,
+    amr: &[String],
+    auth_time: DateTime<FixedOffset>,
+) -> anyhow::Result<(sessions::Model, String)> {
+    let token = secret::random_token()?;
+    let now = chrono::Utc::now().fixed_offset();
+    let expires = expires_at(now, config.session_ttl_hours, Some(session.expires_at));
+    let mut row: sessions::ActiveModel = session.into();
+    row.token_hash = Set(secret::hash(&token));
+    row.amr = Set(amr.to_vec());
+    row.auth_time = Set(auth_time);
+    row.expires_at = Set(expires);
+    let updated = row.update(conn).await.context("stepping up session")?;
+    Ok((updated, token))
 }
 
 fn expires_at(
