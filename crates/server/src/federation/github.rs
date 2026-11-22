@@ -10,8 +10,8 @@ use serde::Deserialize;
 use zeroize::Zeroizing;
 
 use super::{
-    Failure, Upstream, discovery::Metadata, exchange::Exchange, group_map, id_token::Claims, profile,
-    urls,
+    Failure, Upstream, discovery::Metadata, exchange::Exchange, group_map, id_token::Claims,
+    profile, urls,
 };
 
 /// github.com's web origin (the preset's default issuer).
