@@ -143,8 +143,8 @@ export const router = createRouter({
 
 router.beforeEach(async (to) => {
   if (!useTenantStore().slug) {
-    // Only the dev apex (`localhost:5173`, which Vite serves) gets here; the server
-    // redirects its own apex the same way.
+    // Only the dev apex (`localhost:5173`, which Vite serves) without an APEX_TENANT gets
+    // here; the server redirects its own apex the same way.
     window.location.replace(systemAdminUrl())
     return false
   }

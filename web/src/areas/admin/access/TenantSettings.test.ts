@@ -14,6 +14,7 @@ const TENANT: Tenant = {
   id: 't1',
   slug: 'contoso',
   display_name: 'Contoso',
+  origin: 'https://acme.id.example.com',
   is_system: false,
   disabled: false,
   audit_retention_days: 90,

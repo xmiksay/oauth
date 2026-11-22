@@ -39,7 +39,8 @@ pub async fn migrate(db: &DatabaseConnection) -> anyhow::Result<()> {
 
 /// [`migrate`], then the system tenant's slug
 /// ([`directory::reconcile_system_slug`]: refuse a mismatch, or rename with
-/// `SYSTEM_TENANT_RENAME=1`) and [`builtin_apps::reconcile_all`] in the same
+/// `SYSTEM_TENANT_RENAME=1`), the `APEX_TENANT` check
+/// ([`directory::ensure_apex_tenant`]) and [`builtin_apps::reconcile_all`] in the same
 /// locked transaction, so replicas starting together never interleave
 /// rewrites and nothing serves stale built-in redirect URIs once ready.
 pub async fn migrate_and_reconcile(db: &DatabaseConnection, config: &Config) -> anyhow::Result<()> {
@@ -56,6 +57,7 @@ pub async fn migrate_and_reconcile(db: &DatabaseConnection, config: &Config) -> 
             invalid.join(", ")
         );
     }
+    directory::ensure_apex_tenant(&txn, config).await?;
     let changed = builtin_apps::reconcile_all(&txn, config).await?;
     txn.commit().await.context("committing migrations")?;
     if changed > 0 {

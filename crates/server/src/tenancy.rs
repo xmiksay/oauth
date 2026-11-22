@@ -1,6 +1,7 @@
 //! Tenant resolution from the request host: tenant `t` lives only at
-//! `t.{PUBLIC_URL host}[:port]`; the apex itself only redirects to the
-//! system tenant's admin portal and receives the Telegram webhook (which
+//! `t.{PUBLIC_URL host}[:port]`, except the `APEX_TENANT`, which lives only
+//! on the apex. Without one the apex only redirects to the system tenant's
+//! admin portal. Either way the apex receives the Telegram webhook (which
 //! belongs to no tenant). `X-Forwarded-Host` / `Forwarded` are
 //! ignored on purpose: the issuer is derived from the host, and a client
 //! that could pick it would mint itself another tenant's origin.
@@ -73,11 +74,24 @@ async fn active(state: &AppState, slug: &str) -> Result<Option<Tenant>, AppError
         .map(|t| Tenant(Arc::new(t))))
 }
 
+/// Runs `req` with the active tenant `slug` resolved, or 404.
+async fn serve(state: &AppState, slug: &str, mut req: Request, next: Next) -> Response {
+    match active(state, slug).await {
+        Ok(Some(tenant)) => {
+            req.extensions_mut().insert(tenant);
+            next.run(req).await
+        }
+        Ok(None) => AppError::NotFound.into_response(),
+        Err(err) => err.into_response(),
+    }
+}
+
 /// Gate in front of every host-scoped route: tenant hosts get their
-/// [`Tenant`] resolved, the apex answers `GET /` with a redirect to the
-/// system admin portal and passes the Telegram webhook on (without a
-/// tenant), everything else is 404.
-pub async fn resolve_host(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
+/// [`Tenant`] resolved (the `APEX_TENANT` on the apex only, its subdomain is
+/// 404, so it has exactly one origin). The apex passes the Telegram webhook
+/// on (without a tenant); without an `APEX_TENANT` it answers `GET /` with a
+/// redirect to the system admin portal. Everything else is 404.
+pub async fn resolve_host(State(state): State<AppState>, req: Request, next: Next) -> Response {
     // Proxies and servers may disagree on which of several `Host`s counts
     // (RFC 9112 §3.2: such a request is invalid), so none is believed.
     if req.headers().get_all(header::HOST).iter().nth(1).is_some() {
@@ -86,24 +100,24 @@ pub async fn resolve_host(State(state): State<AppState>, mut req: Request, next:
     let webhook = req.uri().path() == webhook::PATH;
     match host_kind(&state, req.uri(), req.headers()) {
         HostKind::Tenant(_) if webhook => AppError::NotFound.into_response(),
-        HostKind::Tenant(slug) => match active(&state, &slug).await {
-            Ok(Some(tenant)) => {
-                req.extensions_mut().insert(tenant);
-                next.run(req).await
-            }
-            Ok(None) => AppError::NotFound.into_response(),
-            Err(err) => err.into_response(),
-        },
-        HostKind::Apex if webhook => next.run(req).await,
-        HostKind::Apex
-            if req.uri().path() == "/" && matches!(*req.method(), Method::GET | Method::HEAD) =>
-        {
-            let admin = format!(
-                "{}/admin",
-                state.config.tenant_origin(&state.config.system_tenant_slug)
-            );
-            redirect::found(&admin)
+        HostKind::Tenant(slug) if state.config.is_apex_tenant(&slug) => {
+            AppError::NotFound.into_response()
         }
-        _ => AppError::NotFound.into_response(),
+        HostKind::Tenant(slug) => serve(&state, &slug, req, next).await,
+        HostKind::Apex if webhook => next.run(req).await,
+        HostKind::Apex => match state.config.apex_tenant.clone() {
+            Some(slug) => serve(&state, &slug, req, next).await,
+            None if req.uri().path() == "/"
+                && matches!(*req.method(), Method::GET | Method::HEAD) =>
+            {
+                let admin = format!(
+                    "{}/admin",
+                    state.config.tenant_origin(&state.config.system_tenant_slug)
+                );
+                redirect::found(&admin)
+            }
+            None => AppError::NotFound.into_response(),
+        },
+        HostKind::Foreign => AppError::NotFound.into_response(),
     }
 }

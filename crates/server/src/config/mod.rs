@@ -65,6 +65,10 @@ pub struct Config {
     /// `SYSTEM_TENANT_RENAME=1`: startup renames a stored system tenant
     /// whose slug differs from `system_tenant_slug` instead of refusing.
     pub system_tenant_rename: bool,
+    /// `APEX_TENANT`: slug of a regular tenant served on the apex host
+    /// (`PUBLIC_URL` itself) instead of its own subdomain; `None` = the apex
+    /// only redirects to the system admin portal.
+    pub apex_tenant: Option<String>,
     /// Upstream identity providers may use plain `http://` on loopback
     /// hosts. Derived from an `http://` `PUBLIC_URL` (local development);
     /// integration tests set it for their in-process fake provider.
@@ -91,6 +95,7 @@ impl fmt::Debug for Config {
             .field("telegram", &self.telegram)
             .field("system_tenant_slug", &self.system_tenant_slug)
             .field("system_tenant_rename", &self.system_tenant_rename)
+            .field("apex_tenant", &self.apex_tenant)
             .field("idp_allow_http_loopback", &self.idp_allow_http_loopback)
             .finish()
     }
@@ -121,15 +126,30 @@ impl Config {
         Ok(())
     }
 
+    /// Whether `tenant_slug` is the `APEX_TENANT`, served on the apex host.
+    pub fn is_apex_tenant(&self, tenant_slug: &str) -> bool {
+        self.apex_tenant.as_deref() == Some(tenant_slug)
+    }
+
     /// Origin of a tenant: its OIDC issuer, the only `Origin` its login API
-    /// accepts, and the base of its SPA URLs.
+    /// accepts, and the base of its SPA URLs. The one place that knows the
+    /// `APEX_TENANT` lives on the apex: everything deriving a tenant's URL,
+    /// issuer, CSRF / CORS origin or RP ID goes through here.
     pub fn tenant_origin(&self, tenant_slug: &str) -> String {
-        self.public_url.tenant_origin(tenant_slug)
+        if self.is_apex_tenant(tenant_slug) {
+            self.public_url.origin()
+        } else {
+            self.public_url.tenant_origin(tenant_slug)
+        }
     }
 
     /// WebAuthn RP ID of a tenant (its host, no port).
     pub fn tenant_rp_id(&self, tenant_slug: &str) -> String {
-        self.public_url.tenant_rp_id(tenant_slug)
+        if self.is_apex_tenant(tenant_slug) {
+            self.public_url.host().to_owned()
+        } else {
+            self.public_url.tenant_rp_id(tenant_slug)
+        }
     }
 
     /// Whether email can be sent (verification, reset, invites, notices).

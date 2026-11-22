@@ -14,7 +14,8 @@ Google / Entra rules, `github` = the GitHub adapter), `authn::federation*` (logi
 
 1. At the provider, register a confidential web client with the redirect
    URI `https://{slug}.{PUBLIC_URL host}/federation/callback` (the tenant's
-   canonical host; the IdP's `redirect_uri` field in the API shows it).
+   canonical host, `{PUBLIC_URL}` for the `APEX_TENANT`; the IdP's
+   `redirect_uri` field in the API shows it).
 2. In the admin center → Identity providers (GlobalAdmin), create it:
    `issuer` (exactly as the provider's discovery document states it),
    `client_id`, `client_secret`, `client_auth`, `scopes` (must contain

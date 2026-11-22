@@ -38,16 +38,21 @@ Spawned by `serve::run_with` after migrations: `sweeper`, `rotation`, `secret_ex
 
 ## HTTP surface (current)
 
-Tenant `{t}` lives only at `{t}.{PUBLIC_URL host}[:port]`; its issuer is that origin.
+Tenant `{t}` lives only at `{t}.{PUBLIC_URL host}[:port]`; its issuer is that origin. The
+optional `APEX_TENANT` lives only on the apex instead (`PUBLIC_URL` is its origin and issuer;
+its subdomain → 404; [deploy.md](deploy.md#apex-tenant)). `Config::tenant_origin` /
+`issuer` / `tenant_rp_id` are the only places that map a slug to its origin, so issuer,
+redirect URIs, CSRF / CORS origin, RP ID, links and federation callback all follow it.
 `tenancy::resolve_host` gates every route but the probes. The request authority is the
 absolute-form target / HTTP/2 `:authority` if present, else `Host` (RFC 9112 §3.2.2); more
 than one `Host` header → 400. It must match exactly: ASCII case-insensitive, the scheme's
 default port (`:443` for https, `:80` for http) spelled out counts as none; another port, trailing dot, nested label or
 IP literal → 404. `X-Forwarded-Host` / `Forwarded` are never trusted. Unknown or disabled
 tenants are 404 everywhere, and so are enabled tenants whose slug today's rules reject
-(startup refuses to run with any — rename or disable them). The apex serves only
-`GET /` → 302 `{scheme}://{SYSTEM_TENANT_SLUG}.{host}/admin` and the Telegram webhook (404 on tenant
-hosts). Other paths below are per tenant host.
+(startup refuses to run with any — rename or disable them). Without `APEX_TENANT` the apex serves
+only `GET /` → 302 `{scheme}://{SYSTEM_TENANT_SLUG}.{host}/admin` and the Telegram webhook (404 on tenant
+hosts); with it, the webhook and that tenant's routes (startup refuses an `APEX_TENANT` that is
+the system tenant, missing or disabled). Other paths below are per tenant host.
 
 Trust model: issuer, redirect URLs and the CSRF origin all derive from `PUBLIC_URL` plus
 the tenant's slug in the DB, never from request text, so a client choosing its `Host`
@@ -60,7 +65,7 @@ proxy sits in front; the server ignores the forwarded host either way).
 |---|---|---|
 | `GET /healthz` — process alive, no DB dependency (any host) | app | `health` |
 | `GET /readyz` — migrations done + DB ping, else 503 (any host) | app | `health` |
-| `GET /` on the apex → 302 to the system admin portal | app | `tenancy` |
+| `GET /` on the apex → 302 to the system admin portal (without `APEX_TENANT`) | app | `tenancy` |
 | `POST /telegram/webhook` on the apex — bot updates, secret-token authenticated ([telegram.md](telegram.md)) | app | `telegram::webhook` |
 | `GET /.well-known/openid-configuration` (CORS: [cors.md](cors.md) for this and JWKS / token / userinfo / revoke, incl. `OPTIONS` preflights) | app | `oidc::discovery`, `cors` |
 | `GET /discovery/keys` — JWKS (next + active + unexpired retired), `max-age=300` | app | `oidc::discovery` |
@@ -75,7 +80,7 @@ proxy sits in front; the server ignores the forwarded host either way).
 | `POST /api/authn/password-reset`, `POST /api/authn/email/{verify,reset,invite,invite/passkey/options,invite/passkey}` — email links (the token is the credential), same contract | app | `authn::{reset,email}` |
 | `POST /api/authn/device` — a device's user code entered on `/device` → login transaction, same contract | app | `authn::device_code` |
 | `/api/v1/{settings,users,groups,directory-roles,applications,identity-providers,role-assignments,consents,audit-events}[/…]`, `/api/v1/me[/…]`, and on the system host only `/api/v1/tenants[/{slug}[/users[/…]]]` (system Global Admins) — management REST API, bearer tokens for the host tenant's `management-api`; contract in [api/management.md](api/management.md) (+ [applications](api/applications.md), [identity providers](api/identity_providers.md)) | app | `api` |
-| `/` (the portal; apex `/` redirects, above) and `/{login,logout,device,myaccount,admin}[/…]` → `index.html` (incl. the public link pages `/login/reset`, `/login/invite`, `/myaccount/verify-email`) | app | `spa` |
+| `/` (the portal; apex `/` redirects, above) and `/{login,logout,device,myaccount,admin}[/…]` → `index.html` with `<meta name="oauth-tenant" content="{slug}">` (`Cache-Control: no-cache`) (incl. the public link pages `/login/reset`, `/login/invite`, `/myaccount/verify-email`) | app | `spa` |
 | any other path → static file from `WEB_DIST_DIR`, else 404 | app | `spa` |
 | `GET /metrics` — Prometheus text format | metrics | `metrics` |
 
@@ -99,7 +104,7 @@ Implemented:
 | `directory` | `create_tenant` (DNS-label slug rules in `slug`, keys + built-in apps in one transaction; `builtin_apps::reconcile_all`), `create_user`, `find_user_by_email`, `set_password` (argon2id in `password`), `assign_directory_role`; typed `DirectoryError` |
 | `bootstrap` | `oauth bootstrap` logic + report rendering |
 | `headers` | `content_type_is`; app-wide `X-Frame-Options: DENY`, `CSP: frame-ancestors 'none'`, `Referrer-Policy: no-referrer` |
-| `tenancy` | `resolve_host` middleware (host → active tenant, apex redirect, else 404) and the `Tenant` extractor reading its result |
+| `tenancy` | `resolve_host` middleware (host → active tenant, `APEX_TENANT` on the apex or the apex redirect, else 404) and the `Tenant` extractor reading its result |
 | `secret` | Random bearer secrets (256-bit, base64url), random UUIDv4 handles, SHA-256 storage hash, constant-time compare |
 | `cors` | CORS on discovery / JWKS / userinfo / token / revoke only: `validate_origin`, `origin_of` (a redirect URI's origin), `effective_origins` (explicit ∪ a public client's redirect-URI origins), `tenant_allows`; `http` (preflight handlers, `tenant_wide` middleware, `for_client` for token / revoke) — see [CORS](#cors) |
 | `oidc` | Protocol endpoints; `params` (duplicate-rejecting form/query parsing, `AuthRequest`), `pkce`, `redirect` (matching + building), `scope` (parsing, resource resolution, `resolve_request` shared by authorize and device authorization), `mrrt` (refresh token redeemed for another consented resource), `assignment` (assignment-required checks), `client_auth`, `error` (`OAuthError`, RFC 6749 JSON + `WWW-Authenticate`, `no-store`), `device_authorization` / `device_grant` (RFC 8628); sibling `backchannel`: Back-Channel Logout (`record_client` on issuance, `queue` before sessions are deleted, `token`, `deliver::Notifier` outbox `Courier`) — [backchannel_logout.md](backchannel_logout.md) |

@@ -20,7 +20,8 @@ webauthn-rs, no OpenSSL, no RustCrypto `p256` / `rsa`.
 | `assert` | Signature over `authenticatorData ‖ SHA-256(clientDataJSON)`, counter rule, backup-eligibility unchanged |
 
 Policy: **RP ID = the tenant host without port** (`acme.id.example.com`,
-dev `acme.localhost`) so a passkey belongs to one tenant; the origin must
+dev `acme.localhost`; the apex host for the `APEX_TENANT`,
+[deploy.md](deploy.md#apex-tenant)) so a passkey belongs to one tenant; the origin must
 equal `config.tenant_origin(slug)` byte for byte. User presence and user
 verification are both required (`userVerification: "required"`). Every
 untrusted input is size-bounded before parsing (client data 8 KiB,
