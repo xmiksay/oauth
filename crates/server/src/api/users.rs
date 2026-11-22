@@ -28,6 +28,7 @@ use crate::{
     app::AppState,
     audit::{EventType, Target},
     authz::{Access, Area},
+    backchannel,
     directory::{self, DirectoryError, NewUser, display_name, normalize_email},
     error::{AppError, AppResult},
     mail::links,
@@ -321,7 +322,13 @@ pub async fn remove(
     let user = find_user(&txn, tenant_id, id).await?;
     ensure_can_modify_user(&txn, &caller, id).await?;
     ensure_not_last_global_admin(&txn, tenant_id, id).await?;
-    // Sessions, tokens, memberships, roles and grants cascade.
+    // Sessions, tokens, memberships, roles and grants cascade; the outbox
+    // rows of the ended sessions' Back-Channel Logouts outlive the user.
+    let ended = backchannel::Ended::User {
+        user_id: id,
+        keep: None,
+    };
+    backchannel::queue(&txn, &state.config.master_key, tenant_id, ended).await?;
     users::Entity::delete_by_id(id).exec(&txn).await?;
     caller
         .audit(

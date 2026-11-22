@@ -23,10 +23,12 @@ use crate::{
     tokens::jwt,
 };
 
-/// One RP endpoint must answer quickly; the outbox retries later.
+/// One RP endpoint must answer quickly; the outbox retries later. (Runs
+/// happen beside the other jobs, see `jobs::spawn`, but a batch of dead
+/// endpoints still delays the channel's own next run.)
 const TIMEOUTS: http::Timeouts = http::Timeouts {
     total: Duration::from_secs(10),
-    connect: Duration::from_secs(5),
+    connect: Duration::from_secs(3),
 };
 
 /// The back-channel courier: one hardened HTTP client.

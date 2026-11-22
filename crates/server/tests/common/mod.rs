@@ -3,6 +3,7 @@
 #![allow(dead_code)]
 
 pub mod authenticator;
+pub mod backchannel;
 pub mod browser;
 pub mod cors;
 pub mod device;

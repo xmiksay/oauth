@@ -91,6 +91,10 @@ pub fn spawn(state: AppState, shutdown: CancellationToken) -> JoinHandle<()> {
                 None
             }
         };
+        // Back-channel runs wait on RPs we don't control (a blackholed
+        // endpoint takes the full timeout), so they run beside the loop,
+        // one at a time, instead of stalling the other jobs.
+        let mut backchannel: Option<JoinHandle<()>> = None;
         loop {
             let st = state.clone();
             tokio::select! {
@@ -109,9 +113,11 @@ pub fn spawn(state: AppState, shutdown: CancellationToken) -> JoinHandle<()> {
                     if let Some(mailer) = mailer.clone() {
                         guarded("outbox", deliver_once(st.clone(), mailer, shutdown.clone())).await;
                     }
-                    if let Some(notifier) = notifier.clone() {
+                    if let Some(notifier) = notifier.clone()
+                        && backchannel.as_ref().is_none_or(JoinHandle::is_finished)
+                    {
                         let run = deliver_once(st.clone(), notifier, shutdown.clone());
-                        guarded("outbox_backchannel", run).await;
+                        backchannel = Some(tokio::spawn(guarded("outbox_backchannel", run)));
                     }
                     if let Some(bot) = st.telegram.clone() {
                         let bot = Arc::new(bot);
@@ -119,6 +125,12 @@ pub fn spawn(state: AppState, shutdown: CancellationToken) -> JoinHandle<()> {
                     }
                 }
             }
+        }
+        // A run in progress stops between messages on `shutdown`.
+        if let Some(run) = backchannel
+            && run.await.is_err()
+        {
+            tracing::error!(job = "outbox_backchannel", "background job run aborted");
         }
         tracing::info!("background jobs stopped");
     })
