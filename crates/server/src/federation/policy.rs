@@ -158,6 +158,7 @@ mod tests {
             amr: amr.iter().map(|a| (*a).to_owned()).collect(),
             acr: acr.map(str::to_owned),
             auth_time: None,
+            mapped: Default::default(),
         }
     }
 

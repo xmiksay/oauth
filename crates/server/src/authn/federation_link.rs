@@ -118,6 +118,9 @@ pub async fn complete(
         &consumed,
         params,
         flow::Reauth::default(),
+        // Linking from My Account isn't a sign-in: mappings apply at the
+        // next one.
+        &[],
     )
     .await
     {

@@ -26,7 +26,7 @@ use crate::{
     audit,
     directory::{self, DirectoryError, NewUser},
     federation::{
-        flow,
+        flow, group_map,
         id_token::Claims,
         identities::{self, LinkError, NewIdentity, Pending},
         idps,
@@ -75,7 +75,16 @@ pub async fn complete(
         return back("upstream_failed");
     }
     let reauth = flow::Reauth::of(&tx.req);
-    let finished = flow::finish(ctx.state, &ctx.tenant.slug, &idp, &consumed, params, reauth);
+    let mapped = group_map::claim_names(conn, ctx.tenant.id, idp.id).await?;
+    let finished = flow::finish(
+        ctx.state,
+        &ctx.tenant.slug,
+        &idp,
+        &consumed,
+        params,
+        reauth,
+        &mapped,
+    );
     let claims = match finished.await {
         Ok(claims) => claims,
         Err(failure) => {
@@ -248,6 +257,7 @@ async fn sign_in(
         drop(txn);
         return fail(ctx, idp, "idp_repointed").await;
     }
+    group_map::sync(&txn, ctx.tenant.id, idp.id, user.id, ctx.ip, &claims.mapped).await?;
     txn.commit().await?;
     let user = sync_profile(ctx, user, claims).await?;
     continue_as(ctx, tx, idp, claims, &user).await
@@ -347,6 +357,7 @@ async fn jit(
     }
     let details = json!({ "via": "federation", "idp_id": idp.id, "email": user.email });
     audit_user(&txn, ctx, &user, audit::EventType::UserCreate, details).await?;
+    group_map::sync(&txn, ctx.tenant.id, idp.id, user.id, ctx.ip, &claims.mapped).await?;
     txn.commit().await?;
     continue_as(ctx, tx, idp, claims, &user).await
 }

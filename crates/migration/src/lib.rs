@@ -31,6 +31,7 @@ mod m20261121_000010_web_origins;
 mod m20261121_000011_group_names;
 mod m20261121_000012_device_code;
 mod m20261122_000013_mfa_policy;
+mod m20261122_000014_idp_group_mappings;
 
 pub struct Migrator;
 
@@ -51,6 +52,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261121_000011_group_names::Migration),
             Box::new(m20261121_000012_device_code::Migration),
             Box::new(m20261122_000013_mfa_policy::Migration),
+            Box::new(m20261122_000014_idp_group_mappings::Migration),
         ]
     }
 }

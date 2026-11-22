@@ -95,6 +95,8 @@ event_types! {
     IdentityProviderCreate => "identity_provider.create",
     IdentityProviderUpdate => "identity_provider.update",
     IdentityProviderDelete => "identity_provider.delete",
+    IdpGroupMappingAdd => "identity_provider.group_mapping_add",
+    IdpGroupMappingRemove => "identity_provider.group_mapping_remove",
 }
 
 /// The object an event is about.

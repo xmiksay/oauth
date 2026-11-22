@@ -6,6 +6,8 @@ import type {
   IdentityProviderDetail,
   IdentityProviderInput,
   IdentityProviderPatch,
+  IdpGroupMapping,
+  IdpGroupMappingInput,
   PageQuery,
   Paged,
 } from './types'
@@ -21,4 +23,12 @@ export const identityProviders = {
   update: (id: string, body: IdentityProviderPatch) =>
     t.patch<IdentityProviderDetail>(p`identity-providers/${id}`, body),
   remove: (id: string) => t.del(p`identity-providers/${id}`),
+  mappings: (id: string, q: PageQuery = {}) =>
+    t.get<Paged<IdpGroupMapping>>(
+      `${p`identity-providers/${id}/group-mappings`}${query({ limit: q.limit, cursor: q.cursor })}`,
+    ),
+  addMapping: (id: string, body: IdpGroupMappingInput) =>
+    t.post<IdpGroupMapping>(p`identity-providers/${id}/group-mappings`, body),
+  removeMapping: (id: string, mappingId: string) =>
+    t.del(p`identity-providers/${id}/group-mappings/${mappingId}`),
 }

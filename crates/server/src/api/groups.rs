@@ -7,8 +7,8 @@ use axum::{
 };
 use entity::{group_members, groups, users};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
-    TransactionTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DbBackend, EntityTrait,
+    QueryFilter, Statement, TransactionTrait,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -258,16 +258,21 @@ pub async fn add_member(
     let txn = state.db.begin().await?;
     find_group(&txn, tenant_id, id).await?;
     referenced(find_user(&txn, tenant_id, body.user_id).await, "user")?;
-    let row = group_members::ActiveModel {
-        tenant_id: Set(tenant_id),
-        group_id: Set(id),
-        user_id: Set(body.user_id),
-        ..Default::default()
-    };
-    group_members::Entity::insert(row)
-        .exec_without_returning(&txn)
-        .await
-        .map_err(|err| conflict_on_unique(err, "the user is already a member"))?;
+    // A membership only a group mapping keeps becomes manual too, so it
+    // stays when the mapped claim value goes.
+    let added = txn
+        .execute_raw(Statement::from_sql_and_values(
+            DbBackend::Postgres,
+            r"INSERT INTO group_members (tenant_id, group_id, user_id)
+              VALUES ($1, $2, $3)
+              ON CONFLICT (group_id, user_id) DO UPDATE SET manual = true
+              WHERE NOT group_members.manual",
+            [tenant_id.into(), id.into(), body.user_id.into()],
+        ))
+        .await?;
+    if added.rows_affected() == 0 {
+        return Err(AppError::Conflict("the user is already a member".into()));
+    }
     caller
         .audit(
             &txn,

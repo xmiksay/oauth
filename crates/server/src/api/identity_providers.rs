@@ -31,7 +31,7 @@ use crate::{
     audit::{EventType, Target},
     authz::{Access, Area},
     error::{AppError, AppResult},
-    federation::{identities, idps, urls},
+    federation::{group_map, identities, idps, urls},
 };
 
 fn view(state: &AppState, caller: &Caller, idp: &identity_providers::Model) -> Value {
@@ -80,6 +80,22 @@ async fn find(
     id: Uuid,
 ) -> AppResult<identity_providers::Model> {
     idps::find(conn, tenant_id, id)
+        .await?
+        .ok_or(AppError::NotFound)
+}
+
+/// FOR UPDATE: sign-ins and links hold it FOR SHARE while they write, so
+/// a repoint (or a mapping change) waits for them, and they see the new
+/// state after it.
+pub(super) async fn lock(
+    conn: &impl ConnectionTrait,
+    tenant_id: Uuid,
+    id: Uuid,
+) -> AppResult<identity_providers::Model> {
+    identity_providers::Entity::find_by_id(id)
+        .filter(identity_providers::Column::TenantId.eq(tenant_id))
+        .lock_exclusive()
+        .one(conn)
         .await?
         .ok_or(AppError::NotFound)
 }
@@ -181,14 +197,7 @@ pub async fn update(
     caller.require(Area::IdentityProviders, Access::Write)?;
     let tenant_id = caller.tenant_id();
     let txn = state.db.begin().await?;
-    // FOR UPDATE: sign-ins and links hold it FOR SHARE while they write, so
-    // a repoint waits for them, and they see the new generation after it.
-    let idp = identity_providers::Entity::find_by_id(id)
-        .filter(identity_providers::Column::TenantId.eq(tenant_id))
-        .lock_exclusive()
-        .one(&txn)
-        .await?
-        .ok_or(AppError::NotFound)?;
+    let idp = lock(&txn, tenant_id, id).await?;
     let mut row: identity_providers::ActiveModel = idp.clone().into();
     let mut secret = None;
     let mut fields = apply(&state, &mut row, &body, &mut secret)?;
@@ -223,17 +232,24 @@ pub async fn update(
     // Another issuer, client or discovery source means other subjects:
     // keeping the links would hand the old users' accounts to whoever the
     // new provider calls by those subjects.
-    let removed = if repointed {
-        identities::unlink_all(&txn, tenant_id, id).await?
+    let (removed, memberships) = if repointed {
+        (
+            identities::unlink_all(&txn, tenant_id, id).await?,
+            group_map::drop_owned(&txn, tenant_id, id, None, None).await?,
+        )
     } else {
-        0
+        (0, 0)
     };
     caller
         .audit(
             &txn,
             EventType::IdentityProviderUpdate,
             Some(Target::IdentityProvider(id)),
-            json!({ "fields": fields, "identities_removed": removed }),
+            json!({
+                "fields": fields,
+                "identities_removed": removed,
+                "memberships_removed": memberships,
+            }),
         )
         .await?;
     let out = detailed(&state, &caller, &txn, &updated).await?;
@@ -253,8 +269,11 @@ pub async fn remove(
 ) -> AppResult<StatusCode> {
     caller.require(Area::IdentityProviders, Access::Write)?;
     let txn = state.db.begin().await?;
-    let idp = find(&txn, caller.tenant_id(), id).await?;
+    let idp = lock(&txn, caller.tenant_id(), id).await?;
     let only_via = identities::users_only_via(&txn, idp.tenant_id, id).await?;
+    // The FK would only clear the mark; memberships nothing but this
+    // provider kept go with it.
+    let memberships = group_map::drop_owned(&txn, idp.tenant_id, id, None, None).await?;
     identity_providers::Entity::delete_by_id(id)
         .exec(&txn)
         .await?;
@@ -263,7 +282,11 @@ pub async fn remove(
             &txn,
             EventType::IdentityProviderDelete,
             Some(Target::IdentityProvider(id)),
-            json!({ "name": idp.name, "users_only_via": only_via }),
+            json!({
+                "name": idp.name,
+                "users_only_via": only_via,
+                "memberships_removed": memberships,
+            }),
         )
         .await?;
     txn.commit().await?;

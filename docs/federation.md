@@ -169,6 +169,56 @@ or its `acr` equals the configured `mfa_acr`; `amr` is then
   production. With an `http://` `PUBLIC_URL` (development) the check is
   off, so loopback providers work.
 
+## Group mappings
+
+An identity provider can map upstream claim values to local groups
+(admin center → Identity providers → the provider → Group mappings;
+GlobalAdmin; API [api/identity_providers.md](api/identity_providers.md)).
+A mapping is `claim` (a top-level ID token claim, e.g. `groups`, `roles`)
++ `value` + a group of the tenant; several mappings may grant one group,
+at most 100 per provider.
+
+On every federated sign-in of a linked identity, and at JIT creation, the
+user's memberships follow the token: the user joins each group whose
+mapping's value appears in its claim (exact, case-sensitive match; the
+claim may be a string or an array of strings) and leaves each group this
+provider's mappings put them in and no longer grant. This runs in the
+sign-in's writing transaction, which holds the provider row `FOR SHARE`
+at the verified generation; mapping writes take it `FOR UPDATE`, so a
+sign-in sees the mappings as they were before or after a change, never
+half of it. Every membership added or removed is audited
+(`group.member_add` / `group.member_remove`, user → group, `via:
+"federation"`, `idp_id`).
+
+Each membership records its source: `manual` (an administrator added it)
+and `idp_id` (this provider's mappings keep it). A sign-in only removes
+rows its own provider keeps, so manual memberships and those of other
+providers are never touched:
+
+- A mapping finding an existing membership (manual, or another
+  provider's) leaves it as it is — it doesn't depend on the mapping.
+- An administrator adding a user to a group a mapping put them in makes
+  the row manual as well; when the claim value goes, only the mapping mark
+  goes and the membership stays.
+- An administrator removing a mapped membership removes it; the mapping
+  adds it again at the next sign-in while the claim value is there.
+
+Claim values are bounded before use: at most 256 entries per claim (the
+rest ignored; Entra caps its `groups` claim at 200), each 1–256 bytes
+without control characters (others skipped); only the claims the
+provider's mappings name are read. Entra's group overage (`_claim_names`
+pointing at Graph) is not followed — the claim then counts as absent.
+
+Not a sign-in, so no mapping is applied: linking an identity at stage
+`link` or from My Account (the next sign-in through the provider applies
+them). A new mapping applies from each user's next sign-in. Deleting a
+mapping removes the memberships it kept at once, unless another mapping
+of the provider grants the same group. A **repoint**, deleting the
+provider and unlinking a user's identity drop the memberships the
+provider's mappings kept (of everyone / of that user; manual ones lose
+just the mark), counted as `memberships_removed` in the audit event.
+Deleting a group removes its mappings.
+
 ## Lockout
 
 Disabling or deleting a provider is allowed. `GET identity-providers/{id}`
@@ -187,6 +237,8 @@ provider doesn't count as one.
 |---|---|
 | `identity_providers` | `name` unique per tenant, `kind` oidc, `enabled`, `visible`, `issuer`, `discovery_url`, `client_id`, `client_secret_sealed`, `client_auth` post\|basic, `scopes[]`, `policy` jit\|link_only\|deny, `trust_upstream_mfa`, `mfa_acr`, `email_domains[]`, `generation` (bumped by a repoint) |
 | `user_identities` | (tenant, IdP, `subject`) unique, (tenant, user, IdP) unique, `email` (as last seen upstream, informational), `linked_at`, `last_used_at`; cascades with the user or the IdP |
+| `idp_group_mappings` | `(tenant, IdP, claim, value, group)` unique, composite FKs to the IdP and the group (cascade); `claim` `^[A-Za-z0-9_.:/-]{1,64}$`, `value` 1–256 characters |
+| `group_members.manual` / `.idp_id` | source of a membership: added by an administrator and/or kept by that IdP's mappings (`CHECK (manual OR idp_id IS NOT NULL)`, composite FK to the IdP `ON DELETE SET NULL (idp_id)`) |
 | `federation_states` | `state_hash` (unique), `binding_hash`, `nonce`, `pkce_verifier_sealed`, `purpose` login (with `tx_id`) \| link (with `user_id` and the starting `session_id`), `idp_generation`, `expires_at` = 10 min; swept |
 
 `login_transactions.federated` holds `{idp_id, generation}` of an upstream

@@ -21,6 +21,7 @@ pub mod federation_states;
 pub mod group_members;
 pub mod groups;
 pub mod identity_providers;
+pub mod idp_group_mappings;
 pub mod known_devices;
 pub mod login_transactions;
 pub mod notification_prefs;

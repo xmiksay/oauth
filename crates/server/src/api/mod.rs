@@ -21,6 +21,7 @@ mod groups;
 mod guard;
 mod identity_providers;
 mod idp_body;
+mod idp_group_mappings;
 mod idp_validate;
 mod me;
 mod me_email;
@@ -126,6 +127,14 @@ pub fn router() -> Router<AppState> {
             get(identity_providers::get)
                 .patch(identity_providers::update)
                 .delete(identity_providers::remove),
+        )
+        .route(
+            &format!("{T}/identity-providers/{{id}}/group-mappings"),
+            get(idp_group_mappings::list).post(idp_group_mappings::create),
+        )
+        .route(
+            &format!("{T}/identity-providers/{{id}}/group-mappings/{{mapping_id}}"),
+            delete(idp_group_mappings::remove),
         )
         .route(
             &format!("{T}/users/{{id}}/sessions"),
