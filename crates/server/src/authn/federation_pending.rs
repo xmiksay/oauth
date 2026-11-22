@@ -79,7 +79,7 @@ pub async fn refuse_changed(
     } else {
         "idp_disabled"
     };
-    // The user before the transaction row, as `complete::close` does.
+    // The user before the transaction row, as `complete_refuse::close` does.
     crate::backchannel::lock_user(&txn, ctx.tenant.id, user_id).await?;
     if tx::take(&txn, row.id, row.stage).await? {
         super::device_code::deny_for(&txn, ctx, tx, user_id, reason).await?;

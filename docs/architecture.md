@@ -105,7 +105,7 @@ Implemented:
 | `http` | Shared outbound client recipe (rustls on AWS-LC, webpki roots, no redirects, no proxy, timeouts) and capped body reads |
 | `federation` | Upstream OIDC / OAuth2 (relying-party side): `discovery` (discovery + JWKS caches), `exchange` (code exchange), `id_token` (signature + claims), `flow` (begin / finish of a round trip), `state` (single-use `federation_states`), `identities` (links, last-method rule), `group_map` (claim value → group mappings, applied per sign-in), `idps`, `policy`, `profile` (bounding upstream claims), `resolve` (public-address-only DNS), `urls`, `kinds` (per-preset claim checks: Google `hd`, Entra `tid` + `{tenantid}` issuer template + allowed tenants, `xms_edov` / `trust_upstream_email` as verified email), `github` (OAuth2 adapter, no OIDC: `/user` + `/user/emails`, verified primary email, numeric id as subject) — [federation.md](federation.md) |
 | `telegram` | Bot: `api` (reqwest `sendMessage` / `setWebhook`, token never logged; outbox `Courier`), `update` (pure update parsing), `links` (link codes, links), `otp` (sign-in codes), `webhook`, `set_webhook` (CLI) — [telegram.md](telegram.md) |
-| `authn` | Login JSON API + CSRF guard (`AuthnError`, `JsonBody`), `passkey` (passkey sign-in), `invite_passkey` (invitation accepted with a passkey), `cookie` (session, tx-binding and device cookies), `device` (known devices + new sign-in notice), `telegram` (sending sign-in codes), `reset` (password-reset request / completion), `email` (verify / invite link redemption), `federation` / `federation_login` / `federation_link` / `federation_pending` (upstream sign-in, linking callbacks, stage `link`), `device_code` (user-code entry → transaction, device approve / deny), `ctx`, `tx` (login transactions + browser binding), `tx_view` (`GET /api/authn/tx/{id}`), `password`, `mfa` (TOTP / recovery / Telegram codes), `complete` (next step, consent, session + code), `consent_eval` (consent state of a pending request), `session` (cookie), `totp` (RFC 6238 via AWS-LC HMAC, sealed secret, replay-protected step), `recovery`, `rate_limit`, `ip` |
+| `authn` | Login JSON API + CSRF guard (`AuthnError`, `JsonBody`), `passkey` (passkey sign-in), `invite_passkey` (invitation accepted with a passkey), `cookie` (session, tx-binding and device cookies), `device` (known devices + new sign-in notice), `telegram` (sending sign-in codes), `reset` (password-reset request / completion), `email` (verify / invite link redemption), `federation` / `federation_login` / `federation_link` / `federation_pending` (upstream sign-in, linking callbacks, stage `link`), `device_code` (user-code entry → transaction, device approve / deny), `ctx`, `tx` (login transactions + browser binding), `tx_view` (`GET /api/authn/tx/{id}`), `password`, `mfa` (TOTP / recovery / Telegram codes), `complete` (next step, consent, session + code), `complete_refuse` (completion refusals that close the transaction and deny a device request), `consent_eval` (consent state of a pending request), `session` (cookie), `totp` (RFC 6238 via AWS-LC HMAC, sealed secret, replay-protected step), `recovery`, `rate_limit`, `ip` |
 | `consent` | Pure evaluation (granted / needs user / needs admin) + grant lookup / merge-upsert |
 | `tokens` | Issuance (`issue_delegated`, `issue_app_only`), `inspect` (access-token resolution incl. user-disabled check), `claims` (pure builders), `jwt` (sign with active key, verify against published keys + `typ`), `opaque`, `refresh` (family state machine, rotation, revocation), `code`, `principal` (groups, roles) |
 | `jobs` | `sweeper` (incl. audit retention), `rotation`, `outbox` (delivery per channel `Courier`: email, Telegram, back-channel logout), leader lock helper |
@@ -239,13 +239,17 @@ checked before consent and on every token grant: [consent.md](consent.md).
   it has ended, so a logout either kills the unredeemed code or waits for the
   redemption and then revokes and announces its tokens. A consumed code presented
   again revokes the refresh-token families and opaque access tokens it
-  produced (RFC 6749 §4.1.2). Replay detection works while the code row
+  produced (RFC 6749 §4.1.2). `backchannel::lock_user` re-reads the user
+  under its lock: one disabled or deleted while the redemption waited on it
+  gets `invalid_grant` (a `disabled` read before the lock is stale). Replay detection works while the code row
   exists, i.e. until the sweeper deletes it (≤ 60 s after its 60 s expiry);
   later replays just get `invalid_grant`.
 - `refresh_token`: only for grants that included `offline_access`; every
   use rotates within one family (reuse revokes it), and a refresh may mint
   an access token for another resource (multi-resource refresh): rotation,
-  races and MRRT in [refresh_tokens.md](refresh_tokens.md).
+  races and MRRT in [refresh_tokens.md](refresh_tokens.md). The grant
+  locks the user first and re-reads them under that lock: one disabled or
+  deleted meanwhile gets `invalid_grant`.
 - `client_credentials`: confidential clients only; `scope` must be exactly
   `{resource}/.default`; `roles` = app roles of the resource assigned to the
   client app (only roles allowing `application` members; delegated tokens

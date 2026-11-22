@@ -54,11 +54,18 @@ GlobalAdmin, like its redirect URIs; never on built-in apps). Others get
   refresh token with `offline_access`.
 - Audited: `device_code.approve` / `device_code.deny` (the user, target the
   client app; deny `reason` `declined`, `not_assigned`, `admin_consent_required`,
-  `session_ended`, `idp_repointed` or `idp_disabled`) and
+  `session_ended`, `idp_repointed`, `idp_disabled` or `account_disabled`) and
   `device_code.redeem` (the client, target the user, with the new session).
   Every path that ends the device's login transaction without approving
   denies the device request on the same DB transaction as its audit event,
-  so the device gets `access_denied` instead of polling until expiry.
+  so the device gets `access_denied` instead of polling until expiry —
+  also when the user was disabled while the completion waited on their
+  lock (`account_disabled`). Denying takes the user lock
+  (`backchannel::lock_user`) before the request row, the order a user's
+  deletion takes them; a user deleted meanwhile can't be written into the
+  row, so the request stays `pending` until it expires. Redemption re-reads
+  the user after `lock_request` took that lock: one disabled or deleted
+  while the poll waited gets `invalid_grant`.
 
 ## An approval dies with its sign-in
 
