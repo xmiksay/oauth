@@ -169,6 +169,8 @@ pub struct CreateUser {
     /// Create without a password and email an invitation link instead
     /// (needs SMTP; excludes `password` / `must_change_password`).
     invite: Option<bool>,
+    /// Defaults to `false`; `true` skips the verification link.
+    email_verified: Option<bool>,
 }
 
 pub async fn create(
@@ -178,6 +180,7 @@ pub async fn create(
 ) -> AppResult<Response> {
     caller.require(Area::Directory, Access::Write)?;
     let invite = body.invite == Some(true);
+    let email_verified = body.email_verified == Some(true);
     if invite {
         if body.password.is_some() || body.must_change_password.is_some() {
             return Err(AppError::BadRequest(
@@ -198,6 +201,7 @@ pub async fn create(
             display_name: &body.display_name,
             password: chosen.as_ref().map(|c| c.value.as_str()),
             must_change_password: chosen.as_ref().is_some_and(|c| c.must_change),
+            email_verified,
         },
     )
     .await?;
@@ -206,7 +210,7 @@ pub async fn create(
         Some(c) if c.generated => "generated",
         Some(_) => "set_by_admin",
     };
-    let details = json!({ "email": user.email, "password": how });
+    let details = json!({ "email": user.email, "password": how, "email_verified": email_verified });
     caller
         .audit(
             &txn,
@@ -217,7 +221,7 @@ pub async fn create(
         .await?;
     if invite {
         send_invite(&state, &caller, &txn, &user, false).await?;
-    } else if state.config.email_enabled() {
+    } else if state.config.email_enabled() && !email_verified {
         let tenant = &caller.tenant;
         links::send(
             &txn,
@@ -244,6 +248,8 @@ pub struct UpdateUser {
     display_name: Option<String>,
     email: Option<String>,
     disabled: Option<bool>,
+    /// Set explicitly, it wins over the reset a new `email` implies.
+    email_verified: Option<bool>,
 }
 
 pub async fn update(
@@ -266,14 +272,22 @@ pub async fn update(
             fields.push("display_name");
         }
     }
+    let mut email_changed = false;
     if let Some(email) = &body.email {
         let email = normalize_email(email)?;
         if email != user.email {
             row.email = Set(email);
-            // The new address is unproven until its owner opens a link.
-            row.email_verified = Set(false);
+            email_changed = true;
             fields.push("email");
         }
+    }
+    let verified = verified_after(user.email_verified, email_changed, body.email_verified);
+    row.email_verified = Set(verified);
+    if body
+        .email_verified
+        .is_some_and(|v| v != user.email_verified)
+    {
+        fields.push("email_verified");
     }
     let disabling = body.disabled == Some(true) && !user.disabled;
     if let Some(disabled) = body.disabled.filter(|d| *d != user.disabled) {
@@ -311,6 +325,12 @@ pub async fn update(
     Ok(axum::Json(view(&updated)))
 }
 
+/// `email_verified` after a PATCH: an explicit value wins; otherwise a new
+/// address is unproven until its owner opens a link.
+fn verified_after(current: bool, email_changed: bool, requested: Option<bool>) -> bool {
+    requested.unwrap_or(current && !email_changed)
+}
+
 pub async fn remove(
     State(state): State<AppState>,
     caller: Caller,
@@ -340,4 +360,23 @@ pub async fn remove(
         .await?;
     txn.commit().await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::verified_after;
+
+    #[test]
+    fn explicit_value_wins_over_the_email_change_reset() {
+        assert!(verified_after(false, true, Some(true)));
+        assert!(!verified_after(true, false, Some(false)));
+        assert!(verified_after(false, false, Some(true)));
+    }
+
+    #[test]
+    fn without_a_value_a_new_email_resets_it() {
+        assert!(!verified_after(true, true, None));
+        assert!(verified_after(true, false, None));
+        assert!(!verified_after(false, false, None));
+    }
 }

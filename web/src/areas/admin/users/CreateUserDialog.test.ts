@@ -81,4 +81,18 @@ describe('CreateUserDialog', () => {
     await flushPromises()
     expect(create).toHaveBeenCalledWith({ email: 'new@example.com', display_name: 'New' })
   })
+
+  it('sends email_verified: true only when the box is ticked', async () => {
+    create.mockResolvedValue({ user: created, one_time_password: 'otp', invite_sent: false })
+    const w = mountDialog(false)
+    await fillBasics(w)
+    await w.find('[data-testid=cu-verified]').setValue(true)
+    await w.find('form').trigger('submit')
+    await flushPromises()
+    expect(create).toHaveBeenCalledWith({
+      email: 'new@example.com',
+      display_name: 'New',
+      email_verified: true,
+    })
+  })
 })

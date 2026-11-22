@@ -137,7 +137,10 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   bot is configured and the user linked a chat — otherwise, with `features.telegram`, a
   pointer to Security info; email notifications go only to a verified address). In the admin center, "New user"
   can send an invitation (`invite: true`, no password) when `features.email`, and a
-  user without a password gets "Resend invitation" (`POST users/{id}/invite`).
+  user without a password gets "Resend invitation" (`POST users/{id}/invite`). "New user" can
+  also mark the address verified (`email_verified: true`), and the user page shows the
+  verified badge with a confirmed "Mark email verified / unverified" toggle
+  (`PATCH users/{id}` `{ email_verified }`).
 - **Passkeys** (`src/webauthn`): hand-rolled base64url and JSON ⇄ WebAuthn
   conversion (no `parseCreationOptionsFromJSON`), `createPasskey` / `getPasskey`;
   `NotAllowedError` / `AbortError` become `PasskeyCancelled`, which `ErrorAlert`

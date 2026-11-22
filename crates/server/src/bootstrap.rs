@@ -128,6 +128,7 @@ pub async fn run(
                         display_name: opts.display_name.as_deref().unwrap_or(DEFAULT_DISPLAY_NAME),
                         password: Some(password.expose()),
                         must_change_password: true,
+                        email_verified: false,
                     },
                 )
                 .await?;

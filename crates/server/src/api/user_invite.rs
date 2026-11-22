@@ -60,10 +60,11 @@ pub async fn send_invite(
 }
 
 /// After an admin changed `before`'s address (now `user.email`): links sent
-/// to the old address die; the new one gets a verification link — or, for
-/// a user who never set a password, a fresh invitation (the old one went to
-/// the old address) — and the old one a notice if it was verified. A user
-/// with a passkey but no password gets the verification link.
+/// to the old address die; the new one gets a verification link (none when
+/// the admin marked it verified in the same request) — or, for a user who
+/// never set a password, a fresh invitation (the old one went to the old
+/// address) — and the old one a notice if it was verified. A user with a
+/// passkey but no password counts as one with a password here.
 pub async fn email_replaced(
     state: &AppState,
     caller: &Caller,
@@ -75,7 +76,7 @@ pub async fn email_replaced(
     if state.config.email_enabled() {
         if !has_sign_in_method(conn, user).await? {
             send_invite(state, caller, conn, user, true).await?;
-        } else {
+        } else if !user.email_verified {
             let purpose = EmailTokenPurpose::Verify;
             links::send(conn, &state.config, &caller.tenant, user, purpose, None).await?;
         }

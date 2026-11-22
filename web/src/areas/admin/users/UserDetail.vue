@@ -57,6 +57,11 @@ async function save() {
   }
 }
 
+async function setEmailVerified(email_verified: boolean) {
+  await users.update(id, { email_verified })
+  await load()
+}
+
 async function setDisabled(disabled: boolean) {
   await users.update(id, { disabled })
   sessionsVersion.value++
@@ -130,6 +135,16 @@ async function revokeSessions() {
           "
           :danger="!user.disabled"
           :action="() => setDisabled(!user?.disabled)"
+        />
+        <ConfirmButton
+          :label="user.email_verified ? 'Mark email unverified' : 'Mark email verified'"
+          :title="user.email_verified ? 'Mark email unverified?' : 'Mark email verified?'"
+          :message="
+            user.email_verified
+              ? `${user.email} is reported as unverified (email_verified: false) until its owner verifies it again.`
+              : `${user.email} is reported as verified (email_verified: true) without its owner opening a link. Only do this if you know the address belongs to them.`
+          "
+          :action="() => setEmailVerified(!user?.email_verified)"
         />
         <ConfirmButton
           v-if="!user.has_password && !user.mfa.passkeys && me?.features.email"

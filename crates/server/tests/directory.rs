@@ -54,6 +54,7 @@ fn new_user(email: &str) -> NewUser<'_> {
         display_name: "Ann",
         password: None,
         must_change_password: false,
+        email_verified: false,
     }
 }
 
