@@ -174,6 +174,24 @@ pub async fn decide(
     Ok(result.rows_affected == 1)
 }
 
+/// Deletes a still pending request — one whose decider was deleted before
+/// they could be recorded (`decided` rows need a user).
+pub async fn drop_pending(
+    conn: &impl ConnectionTrait,
+    tenant_id: Uuid,
+    id: Uuid,
+) -> anyhow::Result<()> {
+    use device_authorizations::Column;
+    device_authorizations::Entity::delete_many()
+        .filter(Column::Id.eq(id))
+        .filter(Column::TenantId.eq(tenant_id))
+        .filter(Column::Status.eq(DeviceStatus::Pending))
+        .exec(conn)
+        .await
+        .context("dropping the pending device authorization")?;
+    Ok(())
+}
+
 /// Locks the approving session `FOR KEY SHARE` (so a sign-out or revocation
 /// waits for a redemption that already holds it) and returns whether it is
 /// still live. Lock order user → session → request: deleting the session

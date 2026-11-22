@@ -213,7 +213,10 @@ pub async fn approve(
 /// update's FK on `user_id` would otherwise take it after the row lock and
 /// deadlock against the user's deletion. A caller that locks anything later
 /// in that order first (a login transaction) must lock the user before it.
-/// A user deleted meanwhile leaves nothing to record.
+/// A user deleted meanwhile can't be written into the row (the decider's
+/// FK): the pending request is dropped instead, as the deletion's cascade
+/// would have dropped it, so the device's next poll ends with
+/// `invalid_grant` rather than polling until it expires.
 pub async fn deny(
     conn: &impl ConnectionTrait,
     ctx: &Ctx<'_>,
@@ -224,7 +227,7 @@ pub async fn deny(
 ) -> anyhow::Result<()> {
     let user = crate::backchannel::lock_user(conn, ctx.tenant.id, user_id).await?;
     if user == crate::backchannel::UserLock::Gone {
-        return Ok(());
+        return device_flow::drop_pending(conn, ctx.tenant.id, device_id).await;
     }
     if device_flow::decide(conn, ctx.tenant.id, device_id, user_id, Decision::Deny).await? {
         let details = json!({ "device_authorization_id": device_id, "reason": reason });
