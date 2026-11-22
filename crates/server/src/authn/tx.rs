@@ -375,3 +375,20 @@ pub async fn get(
     let tx = load(&ctx, &tx_id).await?;
     Ok(Outcome::Step(view(&state, &tenant, &tx).await?))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn amr(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn a_second_factor_keeps_only_the_first_factors_kind() {
+        let pwd = with_second_factor(&amr(&["pwd"]), "otp");
+        assert_eq!(pwd, amr(&["pwd", "otp", "mfa"]));
+        let fed = with_second_factor(&amr(&["fed"]), "hwk");
+        assert_eq!(fed, amr(&["fed", "hwk", "mfa"]));
+    }
+}

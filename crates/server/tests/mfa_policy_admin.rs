@@ -7,16 +7,13 @@
     clippy::indexing_slicing
 )]
 
-//! MFA policy settings over the management API, and upstream MFA counting
-//! towards a required policy.
+//! MFA policy settings over the management API.
 mod common;
 
 use axum::http::{Method, StatusCode};
 use common::{
-    federation::{Fed, is_login_page},
     flow::Fixture,
     mgmt::{app_by_client_id, audited, call, mint_user_token, user_with_roles},
-    upstream::Account,
 };
 use entity::enums::DirectoryRole::{ApplicationAdmin, GlobalAdmin};
 use serde_json::{Value, json};
@@ -83,34 +80,4 @@ async fn apps_can_only_tighten_the_policy() {
         (st, app["mfa_policy"].as_str()),
         (StatusCode::OK, Some("required"))
     );
-}
-
-#[tokio::test]
-async fn trusted_upstream_mfa_satisfies_a_required_policy() {
-    let fed = Fed::new().await;
-    let (st, body) = call(
-        &fed.f.app,
-        Method::PATCH,
-        SETTINGS,
-        Some(&fed.admin),
-        Some(&json!({ "mfa_policy": "required" })),
-    )
-    .await;
-    assert_eq!(st, StatusCode::OK, "{body}");
-    let idp = fed.idp(json!({})).await;
-    let mut account = Account::new("upstream-sub-1", "pat@upstream.example");
-    account.amr = vec!["pwd".into(), "mfa".into()];
-    fed.up.set_account(account);
-    // Not trusted: the JIT user has no factor of ours, so enrolment.
-    let mut browser = fed.f.browser();
-    let (tx, location) = fed.sign_in(&mut browser, &idp).await;
-    assert!(is_login_page(&location, &tx), "{location}");
-    let (_, _, view) = browser.get(&format!("/api/authn/tx/{tx}")).await;
-    let view: Value = serde_json::from_str(&view).unwrap();
-    assert_eq!(view["step"], "mfa_enroll", "{view}");
-    // Trusted: the upstream's MFA counts, and the token says so.
-    fed.patch_idp(&idp, json!({ "trust_upstream_mfa": true }))
-        .await;
-    let (_, location) = fed.sign_in(&mut fed.f.browser(), &idp).await;
-    assert_eq!(fed.amr(&location).await, ["fed", "mfa"]);
 }

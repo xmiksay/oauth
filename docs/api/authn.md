@@ -255,7 +255,8 @@ successes too. IPv6 clients are bucketed per /64.
 | Bucket | Limit | Applies to |
 |---|---|---|
 | client IP, per tenant | 30 / 5 min | `password`, `totp`, `recovery`, `passkey`, `telegram`, `enroll/totp`, `enroll/totp/confirm`, `enroll/passkey/options`, `enroll/passkey`, `change-password` |
-| account, per tenant | 10 / 15 min | same; keyed by user id once the email (or the passkey's credential, or the transaction) resolves it, else by the trimmed, lower-cased email (or the credential id) |
+| account, per tenant | 10 / 15 min | same except `enroll/totp` and `enroll/passkey/options`; keyed by user id once the email (or the passkey's credential, or the transaction) resolves it, else by the trimmed, lower-cased email (or the credential id) |
+| user, per tenant | 20 / 15 min | `enroll/totp`, `enroll/passkey/options` (enrolment setup: each call writes a row, but a forced enrolment must not use up the sign-in's attempts) |
 | user, per tenant | 3 / 15 min | `telegram/send` (across transactions) |
 | client IP, per tenant | 60 / 5 min | `/oauth2/authorize` requests that create a login transaction → `429` JSON (`rate_limited`), not a redirect |
 | client IP, per tenant | 10 / 15 min | `password-reset` |

@@ -45,7 +45,8 @@ interpreted (the policy below decides).
 tighten). A sign-in needs MFA when the tenant, the client app or the
 requested resource app requires it (`authn::mfa_policy`). It is checked
 whenever a sign-in step would complete the sign-in (`complete::proceed`,
-before `change_password` and `consent`) and whenever `/authorize` or the
+before `change_password` and `consent`, and again when consent is approved)
+and whenever `/authorize` or the
 device flow would reuse a session:
 
 - The user has a factor (TOTP, passkey, Telegram — fail closed without a
@@ -73,6 +74,9 @@ device flow would reuse a session:
   cookie alone — that would let a stolen session register a passkey, which
   My Account guards with reauthentication. `prompt=none` gets
   `interaction_required`.
+- A consent-only transaction (a reused session at `consent`) whose policy
+  became required while the consent screen was up can't step up: approving
+  ends it with `login_required`; the next `/authorize` steps the session up.
 - An upstream sign-in counts as MFA only when the IdP is trusted for it
   (`trust_upstream_mfa`, [federation.md](federation.md)).
 

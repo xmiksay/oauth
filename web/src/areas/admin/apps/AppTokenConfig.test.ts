@@ -66,6 +66,13 @@ describe('AppTokenConfig', () => {
     expect(w.text()).toContain('Saved.')
   })
 
+  it('sends no PATCH (so no mfa_policy) for an untouched form', async () => {
+    const w = await mountForm(fakeApp({ mfa_policy: 'required' }))
+    await w.find('form').trigger('submit')
+    await flushPromises()
+    expect(applications.update).not.toHaveBeenCalled()
+  })
+
   it('shows the current format and locks it on built-in apps', async () => {
     const w = await mountForm(fakeApp({ builtin: true, groups_claim_format: 'name' }), [
       'GlobalAdmin',

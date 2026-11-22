@@ -31,6 +31,13 @@ pub const PER_ACCOUNT: Limit = Limit {
     max: 10,
     window_secs: 900,
 };
+/// Enrolment setup calls (new TOTP secret, passkey creation options) of
+/// one user. Separate from [`PER_ACCOUNT`]: a forced enrolment must not
+/// spend the attempts its password and code entries need.
+pub const ENROLL_PER_USER: Limit = Limit {
+    max: 20,
+    window_secs: 900,
+};
 /// Login transactions started from one IP within one tenant (bounds the
 /// rows an unauthenticated client can make `/authorize` create).
 pub const AUTHORIZE_PER_IP: Limit = Limit {
@@ -122,6 +129,11 @@ pub fn ip_key(ip: Option<IpAddr>) -> String {
 /// of the email that resolves to the user shares one bucket.
 pub fn user_key(user_id: Uuid) -> String {
     format!("acct:{user_id}")
+}
+
+/// The enrolment-setup bucket of a user ([`ENROLL_PER_USER`]).
+pub fn enroll_key(user_id: Uuid) -> String {
+    format!("enroll:{user_id}")
 }
 
 /// The account bucket of an email that resolved to no user: lower-cased by

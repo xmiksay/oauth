@@ -114,17 +114,23 @@ pub async fn proceed(
         return Err(AuthnError::AccountDisabled);
     }
     // MFA policy: a sign-in that isn't multi-factor yet goes through the
-    // user's second factor (or its enrolment) before anything else. Consent
-    // is only ever reached after this check.
+    // user's second factor (or its enrolment) before anything else.
     let next = match next {
         Some(LoginStage::Mfa | LoginStage::MfaEnroll) => next,
-        _ if from == LoginStage::Consent => next,
         _ => {
             let app = tx.row.application_id;
             let amr = &tx.row.amr;
-            mfa_policy::missing(ctx.state, ctx.tenant, app, &tx.req, user.id, amr)
-                .await?
-                .or(next)
+            let missing =
+                mfa_policy::missing(ctx.state, ctx.tenant, app, &tx.req, user.id, amr).await?;
+            // The policy was tightened while the consent screen was up. A
+            // consent-only transaction can't step up from here (`finish`
+            // would reuse its single-factor session): a new request does.
+            if missing.is_some() && from == LoginStage::Consent {
+                close(ctx, &tx, from, user.id, "mfa_required").await?;
+                let msg = "multi-factor authentication is now required; sign in again";
+                return ctx.error_redirect(&tx.req, ErrorCode::LoginRequired, msg);
+            }
+            missing.or(next)
         }
     };
     if let Some(stage) = next {

@@ -181,17 +181,48 @@ async fn enrolment_setup_calls_are_rate_limited() {
     let mut browser = f.browser();
     let (tx, _) = password(&mut browser, OPENID).await;
     // Each call writes a row (and `enroll/totp` replaces the pending
-    // secret): they share the account's attempt bucket.
+    // secret): they have their own bucket of 20 per 15 min.
     let mut answered = Vec::new();
-    // One more than the account's 10 attempts per 15 min.
-    for _ in 0..11 {
+    for _ in 0..21 {
         let (status, _) = browser.step(&tx, "enroll/totp", json!({})).await;
         answered.push(status);
     }
-    assert!(answered.contains(&StatusCode::OK), "{answered:?}");
+    assert!(
+        answered[..20].iter().all(|s| *s == StatusCode::OK),
+        "{answered:?}"
+    );
     assert_eq!(answered.last(), Some(&StatusCode::TOO_MANY_REQUESTS));
     let (status, _) = browser.step(&tx, "enroll/passkey/options", json!({})).await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    // ...which leaves the sign-in's own attempts untouched.
+    let (status, body) = browser
+        .step(&tx, "enroll/totp/confirm", json!({ "code": "000000" }))
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+}
+
+#[tokio::test]
+async fn a_policy_tightened_during_consent_issues_no_single_factor_code() {
+    let f = Fixture::new().await;
+    let mut browser = f.browser();
+    let (_, resp) = password(&mut browser, OPENID).await;
+    assert!(resp["redirect"].is_string(), "{resp}");
+    // The session is reused; only consent to the resource is pending.
+    let scope = "openid api://orders/Orders.Read";
+    let tx = browser.authorize(&url(scope, &[])).await.unwrap();
+    tenant_policy(&f, MfaPolicy::Required).await;
+    let approve = json!({ "approve": true, "scopes": ["Orders.Read"] });
+    let (status, resp) = browser.step(&tx, "consent", approve).await;
+    assert_eq!(status, StatusCode::OK, "{resp}");
+    let redirect = resp["redirect"].as_str().unwrap();
+    let query = query_of(redirect);
+    assert_eq!(query["error"], "login_required", "{redirect}");
+    assert!(!query.contains_key("code"), "{redirect}");
+    // The next request steps the session up (a fresh sign-in: no factor).
+    let tx = browser.authorize(&url(scope, &[])).await.unwrap();
+    let (_, _, view) = browser.get(&format!("/api/authn/tx/{tx}")).await;
+    let view: Value = serde_json::from_str(&view).unwrap();
+    assert_eq!(view["step"], "password", "{view}");
 }
 
 #[tokio::test]
