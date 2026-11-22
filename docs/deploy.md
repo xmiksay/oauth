@@ -81,7 +81,7 @@ later: a replica (or `oauth bootstrap`) whose `SYSTEM_TENANT_SLUG` differs
 from the stored system tenant's slug refuses to start, naming both. Set
 `SYSTEM_TENANT_RENAME=1` to rename instead: startup renames the system tenant
 in the migration transaction (refused if another tenant already has the slug),
-audits it as `tenant.rename` (actor `system`, details `from`, `to`, `via`:
+retires the old slug (above), audits it as `tenant.rename` (actor `system`, details `from`, `to`, `via`:
 `startup` or `bootstrap`) and points
 its built-in SPAs' redirect URIs at the new host. **Renaming changes the
 system tenant's host and therefore its issuer**: the old host answers 404,
@@ -94,11 +94,13 @@ tenant, and upstream identity providers holding its federation callback URL,
 must be updated to the new host. Roll the
 change out with every replica on the new value (a replica still on the old
 one refuses to start once the rename committed); the flag is a no-op once the
-slugs agree. Only `system` and the current slug are reserved: any other slug
-the system tenant gives up (`config` after `system` → `config` → `acme`, or
-after moving back to `system`) is free again, and a regular tenant could claim
-the host its former users and relying parties still know. Don't rename away
-from a custom slug once it has been in use.
+slugs agree. Every slug the system tenant gives up stays reserved for good:
+the rename records it in `retired_tenant_slugs` in the same transaction, so
+no regular tenant can claim the host and issuer its former users, relying
+parties and upstream IdPs still know (creating one is a 400 `reserved`,
+startup refuses an enabled tenant holding one — e.g. created before this
+check existed — and such a tenant is never served; disable it to start).
+The system tenant itself may move back to a slug it gave up.
 
 <a id="apex-tenant"></a>**Apex tenant.** By default the apex (`PUBLIC_URL`
 itself) only redirects `GET /` to the system tenant's admin center. Set

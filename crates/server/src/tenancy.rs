@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 
+use anyhow::Context;
 use axum::{
     extract::{FromRequestParts, Request, State},
     http::{HeaderMap, Method, Uri, header, request::Parts},
@@ -15,6 +16,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use entity::tenants;
+use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
 
 use crate::{
     app::AppState,
@@ -62,10 +64,15 @@ fn host_kind(state: &AppState, uri: &Uri, headers: &HeaderMap) -> HostKind {
 }
 
 async fn active(state: &AppState, slug: &str) -> Result<Option<Tenant>, AppError> {
-    // Startup refuses enabled tenants with a now-invalid slug; this also
-    // covers one re-enabled at runtime (`www` must never serve a sign-in page).
-    Ok(directory::find_tenant_by_slug(&state.db, slug)
-        .await?
+    // Startup refuses enabled tenants with a now-invalid or retired slug;
+    // this also covers one re-enabled at runtime (`www` must never serve a
+    // sign-in page, nor a regular tenant a former system issuer).
+    Ok(tenants::Entity::find()
+        .filter(tenants::Column::Slug.eq(slug))
+        .filter(directory::servable_tenant())
+        .one(&state.db)
+        .await
+        .context("looking up tenant")?
         .filter(|t| {
             !t.disabled
                 && (t.is_system

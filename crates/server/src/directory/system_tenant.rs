@@ -2,7 +2,8 @@
 //! `SYSTEM_TENANT_SLUG`. A different stored slug refuses startup unless
 //! `SYSTEM_TENANT_RENAME=1`, which renames it (audited). Renaming moves the
 //! tenant to another host, so its issuer changes: tokens and sessions it
-//! issued stop working.
+//! issued stop working. The old slug is retired (`retired_tenant_slugs`) in
+//! the same transaction, so no regular tenant can take its host and issuer.
 
 use anyhow::{Context, bail};
 use entity::{enums::Outcome, tenants};
@@ -12,7 +13,7 @@ use sea_orm::{
 };
 use serde_json::json;
 
-use super::find_tenant_by_slug;
+use super::{find_tenant_by_slug, retired_slugs};
 use crate::{
     audit::{self, Actor, Event, EventType, Target},
     config::Config,
@@ -94,6 +95,7 @@ pub async fn reconcile_slug(
     row.update(conn)
         .await
         .context("renaming the system tenant")?;
+    retired_slugs::retire(conn, id, &from).await?;
     audit::record(
         conn,
         Event {

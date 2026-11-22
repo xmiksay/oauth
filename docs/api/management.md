@@ -200,14 +200,15 @@ Additional rules:
 Create provisions keys, built-in apps and the first GlobalAdmin (password
 must be changed at first sign-in) in one transaction; slug rules as in
 `directory::slug` (a DNS label: no trailing `-`, no `--` as characters 3–4
-like punycode `xn--`; reserved service names like `www`, `mail`, `api`, `system`
-and the configured `SYSTEM_TENANT_SLUG` → 400; taken → 409).
+like punycode `xn--`; reserved service names like `www`, `mail`, `api`, `system`,
+the configured `SYSTEM_TENANT_SLUG` and every slug the system tenant was
+renamed away from ([../deploy.md](../deploy.md#system-tenant-slug)) → 400; taken → 409).
 The new tenant lives at `{scheme}://{slug}.{PUBLIC_URL host}[:port]`. Disabling makes the
 tenant 404 everywhere (sign-in, tokens, API); the system tenant and the
 `APEX_TENANT` ([../deploy.md](../deploy.md#apex-tenant)) can't be disabled
 (403). `origin` is the tenant's origin and issuer, which for the `APEX_TENANT`
 is the apex (`PUBLIC_URL`); clients link to tenants by it. A disabled tenant whose slug fails today's rules (created
-before they existed, e.g. `www`) can't be re-enabled (`disabled: false` →
+before they existed, e.g. `www`) or is a retired system tenant slug can't be re-enabled (`disabled: false` →
 400): the server refuses to start with such a tenant enabled.
 
 `/api/v1/tenants/{slug}/users` lets a system GlobalAdmin help a locked-out
@@ -334,7 +335,7 @@ exclusive, RFC 3339) → `AuditEvent`s.
 |---|---|---|
 | `sign_in` | user (`actor_id` null for an unknown account) → user | success: `session_id`, `application_id`, `amr`; failure: `reason` (`invalid_password`, `unknown_account`, `disabled`, `mfa_failed` + `factor`; passkeys: `factor: "passkey"` + the verifier's reason, e.g. `invalid_challenge`, `foreign_credential`, `sign_count_regression`; federation: `factor: "federation"`, `idp_id` + the reason, e.g. `id_token_nonce`, `token_refused`, `unknown_kid`, `upstream_error`, `account_exists`, `not_linked`) |
 | `token.refresh_reuse`, `token.code_replay` | client app → user, failure | `family_id` / `authorization_code_id` |
-| `tenant.rename` | system (`actor_id` null) → the system tenant, in its own log: `oauth serve` startup (`via: "startup"`) or `oauth bootstrap` (`via: "bootstrap"`) renamed it to a changed `SYSTEM_TENANT_SLUG` with `SYSTEM_TENANT_RENAME=1` ([../deploy.md](../deploy.md#system-tenant-slug)) | `from`, `to`, `via` (`"startup"` / `"bootstrap"`) |
+| `tenant.rename` | system (`actor_id` null) → the system tenant, in its own log: `oauth serve` startup (`via: "startup"`) or `oauth bootstrap` (`via: "bootstrap"`) renamed it to a changed `SYSTEM_TENANT_SLUG` with `SYSTEM_TENANT_RENAME=1`; `from` stays reserved ([../deploy.md](../deploy.md#system-tenant-slug)) | `from`, `to`, `via` (`"startup"` / `"bootstrap"`) |
 | `tenant.create`, `tenant.update` | system admin → tenant (logged in the system tenant; a system admin's `tenant.update` of another tenant is ALSO logged in that tenant's own log, in the same transaction; a tenant admin's settings change only in their own) | `slug`, `admin_user_id` / `fields`, `disabled` |
 | `user.create`, `user.update`, `user.delete`, `user.password_reset`, `user.mfa_reset`, `user.sessions_revoke` | admin or app → user (JIT federation: user → self; a system admin's reset in another tenant: system admin → user in both the system log and the tenant's, see Tenants) | create: `email`, `password` (`generated` / `set_by_admin` / `invite`), `email_verified`, JIT: `via: "federation"`, `idp_id`; update: `fields` (names only, e.g. `email_verified`), `disabled`; delete: `email`; reset: `must_change_password`, `generated`; mfa reset: `passkeys_removed`, `telegram_unlinked`; by a system admin also `email`, plus `tenant_id`, `tenant_slug` in the system log and `via: "system_admin"` in the tenant's |
 | `user.mfa.passkey_register`, `user.mfa.passkey_rename`, `user.mfa.passkey_remove` | user → self (invite: by the link's user), admin → user (remove) | `passkey_id`, `name`, `via` (`me` / `admin` / `invite` / `sign_in` — forced enrolment) |

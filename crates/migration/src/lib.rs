@@ -38,6 +38,7 @@ mod m20261122_000017_backchannel_logout;
 mod m20261122_000018_id_token_groups;
 mod m20261122_000019_device_approved_session;
 mod m20261122_000020_secret_options;
+mod m20261122_000021_retired_tenant_slugs;
 
 pub struct Migrator;
 
@@ -65,6 +66,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20261122_000018_id_token_groups::Migration),
             Box::new(m20261122_000019_device_approved_session::Migration),
             Box::new(m20261122_000020_secret_options::Migration),
+            Box::new(m20261122_000021_retired_tenant_slugs::Migration),
         ]
     }
 }

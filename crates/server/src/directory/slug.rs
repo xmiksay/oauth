@@ -7,7 +7,9 @@ use super::DirectoryError;
 
 /// Default slug of the built-in tenant created by `oauth bootstrap`
 /// (`SYSTEM_TENANT_SLUG` overrides it). Stays reserved whatever the
-/// configured slug is, so a renamed system tenant's old host can't be taken.
+/// configured slug is. Any other slug the system tenant is renamed away from
+/// is reserved by `retired_tenant_slugs` instead (`super::retired_slugs`), so
+/// no former system host can be taken.
 pub const DEFAULT_SYSTEM_TENANT_SLUG: &str = "system";
 
 /// Labels that are not tenant names. WHY: under a wildcard DNS record and
@@ -73,7 +75,8 @@ pub fn validate_format(slug: &str) -> Result<(), DirectoryError> {
 
 /// Full validation for user-chosen (regular tenant) slugs: format, DNS label
 /// rules the DB CHECK predates, and reserved names — including
-/// `system_slug`, the configured slug of the system tenant.
+/// `system_slug`, the configured slug of the system tenant. Retired system
+/// slugs live in the database: `super::ensure_slug_not_retired` checks those.
 pub fn validate(slug: &str, system_slug: &str) -> Result<(), DirectoryError> {
     if slug == system_slug || RESERVED_SLUGS.contains(&slug) {
         return Err(reserved(slug));
@@ -90,7 +93,7 @@ pub fn validate_system(slug: &str) -> Result<(), DirectoryError> {
     label_rules(slug)
 }
 
-fn reserved(slug: &str) -> DirectoryError {
+pub(super) fn reserved(slug: &str) -> DirectoryError {
     DirectoryError::Invalid(format!("tenant slug `{slug}` is reserved"))
 }
 

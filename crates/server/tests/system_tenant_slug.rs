@@ -9,14 +9,14 @@
 
 //! `SYSTEM_TENANT_SLUG` / `SYSTEM_TENANT_RENAME`: a fresh install under a
 //! custom slug, a mismatch refused at startup, the opt-in rename and its
-//! collision check.
+//! collision check, and the retirement of every slug it moves away from.
 mod common;
 
 use axum::{
     body::Body,
     http::{Method, Request, StatusCode, header},
 };
-use entity::{audit_events, tenants};
+use entity::{audit_events, retired_tenant_slugs, tenants};
 use oauth_server::{
     app::{self, AppState},
     bootstrap::{self, Options},
@@ -260,4 +260,90 @@ async fn rename_onto_another_tenants_slug_is_refused() {
     );
     assert_eq!(system(&conn).await.slug, "system");
     assert_eq!(renames(&conn).await, 0);
+}
+
+/// Creating `slug` as a regular tenant is refused as reserved, both by the
+/// directory and by `POST /api/v1/tenants` of the system tenant's admin.
+async fn assert_reserved(conn: &DatabaseConnection, cfg: &Config, slug: &str) {
+    let new = NewTenant {
+        slug,
+        display_name: "Taken",
+    };
+    let err = directory::create_tenant(conn, cfg, new).await.unwrap_err();
+    assert!(err.to_string().contains("reserved"), "{slug}: {err}");
+
+    let tenant = system(conn).await;
+    let root = directory::find_user_by_email(conn, tenant.id, "root@example.com")
+        .await
+        .unwrap()
+        .unwrap();
+    let token = common::mgmt::mint_user_token(conn, cfg, &tenant, &root).await;
+    let router = app::router(
+        AppState::new(conn.clone(), cfg.clone(), true),
+        common::no_web_dist(),
+    );
+    let body = serde_json::json!({
+        "slug": slug, "display_name": "Taken", "admin_email": "boss@taken.example"
+    });
+    let url = common::at(&tenant.slug, "/api/v1/tenants");
+    let (status, resp) =
+        common::mgmt::call(&router, Method::POST, &url, Some(&token), Some(&body)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{slug}: {resp}");
+    assert!(resp.to_string().contains("reserved"), "{slug}: {resp}");
+    assert!(
+        directory::find_tenant_by_slug(conn, slug)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn a_renamed_away_slug_stays_reserved() {
+    let pg = common::start_postgres().await;
+    let conn = db::connect(&pg.url).await.unwrap();
+    let first = config(&pg, &[("SYSTEM_TENANT_SLUG", "config")]);
+    bootstrap::run(&conn, &first, &opts()).await.unwrap();
+    let id = system(&conn).await.id;
+    let rename_to = |slug| {
+        config(
+            &pg,
+            &[("SYSTEM_TENANT_SLUG", slug), ("SYSTEM_TENANT_RENAME", "1")],
+        )
+    };
+
+    let root_cfg = rename_to("root");
+    db::migrate_and_reconcile(&conn, &root_cfg).await.unwrap();
+    assert_eq!(system(&conn).await.slug, "root");
+    let retired = retired_tenant_slugs::Entity::find_by_id("config".to_owned())
+        .one(&conn)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(retired.tenant_id, id);
+    assert_reserved(&conn, &root_cfg, "config").await;
+
+    // The system tenant itself may move back; then `root` is retired too and
+    // the system tenant is served on `config` again.
+    let back = rename_to("config");
+    db::migrate_and_reconcile(&conn, &back).await.unwrap();
+    assert_eq!(system(&conn).await.slug, "config");
+    assert_reserved(&conn, &back, "root").await;
+    let router = app::router(
+        AppState::new(conn.clone(), back.clone(), true),
+        common::no_web_dist(),
+    );
+    let discovery = "/.well-known/openid-configuration";
+    let (status, _) = common::get(&router, &common::at("config", discovery)).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = common::get(&router, &common::at("root", discovery)).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(renames(&conn).await, 2);
+    assert_eq!(
+        retired_tenant_slugs::Entity::find()
+            .count(&conn)
+            .await
+            .unwrap(),
+        2
+    );
 }

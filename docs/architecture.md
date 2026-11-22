@@ -55,7 +55,7 @@ Implemented:
 | `spa` | `ServeDir` + history fallback for the three SPA areas |
 | `serve` | `run` (process-global setup: recorder, binds, signals) → `run_with` (serve, then migrate, then ready; tested in `tests/serve.rs`), tracing init, graceful shutdown |
 | `keys` | Per-tenant RS256 (2048-bit) / ES256 key generation, `wrap` (AES-256-GCM seal/open, AAD = tenant id ‖ kid), public JWK with RFC 7638 thumbprint as `kid`, `active_signing_key`, `jwks` (next + active + retired-until-`expires_at`). Rotation job lands in step 3. See [Cryptography](#cryptography) |
-| `directory` | `create_tenant` (DNS-label slug rules in `slug`, keys + built-in apps in one transaction; `builtin_apps::reconcile_all`), `ensure_apex_tenant` (startup: `APEX_TENANT` exists, is enabled and isn't the system tenant), `system_tenant` (`reconcile_system_slug`, at startup and bootstrap: refuses a stored system-tenant slug other than `SYSTEM_TENANT_SLUG`, or renames it with `SYSTEM_TENANT_RENAME=1`), `create_user`, `find_user_by_email`, `set_password` (argon2id in `password`), `assign_directory_role`; typed `DirectoryError` |
+| `directory` | `create_tenant` (DNS-label slug rules in `slug`, keys + built-in apps in one transaction; `builtin_apps::reconcile_all`), `ensure_apex_tenant` (startup: `APEX_TENANT` exists, is enabled and isn't the system tenant), `system_tenant` (`reconcile_system_slug`, at startup and bootstrap: refuses a stored system-tenant slug other than `SYSTEM_TENANT_SLUG`, or renames it with `SYSTEM_TENANT_RENAME=1` and retires the old slug), `retired_slugs` (`ensure_slug_not_retired`, `servable_tenant`), `create_user`, `find_user_by_email`, `set_password` (argon2id in `password`), `assign_directory_role`; typed `DirectoryError` |
 | `bootstrap` | `oauth bootstrap` logic + report rendering |
 | `headers` | `content_type_is`; app-wide `X-Frame-Options: DENY`, `CSP: frame-ancestors 'none'`, `Referrer-Policy: no-referrer` |
 | `tenancy` | `resolve_host` middleware (host → active tenant, `APEX_TENANT` on the apex or the apex redirect, else 404) and the `Tenant` extractor reading its result |
@@ -117,6 +117,7 @@ migration transaction). Deleting a tenant cascades to everything it owns.
 | Table | Notes |
 |---|---|
 | `tenants` | `slug` unique (`^[a-z0-9][a-z0-9-]{1,62}$`, reserved list in `directory::slug`), `is_system` (at most one), `disabled`, `audit_retention_days`, `mfa_policy` optional\|required, `logout_revokes_refresh_tokens` (default true), `allow_non_expiring_secrets` (default false) |
+| `retired_tenant_slugs` | PK `slug`, `tenant_id` (the system tenant), `retired_at`: slugs the system tenant was renamed away from, reserved against regular tenants for good (`directory::retired_slugs`; append-only, written by `reconcile_system_slug`) |
 | `users` | `user_type` member\|guest, `email` unique per tenant on `lower(email)` (casing kept), `password_hash` (argon2id PHC, nullable), `must_change_password`, `disabled`, `first_device_at` (first sign-in device recorded), `webauthn_handle` (random 32-byte WebAuthn user handle) |
 | `webauthn_credentials` · `webauthn_challenges` | passkeys (credential id unique per tenant, COSE key, counter, backup flags) and single-use 5-min ceremony challenges — [passkeys.md](passkeys.md) |
 | `user_totp` · `user_recovery_codes` | sealed TOTP secret + `confirmed_at`; SHA-256 code hashes + `used_at` |

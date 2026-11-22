@@ -107,8 +107,9 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   is apex-only and never a tenant route); never read `X-Forwarded-Host` / `Forwarded`. Startup
   (`db::migrate_and_reconcile`) first reconciles the system tenant's slug with
   `config.system_tenant_slug` (`directory::reconcile_system_slug`: mismatch →
-  refuse, or rename with `SYSTEM_TENANT_RENAME=1`), then refuses enabled
-  tenants whose slug fails `slug::validate` and an `APEX_TENANT` that is missing,
+  refuse, or rename with `SYSTEM_TENANT_RENAME=1`, retiring the old slug in
+  `retired_tenant_slugs`), then refuses enabled tenants whose slug fails
+  `slug::validate` or is retired, and an `APEX_TENANT` that is missing,
   disabled or the system tenant (`directory::ensure_apex_tenant`; the tenants API
   refuses disabling it, 403). Never hard-code `system`: use
   `config.system_tenant_slug` or the tenant's `is_system` (SPA:
@@ -120,7 +121,10 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   minus `directory::slug::RESERVED_SLUGS` (service host names like `www`,
   `mail`, `api`, and `system`) and the configured system slug
   (`slug::validate(slug, &config.system_tenant_slug)`; `slug::validate_system`
-  checks `SYSTEM_TENANT_SLUG` itself). Older tenants may violate the newer rules:
+  checks `SYSTEM_TENANT_SLUG` itself) and every slug the system tenant was
+  renamed away from (`directory::ensure_slug_not_retired`, a DB lookup: call it
+  wherever a regular tenant takes or re-takes a slug; `tenancy` filters with
+  `directory::servable_tenant`). Older tenants may violate the newer rules:
   startup refuses any such tenant that is enabled, and re-enabling one through
   `PATCH /api/v1/tenants/{slug}` is a 400.
 - Application crypto goes through one provider: AWS-LC via `aws-lc-rs` for key

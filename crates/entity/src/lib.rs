@@ -29,6 +29,7 @@ pub mod opaque_access_tokens;
 pub mod outbox;
 pub mod rate_limit_buckets;
 pub mod refresh_tokens;
+pub mod retired_tenant_slugs;
 pub mod sessions;
 pub mod signing_keys;
 pub mod telegram_link_codes;

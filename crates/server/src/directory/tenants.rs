@@ -12,7 +12,7 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
-use super::{DirectoryError, builtin_apps, display_name, slug, violates_unique};
+use super::{DirectoryError, builtin_apps, display_name, retired_slugs, slug, violates_unique};
 use crate::{config::Config, keys};
 
 pub struct NewTenant<'a> {
@@ -20,8 +20,8 @@ pub struct NewTenant<'a> {
     pub display_name: &'a str,
 }
 
-/// Creates a regular tenant. Reserved slugs (incl. `system` and the
-/// configured system slug) are rejected.
+/// Creates a regular tenant. Reserved slugs (incl. `system`, the
+/// configured system slug and retired system slugs) are rejected.
 pub async fn create_tenant(
     db: &impl TransactionTrait,
     config: &Config,
@@ -122,6 +122,12 @@ async fn insert_rows(
                 anyhow::Error::new(err).context("inserting tenant").into()
             }
         })?;
+    if !is_system {
+        // After the insert, not before: a concurrent rename away from this
+        // slug holds it on the system row, so the insert waits for that
+        // commit and this (READ COMMITTED) lookup then sees its retirement.
+        retired_slugs::ensure_not_retired(conn, new.slug).await?;
+    }
     for key in [&keys.rs256, &keys.es256] {
         keys::insert(conn, &config.master_key, tenant.id, key, KeyStatus::Active).await?;
     }
@@ -142,8 +148,9 @@ pub async fn find_tenant_by_slug(
 }
 
 /// Slugs of enabled regular tenants that today's rules reject (created
-/// before the slug became a DNS label: `www`, `ab-`, `xn--…`). They would
-/// still be served on their host, so startup refuses to run with them.
+/// before the slug became a DNS label: `www`, `ab-`, `xn--…`, or before
+/// renamed system slugs were retired). They would still be served on their
+/// host, so startup refuses to run with them.
 pub async fn invalid_enabled_slugs(
     conn: &impl ConnectionTrait,
     system_slug: &str,
@@ -154,10 +161,11 @@ pub async fn invalid_enabled_slugs(
         .all(conn)
         .await
         .context("loading tenants")?;
+    let retired = retired_slugs::all(conn).await?;
     Ok(rows
         .into_iter()
         .map(|t| t.slug)
-        .filter(|s| slug::validate(s, system_slug).is_err())
+        .filter(|s| slug::validate(s, system_slug).is_err() || retired.contains(s))
         .collect())
 }
 

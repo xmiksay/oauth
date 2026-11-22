@@ -126,6 +126,7 @@ pub async fn create(
 ) -> AppResult<Response> {
     // Validate before the slow key generation.
     slug::validate(&body.slug, &state.config.system_tenant_slug)?;
+    directory::ensure_slug_not_retired(&state.db, &body.slug).await?;
     display_name(&body.display_name, "tenant")?;
     let email = normalize_email(&body.admin_email)?;
     let admin_name = body
@@ -287,6 +288,9 @@ pub async fn update(
                 "tenant slug `{}` is no longer a valid host name; the tenant can't be re-enabled",
                 tenant.slug
             )));
+        }
+        if !tenant.is_system {
+            directory::ensure_slug_not_retired(&state.db, &tenant.slug).await?;
         }
     }
     let txn = state.db.begin().await?;

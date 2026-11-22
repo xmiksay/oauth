@@ -50,7 +50,8 @@ pub async fn migrate_and_reconcile(db: &DatabaseConnection, config: &Config) -> 
     let invalid = directory::invalid_enabled_slugs(&txn, &config.system_tenant_slug).await?;
     if !invalid.is_empty() {
         anyhow::bail!(
-            "enabled tenants with slugs that are no longer valid host names: {}. \
+            "enabled tenants with slugs that are no longer valid host names or are retired \
+             system tenant slugs: {}. \
              Rename them (UPDATE tenants SET slug = '<new>' WHERE slug = '<old>') or \
              disable them (UPDATE tenants SET disabled = true WHERE slug = '<old>'), \
              then start again",
