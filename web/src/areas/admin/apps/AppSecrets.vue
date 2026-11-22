@@ -3,7 +3,8 @@ import { onMounted, ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useApplicationStore } from '@/stores/application'
 import { secrets } from '@/api/applications'
-import type { ClientSecret } from '@/api/types'
+import { settings } from '@/api/access'
+import type { ClientSecret, SecretCreate } from '@/api/types'
 import { useAction } from '@/composables/useAction'
 import { formatDate } from '@/lib/format'
 import ErrorAlert from '@/components/ErrorAlert.vue'
@@ -11,12 +12,15 @@ import ConfirmButton from '@/components/ConfirmButton.vue'
 import SecretOnceDialog from '@/components/SecretOnceDialog.vue'
 
 const EXPIRY_DAYS = [30, 90, 180, 365, 730]
+/** `days` value for "never expires". */
+const NEVER = 0
 
 const { app, canEditConfig } = storeToRefs(useApplicationStore())
 const items = ref<ClientSecret[]>([])
 const description = ref('')
 const days = ref(180)
 const created = ref<string[] | null>(null)
+const allowNever = ref(false)
 const loader = useAction()
 const creator = useAction()
 
@@ -27,17 +31,24 @@ async function load() {
   if (res) items.value = res.items
 }
 
-onMounted(load)
+async function loadPolicy() {
+  // Without the setting (e.g. a failed read) the option simply isn't offered.
+  const t = await settings.get().catch(() => null)
+  allowNever.value = t?.allow_non_expiring_secrets ?? false
+}
+
+onMounted(() => Promise.all([load(), loadPolicy()]))
 
 async function create() {
   if (!app.value) return
   const id = app.value.id
   const desc = description.value.trim()
-  const res = await creator.run(() =>
-    secrets.create(id, { expires_in_days: days.value, ...(desc ? { description: desc } : {}) }),
-  )
+  const body: SecretCreate =
+    days.value === NEVER ? { never_expires: true } : { expires_in_days: days.value }
+  if (desc) body.description = desc
+  const res = await creator.run(() => secrets.create(id, body))
   if (!res) return
-  created.value = [res.secret]
+  if (res.secret) created.value = [res.secret]
   description.value = ''
   await load()
 }
@@ -46,7 +57,8 @@ async function remove(secretId: string) {
   if (app.value) await secrets.remove(app.value.id, secretId)
 }
 
-const expired = (s: ClientSecret) => new Date(s.expires_at).getTime() < Date.now()
+const expired = (s: ClientSecret) =>
+  s.expires_at !== null && new Date(s.expires_at).getTime() < Date.now()
 </script>
 
 <template>
@@ -95,6 +107,12 @@ const expired = (s: ClientSecret) => new Date(s.expires_at).getTime() < Date.now
             >
               {{ d }} days
             </option>
+            <option
+              v-if="allowNever"
+              :value="NEVER"
+            >
+              Never
+            </option>
           </select>
         </div>
         <button
@@ -141,7 +159,7 @@ const expired = (s: ClientSecret) => new Date(s.expires_at).getTime() < Date.now
                 {{ s.hint }}…
               </td>
               <td>
-                {{ formatDate(s.expires_at) }}
+                {{ s.never_expires ? 'Never' : formatDate(s.expires_at) }}
                 <span
                   v-if="expired(s)"
                   class="badge ml-1"

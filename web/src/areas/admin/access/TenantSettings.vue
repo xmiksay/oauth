@@ -15,6 +15,7 @@ const name = ref('')
 const retention = ref(90)
 const mfa = ref<MfaPolicy>('optional')
 const logoutRevokes = ref(true)
+const nonExpiring = ref(false)
 const saved = ref(false)
 const loader = useAction()
 const saver = useAction()
@@ -25,6 +26,7 @@ function fill(t: Tenant) {
   retention.value = t.audit_retention_days
   mfa.value = t.mfa_policy
   logoutRevokes.value = t.logout_revokes_refresh_tokens
+  nonExpiring.value = t.allow_non_expiring_secrets
 }
 
 onMounted(async () => {
@@ -42,6 +44,9 @@ async function save() {
   if (mfa.value !== t.mfa_policy) body.mfa_policy = mfa.value
   if (logoutRevokes.value !== t.logout_revokes_refresh_tokens) {
     body.logout_revokes_refresh_tokens = logoutRevokes.value
+  }
+  if (nonExpiring.value !== t.allow_non_expiring_secrets) {
+    body.allow_non_expiring_secrets = nonExpiring.value
   }
   const updated = await saver.run(() => settings.update(body))
   if (updated) {
@@ -140,6 +145,21 @@ async function save() {
           <span class="muted block">When an app signs the user out, the refresh tokens issued
             in that browser session stop working too. Signing a device out in My Account or
             revoking a user's sessions always does this.</span>
+        </span>
+      </label>
+      <label class="flex items-start gap-2 text-sm">
+        <input
+          id="ts-non-expiring"
+          v-model="nonExpiring"
+          type="checkbox"
+          class="mt-1"
+          :disabled="!isGlobalAdmin"
+        >
+        <span>
+          <span class="font-medium">Allow client secrets that never expire</span>
+          <span class="muted block">For infrastructure clients whose secret lives in a secret
+            manager. Creating one is audited; turning this off keeps existing ones until they
+            are deleted.</span>
         </span>
       </label>
       <p class="mono muted">

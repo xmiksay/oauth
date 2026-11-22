@@ -33,6 +33,7 @@ mod me_telegram;
 pub mod page;
 mod reauth;
 mod role_assignments;
+mod secret_value;
 mod tenant_users;
 mod tenants;
 mod user_actions;

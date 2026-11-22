@@ -108,6 +108,7 @@ mod tests {
                     hint: "abc".into(),
                     description: None,
                     expires_at: None,
+                    expiry_notified_at: None,
                     created_at: now(),
                 }
             ),

@@ -19,6 +19,7 @@ const TENANT: Tenant = {
   audit_retention_days: 90,
   mfa_policy: 'optional',
   logout_revokes_refresh_tokens: true,
+  allow_non_expiring_secrets: false,
   created_at: '',
   updated_at: '',
 }
@@ -61,10 +62,22 @@ describe('TenantSettings', () => {
     expect(settings.update).toHaveBeenCalledWith({ logout_revokes_refresh_tokens: false })
   })
 
+  it('sends the non-expiring secret policy when changed', async () => {
+    const w = await mountPage(['GlobalAdmin'])
+    const box = w.find('#ts-non-expiring')
+    expect((box.element as HTMLInputElement).checked).toBe(false)
+    settings.update.mockResolvedValue({ ...TENANT, allow_non_expiring_secrets: true })
+    await box.setValue(true)
+    await w.find('form').trigger('submit')
+    await flushPromises()
+    expect(settings.update).toHaveBeenCalledWith({ allow_non_expiring_secrets: true })
+  })
+
   it('disables the MFA policy without GlobalAdmin', async () => {
     const w = await mountPage(['UserAdmin'])
     expect(w.find('#ts-mfa').attributes('disabled')).toBeDefined()
     expect(w.find('#ts-logout-revokes').attributes('disabled')).toBeDefined()
+    expect(w.find('#ts-non-expiring').attributes('disabled')).toBeDefined()
     expect(w.find('button[type=submit]').exists()).toBe(false)
   })
 })

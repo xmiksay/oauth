@@ -76,6 +76,19 @@ export interface ClientSecret {
   id: string
   hint: string
   description: string | null
-  expires_at: string
+  /** `null` = never expires (only where the tenant allows it). */
+  expires_at: string | null
+  never_expires: boolean
   created_at: string
+}
+
+/**
+ * `POST …/secrets` body. `never_expires` excludes `expires_in_days`; `secret` is a
+ * caller-supplied value (automation), which the response never echoes.
+ */
+export interface SecretCreate {
+  description?: string
+  expires_in_days?: number
+  never_expires?: boolean
+  secret?: string
 }

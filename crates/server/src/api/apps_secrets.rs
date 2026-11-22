@@ -1,5 +1,6 @@
-//! `…/applications/{id}/secrets` — client secrets. The value is returned
-//! once, at creation; only its SHA-256 and a 3-character hint are stored.
+//! `…/applications/{id}/secrets` — client secrets. A generated value is
+//! returned once, at creation; a caller-supplied one (`secret`) is never
+//! echoed. Either way only its SHA-256 and a 3-character hint are stored.
 
 use axum::{
     extract::State,
@@ -24,7 +25,7 @@ use super::{
         lock_app,
     },
     extract::{Json, Path},
-    ts,
+    secret_value, ts,
     validate::opt_description,
 };
 use crate::{
@@ -46,6 +47,7 @@ fn view(s: &client_secrets::Model) -> Value {
         "hint": s.hint,
         "description": s.description,
         "expires_at": s.expires_at.as_ref().map(ts),
+        "never_expires": s.expires_at.is_none(),
         "created_at": ts(&s.created_at),
     })
 }
@@ -70,26 +72,55 @@ pub async fn list(
     Ok(axum::Json(json!({ "items": items })))
 }
 
+// No Debug: it may carry the caller's secret.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateSecret {
     description: Option<String>,
     /// 1-730, default 180.
     expires_in_days: Option<i64>,
+    /// No expiry; only where the tenant allows it.
+    #[serde(default)]
+    never_expires: bool,
+    /// Caller-supplied value (config as code) instead of a generated one.
+    secret: Option<String>,
+}
+
+/// The expiry in days, `None` = never.
+fn lifetime(body: &CreateSecret, allow_non_expiring: bool) -> AppResult<Option<i64>> {
+    if body.never_expires {
+        if body.expires_in_days.is_some() {
+            return Err(AppError::BadRequest(
+                "expires_in_days and never_expires are exclusive".into(),
+            ));
+        }
+        if !allow_non_expiring {
+            return Err(AppError::BadRequest(
+                "this tenant doesn't allow non-expiring secrets".into(),
+            ));
+        }
+        return Ok(None);
+    }
+    let days = body.expires_in_days.unwrap_or(DEFAULT_DAYS);
+    if !(1..=MAX_DAYS).contains(&days) {
+        return Err(AppError::BadRequest(format!(
+            "expires_in_days must be 1-{MAX_DAYS}"
+        )));
+    }
+    Ok(Some(days))
 }
 
 pub async fn create(
     State(state): State<AppState>,
     caller: Caller,
     Path(app_id): Path<Uuid>,
-    Json(body): Json<CreateSecret>,
+    Json(mut body): Json<CreateSecret>,
 ) -> AppResult<Response> {
     caller.require(Area::Applications, Access::Write)?;
-    let days = body.expires_in_days.unwrap_or(DEFAULT_DAYS);
-    if !(1..=MAX_DAYS).contains(&days) {
-        return Err(AppError::BadRequest(format!(
-            "expires_in_days must be 1-{MAX_DAYS}"
-        )));
+    let supplied = body.secret.take().map(Zeroizing::new);
+    let days = lifetime(&body, caller.tenant.allow_non_expiring_secrets)?;
+    if let Some(value) = &supplied {
+        secret_value::validate(value)?;
     }
     let description = opt_description(body.description.as_deref())?;
     let txn = state.db.begin().await?;
@@ -106,7 +137,11 @@ pub async fn create(
         .count(&txn)
         .await?;
     ensure_below(existing, MAX_SECRETS, "secrets")?;
-    let value = Zeroizing::new(secret::random_token()?);
+    let caller_supplied = supplied.is_some();
+    let value = match supplied {
+        Some(value) => value,
+        None => Zeroizing::new(secret::random_token()?),
+    };
     let hint: String = value.chars().take(HINT_LEN).collect();
     let row = client_secrets::ActiveModel {
         id: Set(Uuid::now_v7()),
@@ -115,9 +150,7 @@ pub async fn create(
         secret_hash: Set(secret::hash(&value)),
         hint: Set(hint),
         description: Set(description),
-        expires_at: Set(Some(
-            chrono::Utc::now().fixed_offset() + Duration::days(days),
-        )),
+        expires_at: Set(days.map(|d| chrono::Utc::now().fixed_offset() + Duration::days(d))),
         ..Default::default()
     };
     let created = client_secrets::Entity::insert(row)
@@ -128,12 +161,16 @@ pub async fn create(
             &txn,
             EventType::ApplicationSecretAdd,
             Some(Target::Application(app.id)),
-            json!({ "secret_id": created.id }),
+            json!({
+                "secret_id": created.id,
+                "never_expires": days.is_none(),
+                "caller_supplied": caller_supplied,
+            }),
         )
         .await?;
     txn.commit().await?;
     let mut body = view(&created);
-    if let Some(obj) = body.as_object_mut() {
+    if !caller_supplied && let Some(obj) = body.as_object_mut() {
         obj.insert("secret".into(), value.as_str().into());
     }
     Ok((StatusCode::CREATED, axum::Json(body)).into_response())
@@ -167,4 +204,30 @@ pub async fn remove(
         .await?;
     txn.commit().await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn body(days: Option<i64>, never: bool) -> CreateSecret {
+        CreateSecret {
+            description: None,
+            expires_in_days: days,
+            never_expires: never,
+            secret: None,
+        }
+    }
+
+    #[test]
+    fn lifetimes() {
+        assert_eq!(lifetime(&body(None, false), false).unwrap(), Some(180));
+        assert_eq!(lifetime(&body(Some(730), false), false).unwrap(), Some(730));
+        assert!(lifetime(&body(Some(731), false), true).is_err());
+        assert!(lifetime(&body(Some(0), false), true).is_err());
+        assert_eq!(lifetime(&body(None, true), true).unwrap(), None);
+        // Tenant policy off, or both asked for.
+        assert!(lifetime(&body(None, true), false).is_err());
+        assert!(lifetime(&body(Some(30), true), true).is_err());
+    }
 }

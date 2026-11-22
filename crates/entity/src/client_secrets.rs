@@ -16,6 +16,8 @@ pub struct Model {
     pub hint: String,
     pub description: Option<String>,
     pub expires_at: Option<DateTimeWithTimeZone>,
+    /// When the expiry warning was queued (`jobs::secret_expiry`).
+    pub expiry_notified_at: Option<DateTimeWithTimeZone>,
     pub created_at: DateTimeWithTimeZone,
 }
 
@@ -29,6 +31,7 @@ impl std::fmt::Debug for Model {
             .field("hint", &self.hint)
             .field("description", &self.description)
             .field("expires_at", &self.expires_at)
+            .field("expiry_notified_at", &self.expiry_notified_at)
             .field("created_at", &self.created_at)
             .finish()
     }

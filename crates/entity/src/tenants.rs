@@ -18,6 +18,8 @@ pub struct Model {
     pub mfa_policy: MfaPolicy,
     /// RP-initiated logout also revokes the session's refresh-token families.
     pub logout_revokes_refresh_tokens: bool,
+    /// App admins may create client secrets without an expiry.
+    pub allow_non_expiring_secrets: bool,
     pub created_at: DateTimeWithTimeZone,
     pub updated_at: DateTimeWithTimeZone,
 }

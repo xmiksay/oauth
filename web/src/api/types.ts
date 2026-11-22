@@ -39,6 +39,8 @@ export interface Tenant {
   mfa_policy: MfaPolicy
   /** RP-initiated logout also revokes the session's refresh tokens (default on). */
   logout_revokes_refresh_tokens: boolean
+  /** App admins may create client secrets without an expiry (default off). */
+  allow_non_expiring_secrets: boolean
   created_at: string
   updated_at: string
 }
