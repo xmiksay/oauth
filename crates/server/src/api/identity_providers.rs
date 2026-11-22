@@ -32,7 +32,7 @@ use crate::{
     audit::{EventType, Target},
     authz::{Access, Area},
     error::{AppError, AppResult},
-    federation::{group_map, identities, idps, urls},
+    federation::{group_map, identities, idps, kinds, urls},
 };
 
 fn view(state: &AppState, caller: &Caller, idp: &identity_providers::Model) -> Value {
@@ -247,9 +247,19 @@ pub async fn update(
     }
     // Narrowing who may sign in must also fail a callback verified against
     // the wider list (it would still get mapped groups); no unlink needed,
-    // but the mapped memberships go below.
-    let narrowed = fields.contains(&"allowed_tenants") || fields.contains(&"hosted_domain");
-    if repointed || narrowed {
+    // but the mapped memberships go below. Any change bumps (simplest);
+    // only a real narrowing drops memberships.
+    let admits = fields.contains(&"allowed_tenants") || fields.contains(&"hosted_domain");
+    let narrowed = admits
+        && idp_rules::Row::of(&row).is_none_or(|new| {
+            let new = kinds::Rules {
+                hosted_domain: new.hosted_domain,
+                allowed_tenants: new.allowed_tenants,
+                ..kinds::Rules::of(&idp)
+            };
+            kinds::narrows(&kinds::Rules::of(&idp), &new)
+        });
+    if repointed || admits {
         row.generation = Set(idp.generation.saturating_add(1));
     }
     if fields.is_empty() {

@@ -149,7 +149,7 @@ describe('IdentityProviderDetail', () => {
 
     await w.find('#edit-idp').trigger('submit')
     await flushPromises()
-    await buttons(w, 'Save and unlink')[0]?.trigger('click')
+    await buttons(w, 'Save anyway')[0]?.trigger('click')
     await flushPromises()
     expect(identityProviders.update).toHaveBeenCalledWith('idp1', {
       issuer: 'https://new.example',

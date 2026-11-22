@@ -209,3 +209,49 @@ async fn narrowing_allowed_tenants_drops_mapped_memberships() {
     let (_, location) = fed.sign_in(&mut fed.f.browser(), &idp).await;
     assert_eq!(login_error(&location).as_deref(), Some("upstream_failed"));
 }
+
+/// Widening (another tenant, or no pin at all once the mappings are gone)
+/// lets nobody out: the memberships stay.
+#[tokio::test]
+async fn widening_allowed_tenants_keeps_mapped_memberships() {
+    let fed = Fed::new().await;
+    let idp = entra_idp(&fed, json!({ "allowed_tenants": [T1] })).await;
+    let admins = group(&fed, "k8s-admins").await;
+    mapped(&fed, &idp, "wids", GLOBAL_ADMIN, admins).await;
+    from_tenant(&fed, T1);
+    let user = sign_in_with(&fed, &idp, json!({ "wids": [GLOBAL_ADMIN] })).await;
+
+    fed.patch_idp(&idp, json!({ "allowed_tenants": [T1, T2] }))
+        .await;
+    assert_eq!(
+        memberships(&fed, user.id).await,
+        vec![(admins, false, true)]
+    );
+    let events = audited_any(&fed.f.db, "identity_provider.update").await;
+    assert_eq!(events.last().unwrap()["memberships_removed"], 0);
+}
+
+/// Pinning Google's `hosted_domain` (or changing it) drops the mapped
+/// memberships like de-listing an Entra tenant; removing it doesn't.
+#[tokio::test]
+async fn narrowing_hosted_domain_drops_mapped_memberships() {
+    let fed = Fed::new().await;
+    let idp = fed.idp(json!({ "kind": "google" })).await;
+    let eng = group(&fed, "eng").await;
+    mapped(&fed, &idp, "groups", "eng", eng).await;
+    let claims = json!({ "hd": "fabrikam.com", "groups": ["eng"] });
+    let user = sign_in_with(&fed, &idp, claims.clone()).await;
+    assert_eq!(memberships(&fed, user.id).await, vec![(eng, false, true)]);
+
+    fed.patch_idp(&idp, json!({ "hosted_domain": "contoso.com" }))
+        .await;
+    assert!(memberships(&fed, user.id).await.is_empty());
+    let events = audited_any(&fed.f.db, "identity_provider.update").await;
+    assert_eq!(events.last().unwrap()["memberships_removed"], 1);
+
+    fed.patch_idp(&idp, json!({ "hosted_domain": "fabrikam.com" }))
+        .await;
+    let user = sign_in_with(&fed, &idp, claims).await;
+    fed.patch_idp(&idp, json!({ "hosted_domain": null })).await;
+    assert_eq!(memberships(&fed, user.id).await, vec![(eng, false, true)]);
+}

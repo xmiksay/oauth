@@ -71,6 +71,21 @@ pub fn any_tenant(issuer: &str, allowed_tenants: &[String]) -> bool {
     template(issuer).is_some() && allowed_tenants.is_empty()
 }
 
+/// Whether going from `old` to `new` `allowed_tenants` / `hosted_domain`
+/// lets in fewer users: an empty list or no domain admits any, so a new
+/// pin, a dropped tenant or another domain narrow; adding tenants, clearing
+/// the list or dropping the domain only widen.
+pub fn narrows(old: &Rules<'_>, new: &Rules<'_>) -> bool {
+    let tenants = !new.allowed_tenants.is_empty()
+        && (old.allowed_tenants.is_empty()
+            || old
+                .allowed_tenants
+                .iter()
+                .any(|t| !new.allowed_tenants.contains(t)));
+    let domain = new.hosted_domain.is_some() && new.hosted_domain != old.hosted_domain;
+    tenants || domain
+}
+
 /// The tenant id `iss` fills a templated `issuer` with, if it matches.
 fn templated_tenant<'i>(issuer: &str, iss: &'i str) -> Option<&'i str> {
     let (prefix, suffix) = template(issuer)?;
@@ -164,6 +179,33 @@ mod tests {
             kind,
             ..Rules::oidc(issuer)
         }
+    }
+
+    #[test]
+    fn narrowing_is_fewer_admitted_users() {
+        fn tenants(list: &[String]) -> Rules<'_> {
+            Rules {
+                allowed_tenants: list,
+                ..rules(IdpKind::Entra, MULTI)
+            }
+        }
+        fn domain(hd: Option<&str>) -> Rules<'_> {
+            Rules {
+                hosted_domain: hd,
+                ..rules(IdpKind::Google, GOOGLE_ISSUER)
+            }
+        }
+        let one = [TID.to_owned()];
+        let both = [TID.to_owned(), OTHER.to_owned()];
+        assert!(narrows(&tenants(&both), &tenants(&one)));
+        assert!(narrows(&tenants(&[]), &tenants(&one)));
+        assert!(!narrows(&tenants(&one), &tenants(&both)));
+        assert!(!narrows(&tenants(&one), &tenants(&[])));
+        let (a, b) = (Some("a.example"), Some("b.example"));
+        assert!(narrows(&domain(None), &domain(a)));
+        assert!(narrows(&domain(a), &domain(b)));
+        assert!(!narrows(&domain(a), &domain(None)));
+        assert!(!narrows(&domain(a), &domain(a)));
     }
 
     fn claims(email: Option<&str>, verified: bool) -> Claims {

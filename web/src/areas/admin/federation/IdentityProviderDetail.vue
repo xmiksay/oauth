@@ -24,6 +24,7 @@ import {
   changedIdpFields,
   isMultiTenant,
   lockoutWarning,
+  narrowingWarning,
   relinkWarning,
 } from './idpForm'
 
@@ -52,7 +53,7 @@ onMounted(async () => {
 const lockout = computed(() => lockoutWarning(idp.value?.users_only_via ?? 0))
 const withLockout = (message: string) => (lockout.value ? `${message} ${lockout.value}` : message)
 
-// A save waiting for "unlinks everyone" to be confirmed; may hold a typed secret, so it stays
+// A save waiting for "unlinks everyone" / "drops mapped memberships" to be confirmed; may hold a typed secret, so it stays
 // in this component and is dropped on cancel.
 const pending = ref<{ diff: IdentityProviderPatch; warning: string } | null>(null)
 
@@ -71,7 +72,12 @@ async function save(body: IdentityProviderInput) {
   if (!current) return
   saved.value = false
   const diff = changedIdpFields(current, body)
-  const warning = relinkWarning(diff, current.linked_users, current.has_secret)
+  const warning = [
+    relinkWarning(diff, current.linked_users, current.has_secret),
+    narrowingWarning(current, diff, current.linked_users),
+  ]
+    .filter((w) => w !== null)
+    .join(' ')
   if (warning) pending.value = { diff, warning }
   else await apply(diff)
 }
@@ -212,7 +218,7 @@ async function remove() {
     </template>
     <ModalDialog
       :open="pending !== null"
-      title="Unlink all users?"
+      title="Save these changes?"
       @close="pending = null"
     >
       <p class="text-sm">
@@ -232,7 +238,7 @@ async function remove() {
           :disabled="saver.busy.value"
           @click="pending && apply(pending.diff)"
         >
-          Save and unlink
+          Save anyway
         </button>
       </template>
     </ModalDialog>
