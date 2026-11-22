@@ -89,7 +89,8 @@ revoked (not rotated) meanwhile is no replay, so no reuse alarm.
 while the caller waited is only visible from there on — a `disabled` read
 before the lock is stale. So every issuing path refuses unless the user is
 `Active`: sign-in completion answers `403 account_disabled` (no session, no
-code, the login transaction stays unclaimed), the code and refresh grants
+code; the login transaction is closed, a device request denied, and a
+`sign_in` failure with reason `disabled` audited), the code and refresh grants
 `invalid_grant` ("the user is disabled or no longer exists"), a federated
 sign-in the `account_disabled` refusal (no group mappings written),
 `record_client` reports the session as ended, and the device code grant

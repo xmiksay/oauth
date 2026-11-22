@@ -17,25 +17,31 @@ use common::{
     ORIGIN,
     backchannel::wait_for_lock_waiter,
     browser::authorize_url,
-    device::{enable, enter, rows, start},
+    device::{approve_as, enable, enter, enter_tx, poll, rows, sign_in, start},
+    federation::{Fed, login_error},
     flow::{Fixture, PASSWORD, WEB_CB},
+    groups::{self, group, mapped, memberships, sign_in_with},
+    mgmt::{audited, audited_any},
+    upstream::Account,
 };
 use entity::{
-    app_role_assignments, applications, authorization_codes, enums::DeviceStatus, sessions, users,
+    app_role_assignments, applications, authorization_codes, enums::DeviceStatus, sessions,
+    user_identities, users,
 };
 use oauth_server::directory;
 use sea_orm::{
     ColumnTrait, DatabaseTransaction, EntityTrait, PaginatorTrait, QueryFilter, QuerySelect,
     TransactionTrait, sea_query::Expr,
 };
+use uuid::Uuid;
 
 const SCOPE: &str = "openid offline_access";
 const EMAIL: &str = "ann@example.com";
 
 /// An admin action as it starts: the user row locked `FOR UPDATE`.
-async fn admin_holding_user(f: &Fixture) -> DatabaseTransaction {
+async fn admin_holding(f: &Fixture, user_id: Uuid) -> DatabaseTransaction {
     let txn = f.db.begin().await.unwrap();
-    users::Entity::find_by_id(f.user.id)
+    users::Entity::find_by_id(user_id)
         .lock_exclusive()
         .one(&txn)
         .await
@@ -48,15 +54,23 @@ async fn admin_holding_user(f: &Fixture) -> DatabaseTransaction {
 /// `revoke`, end their sessions and tokens too (what `PATCH disabled`
 /// does). Without `revoke` only the re-check under the lock can refuse.
 async fn admin_disables(f: &Fixture, txn: DatabaseTransaction, revoke: bool) {
+    disable_user(f, txn, f.user.id, revoke).await;
+}
+
+async fn admin_holding_user(f: &Fixture) -> DatabaseTransaction {
+    admin_holding(f, f.user.id).await
+}
+
+async fn disable_user(f: &Fixture, txn: DatabaseTransaction, user_id: Uuid, revoke: bool) {
     wait_for_lock_waiter(&f.db).await;
     users::Entity::update_many()
         .col_expr(users::Column::Disabled, Expr::value(true))
-        .filter(users::Column::Id.eq(f.user.id))
+        .filter(users::Column::Id.eq(user_id))
         .exec(&txn)
         .await
         .unwrap();
     if revoke {
-        directory::revoke_credentials(&txn, &f.config.master_key, f.tenant.id, f.user.id, None)
+        directory::revoke_credentials(&txn, &f.config.master_key, f.tenant.id, user_id, None)
             .await
             .unwrap();
     }
@@ -103,6 +117,40 @@ async fn login_completion_refuses_a_user_disabled_while_it_waited() {
             .await,
         codes_before
     );
+    // Audited like the password step's refusal; the transaction is closed.
+    let events = audited(&f.db, "sign_in", f.user.id).await;
+    assert_eq!(events.last().unwrap()["reason"], "disabled");
+    let (status, _, _) = browser.get(&format!("/api/authn/tx/{tx}")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// A device request whose sign-in completion finds the user disabled is
+/// denied at once (`access_denied`), not left polling until it expires.
+#[tokio::test]
+async fn device_login_completion_denies_a_user_disabled_while_it_waited() {
+    let f = Fixture::new().await;
+    enable(&f, &f.spa).await;
+    let (_, started) = start(&f, &f.spa, None, "openid").await;
+    let user_code = started["user_code"].as_str().unwrap();
+    let device_code = started["device_code"].as_str().unwrap();
+    let mut browser = f.browser();
+    let tx = enter_tx(&mut browser, user_code).await;
+    let view = sign_in(&mut browser, &tx, EMAIL).await;
+    assert_eq!(view["step"], "consent", "{view}");
+    let txn = admin_holding_user(&f).await;
+    let body = serde_json::json!({ "approve": true, "scopes": [] });
+    let ((status, resp), ()) = tokio::join!(
+        browser.step(&tx, "consent", body),
+        admin_disables(&f, txn, true)
+    );
+    assert_eq!(status, StatusCode::FORBIDDEN, "{resp}");
+    assert_eq!(resp["error"], "account_disabled");
+    assert_eq!(rows(&f).await[0].status, DeviceStatus::Denied);
+    let denied = audited_any(&f.db, "device_code.deny").await;
+    assert_eq!(denied.last().unwrap()["reason"], "account_disabled");
+    let (status, body) = poll(&f, &f.spa, None, device_code).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"], "access_denied");
 }
 
 #[tokio::test]
@@ -135,6 +183,64 @@ async fn refresh_refuses_a_user_disabled_while_it_waited() {
         refreshed.1["error_description"],
         "the user is disabled or no longer exists"
     );
+}
+
+/// Redemption reads the user after `lock_request` took their lock, so a
+/// disable that committed meanwhile refuses even with the session alive.
+#[tokio::test]
+async fn device_grant_refuses_a_user_disabled_while_it_waited() {
+    let f = Fixture::new().await;
+    enable(&f, &f.spa).await;
+    let (_, started) = start(&f, &f.spa, None, "openid").await;
+    let user_code = started["user_code"].as_str().unwrap();
+    let device_code = started["device_code"].as_str().unwrap();
+    let redirect = approve_as(&f, user_code, EMAIL, true).await;
+    assert_eq!(redirect, format!("{ORIGIN}/device?result=approved"));
+    let txn = admin_holding_user(&f).await;
+    let ((status, body), ()) = tokio::join!(
+        poll(&f, &f.spa, None, device_code),
+        admin_disables(&f, txn, false)
+    );
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"], "invalid_grant");
+    assert_eq!(
+        body["error_description"],
+        "the user is disabled or no longer exists"
+    );
+}
+
+/// A federated sign-in re-reads the user under their lock: one disabled
+/// meanwhile is refused, and neither the identity nor the group mappings
+/// are written for them.
+#[tokio::test]
+async fn federated_sign_in_refuses_a_user_disabled_while_it_waited() {
+    let fed = Fed::new().await;
+    let idp = fed.idp(serde_json::json!({})).await;
+    let eng = group(&fed, "Eng").await;
+    mapped(&fed, &idp, "groups", "eng", eng).await;
+    let user = sign_in_with(&fed, &idp, serde_json::json!({})).await;
+    let identity = || {
+        user_identities::Entity::find()
+            .filter(user_identities::Column::UserId.eq(user.id))
+            .one(&fed.f.db)
+    };
+    let before = identity().await.unwrap().unwrap();
+    let mut account = Account::new("upstream-sub-1", groups::EMAIL);
+    account.extra = serde_json::json!({ "groups": ["eng"] });
+    fed.up.set_account(account);
+    let mut browser = fed.f.browser();
+    let tx = fed.authorize(&mut browser, &[]).await;
+    let upstream = fed.begin(&mut browser, &tx, &idp).await;
+    let txn = admin_holding(&fed.f, user.id).await;
+    let (location, ()) = tokio::join!(
+        fed.come_back(&mut browser, &upstream),
+        disable_user(&fed.f, txn, user.id, false)
+    );
+    assert_eq!(login_error(&location).as_deref(), Some("account_disabled"));
+    let failures = audited(&fed.f.db, "sign_in", user.id).await;
+    assert_eq!(failures.last().unwrap()["reason"], "account_disabled");
+    assert!(memberships(&fed, user.id).await.is_empty());
+    assert!(identity().await.unwrap().unwrap() == before);
 }
 
 /// Denying a device request writes the user into its row: it takes the
