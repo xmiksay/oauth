@@ -19,7 +19,7 @@ use common::{
 };
 use entity::{client_secrets, enums::DirectoryRole, tenants};
 use oauth_server::{bootstrap, directory};
-use sea_orm::EntityTrait;
+use sea_orm::{ConnectionTrait, EntityTrait, TransactionTrait};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -65,7 +65,11 @@ async fn a_caller_supplied_secret_is_checked_stored_hashed_and_never_echoed() {
     assert_eq!(st, StatusCode::CREATED, "{created}");
     assert!(created.get("secret").is_none(), "{created}");
     assert!(!created.to_string().contains(SUPPLIED));
-    assert_eq!(created["hint"], "Zx8");
+    let hash = oauth_server::secret::hash(SUPPLIED);
+    assert_eq!(
+        created["hint"],
+        format!("{:02x}{:x}", hash[0], hash[1] >> 4)
+    );
     assert_eq!(created["never_expires"], false);
     let id: Uuid = created["id"].as_str().unwrap().parse().unwrap();
     let row = client_secrets::Entity::find_by_id(id)
@@ -143,7 +147,7 @@ async fn non_expiring_secrets_follow_the_tenant_policy() {
     let both = json!({ "never_expires": true, "expires_in_days": 30 });
     let (st, _) = post(&f, &token, &path, both).await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
-    let (st, created) = post(&f, &token, &path, never).await;
+    let (st, created) = post(&f, &token, &path, never.clone()).await;
     assert_eq!(st, StatusCode::CREATED, "{created}");
     assert_eq!(created["expires_at"], Value::Null);
     assert_eq!(created["never_expires"], true);
@@ -157,6 +161,22 @@ async fn non_expiring_secrets_follow_the_tenant_policy() {
     assert_eq!(row.expires_at, None);
     let events = audited(&f.db, "application.secret_add", row.application_id).await;
     assert_eq!(events[0]["never_expires"], true, "{events:?}");
+
+    // Switched off while a create is in flight (authenticated with the
+    // policy still on): the create waits on the tenant row and is refused.
+    let off = f.db.begin().await.unwrap();
+    off.execute_unprepared(&format!(
+        "UPDATE tenants SET allow_non_expiring_secrets = false WHERE id = '{}'",
+        f.tenant.id
+    ))
+    .await
+    .unwrap();
+    let commit_later = async {
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        off.commit().await.unwrap();
+    };
+    let ((st, body), ()) = tokio::join!(post(&f, &token, &path, never), commit_later);
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
 }
 
 #[tokio::test]
