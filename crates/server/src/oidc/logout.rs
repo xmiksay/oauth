@@ -9,6 +9,10 @@
 //! `Origin`, the login API's CSRF rules). A `post_logout_redirect_uri` is
 //! honoured only with a valid hint of a client that registered it; without
 //! one, a hint-authorized logout lands on `/logout?signed_out=1`.
+//!
+//! Ending the session queues its Back-Channel Logout (`backchannel`) and,
+//! when the tenant's `logout_revokes_refresh_tokens` is on (the default),
+//! revokes the refresh-token families started in it.
 
 use std::collections::HashMap;
 
@@ -19,6 +23,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use entity::{applications, sessions};
+use sea_orm::TransactionTrait;
 use serde_json::{Value, json};
 
 use super::{
@@ -32,8 +37,12 @@ use crate::{
         cookie::{self, Kind},
         session,
     },
+    backchannel,
     tenancy::Tenant,
-    tokens::jwt::{self, VerifyError},
+    tokens::{
+        jwt::{self, VerifyError},
+        refresh,
+    },
 };
 
 pub async fn logout(
@@ -57,7 +66,7 @@ pub async fn sign_out(
 ) -> Response {
     let ended = async {
         let current = session::from_cookie(&state.db, &state.config, &tenant, &headers).await?;
-        end_session(&state, current.as_ref()).await
+        end_session(&state, &tenant, current.as_ref()).await
     };
     match ended.await {
         Ok(clear) => {
@@ -156,19 +165,28 @@ async fn handle(
         )
     });
     let mut response = redirect::found(&url);
-    let clear = end_session(state, current.as_ref()).await?;
+    let clear = end_session(state, tenant, current.as_ref()).await?;
     response.headers_mut().append(header::SET_COOKIE, clear);
     Ok(response)
 }
 
-/// Deletes `current` (if any); returns the `Set-Cookie` clearing the
-/// session cookie.
+/// Deletes `current` (if any), queueing its Back-Channel Logout and — if
+/// the tenant says so — revoking the refresh families started in it, all
+/// in one transaction; returns the `Set-Cookie` clearing the session cookie.
 async fn end_session(
     state: &AppState,
+    tenant: &Tenant,
     current: Option<&sessions::Model>,
 ) -> OAuthResult<HeaderValue> {
     if let Some(current) = current {
-        session::delete(&state.db, current.id).await?;
+        let txn = state.db.begin().await?;
+        let ended = backchannel::Ended::Session(current.id);
+        backchannel::queue(&txn, &state.config.master_key, tenant.id, ended).await?;
+        if tenant.logout_revokes_refresh_tokens {
+            refresh::revoke_by_session(&txn, tenant.id, current.id).await?;
+        }
+        session::delete(&txn, current.id).await?;
+        txn.commit().await?;
         tracing::info!(session = %current.id, "session ended by logout");
     }
     Ok(cookie::clear(&state.config, Kind::Session)?)

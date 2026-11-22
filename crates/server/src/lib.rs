@@ -5,6 +5,7 @@ pub mod app;
 pub mod audit;
 pub mod authn;
 pub mod authz;
+pub mod backchannel;
 pub mod bootstrap;
 pub mod config;
 pub mod consent;

@@ -23,6 +23,7 @@ use super::{
 use crate::{
     app::AppState,
     audit::{EventType, Target},
+    backchannel,
     directory::{self, display_name, password},
     error::{AppError, AppResult},
     notify,
@@ -126,6 +127,7 @@ pub async fn change_password(
     let txn = state.db.begin().await?;
     directory::set_password_keeping(
         &txn,
+        &state.config.master_key,
         user.tenant_id,
         user.id,
         &body.new_password,
@@ -178,6 +180,10 @@ pub async fn revoke_session(
     let user_id = caller.user_id()?;
     let tenant_id = caller.tenant_id();
     let txn = state.db.begin().await?;
+    let ended = backchannel::Ended::Session(id);
+    // Scoped to the caller's own sessions by the delete below (a foreign id
+    // queues nothing: the user filter of the delete then rolls it back).
+    backchannel::queue(&txn, &state.config.master_key, tenant_id, ended).await?;
     let removed = sessions::Entity::delete_many()
         .filter(sessions::Column::TenantId.eq(tenant_id))
         .filter(sessions::Column::UserId.eq(user_id))
@@ -207,7 +213,14 @@ pub async fn revoke_all_sessions(
 ) -> AppResult<StatusCode> {
     let user_id = caller.user_id()?;
     let txn = state.db.begin().await?;
-    directory::revoke_credentials(&txn, caller.tenant_id(), user_id, None).await?;
+    directory::revoke_credentials(
+        &txn,
+        &state.config.master_key,
+        caller.tenant_id(),
+        user_id,
+        None,
+    )
+    .await?;
     caller
         .audit(
             &txn,

@@ -13,7 +13,7 @@ use sea_orm::{
 };
 use uuid::Uuid;
 
-use crate::mail::tokens;
+use crate::{backchannel, mail::tokens};
 
 use super::{
     DirectoryError, display_name, password, reject_control_chars, violates_foreign_key,
@@ -114,6 +114,7 @@ pub async fn find_user_by_email(
 
 pub async fn set_password(
     conn: &impl ConnectionTrait,
+    master_key: &[u8; 32],
     tenant_id: Uuid,
     user_id: Uuid,
     new_password: &str,
@@ -121,6 +122,7 @@ pub async fn set_password(
 ) -> Result<(), DirectoryError> {
     set_password_keeping(
         conn,
+        master_key,
         tenant_id,
         user_id,
         new_password,
@@ -135,6 +137,7 @@ pub async fn set_password(
 /// way pending reset and invitation links stop working.
 pub async fn set_password_keeping(
     conn: &impl ConnectionTrait,
+    master_key: &[u8; 32],
     tenant_id: Uuid,
     user_id: Uuid,
     new_password: &str,
@@ -158,7 +161,7 @@ pub async fn set_password_keeping(
     if result.rows_affected == 0 {
         return Err(DirectoryError::NotFound);
     }
-    revoke_credentials(conn, tenant_id, user_id, keep_session).await?;
+    revoke_credentials(conn, master_key, tenant_id, user_id, keep_session).await?;
     // A new password supersedes pending reset / invitation links.
     let superseded = [EmailTokenPurpose::Reset, EmailTokenPurpose::Invite];
     tokens::invalidate(conn, tenant_id, user_id, &superseded).await?;
@@ -170,12 +173,19 @@ pub async fn set_password_keeping(
 /// sessions and revokes their refresh-token families and opaque access
 /// tokens (JWTs can't be recalled; they expire). `keep_session` spares one
 /// session with the refresh families started in it and their opaque tokens.
+/// The ended sessions' Back-Channel Logouts are queued first.
 pub async fn revoke_credentials(
     conn: &impl ConnectionTrait,
+    master_key: &[u8; 32],
     tenant_id: Uuid,
     user_id: Uuid,
     keep_session: Option<Uuid>,
 ) -> anyhow::Result<()> {
+    let ended = backchannel::Ended::User {
+        user_id,
+        keep: keep_session,
+    };
+    backchannel::queue(conn, master_key, tenant_id, ended).await?;
     for sql in [
         "DELETE FROM sessions WHERE tenant_id = $1 AND user_id = $2 \
          AND ($3::uuid IS NULL OR id <> $3)",

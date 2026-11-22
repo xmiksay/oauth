@@ -32,6 +32,8 @@ function fakeApp(over: Partial<Application> = {}): Application {
     refresh_token_ttl_secs: 86400,
     device_code_enabled: false,
     mfa_policy: 'inherit',
+    backchannel_logout_uri: null,
+    backchannel_logout_session_required: false,
     created_at: '',
     updated_at: '',
     ...over,
@@ -54,6 +56,25 @@ beforeEach(() => {
 })
 
 describe('AppAuthentication', () => {
+  it('sends a back-channel logout URI, and null when cleared', async () => {
+    const w = await mountForm(fakeApp())
+    const input = w.find('#aa-backchannel')
+    applications.update.mockResolvedValue(
+      fakeApp({ backchannel_logout_uri: 'https://shop.example/bcl' }),
+    )
+    await input.setValue(' https://shop.example/bcl ')
+    await w.find('form').trigger('submit')
+    await flushPromises()
+    expect(applications.update).toHaveBeenLastCalledWith('a1', {
+      backchannel_logout_uri: 'https://shop.example/bcl',
+    })
+    applications.update.mockResolvedValue(fakeApp())
+    await w.find('#aa-backchannel').setValue('')
+    await w.find('form').trigger('submit')
+    await flushPromises()
+    expect(applications.update).toHaveBeenLastCalledWith('a1', { backchannel_logout_uri: null })
+  })
+
   it('edits explicit origins and shows the ones derived from redirect URIs', async () => {
     const w = await mountForm(fakeApp())
     const origins = w.find('#aa-origins')

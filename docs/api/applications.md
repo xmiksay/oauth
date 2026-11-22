@@ -7,7 +7,7 @@ GlobalAdmin, ApplicationAdmin, `ReadWrite.All`.
 | Method & path | Body | Response |
 |---|---|---|
 | `GET applications` *paged* `?search=` (name, client_id) | – | `Application`s |
-| `POST applications` | `{ display_name, client_id?, client_type? (confidential), redirect_uris?, post_logout_redirect_uris?, web_origins?, identifier_uri?, access_token_format?, signing_alg?, groups_claim_format?, assignment_required? (false), access_token_ttl_secs?, refresh_token_ttl_secs?, device_code_enabled? (false), mfa_policy? (inherit) }` | 201 `Application` |
+| `POST applications` | `{ display_name, client_id?, client_type? (confidential), redirect_uris?, post_logout_redirect_uris?, web_origins?, identifier_uri?, access_token_format?, signing_alg?, groups_claim_format?, assignment_required? (false), access_token_ttl_secs?, refresh_token_ttl_secs?, device_code_enabled? (false), mfa_policy? (inherit), backchannel_logout_uri? (null), backchannel_logout_session_required? (false) }` | 201 `Application` |
 | `GET applications/{id}` | – | `Application` |
 | `PATCH applications/{id}` | same fields except `client_id`, `client_type` (immutable → 400); `identifier_uri: null` clears it | `Application` |
 | `DELETE applications/{id}` | – | 204 (everything of the app cascades) |
@@ -56,6 +56,12 @@ Validation:
   sign-in is refused (`invalid_grant`) when redeemed for the app as another
   resource (multi-resource refresh). There is no `optional`: an app can
   only tighten the tenant's `mfa_policy`.
+- `backchannel_logout_uri` (string or `null` to clear): OIDC Back-Channel
+  Logout endpoint — absolute `https`, no fragment or credentials, ≤ 2048
+  bytes, a public IP if a literal; plain `http` only to loopback in
+  development (400 otherwise). `backchannel_logout_session_required`
+  (boolean; `sid` is always sent anyway). Not settable on built-in apps
+  (403). See [../backchannel_logout.md](../backchannel_logout.md).
 
 - `assignment_required` boolean (default `false`; not editable on built-in
   apps): only users holding one of the app's user roles (directly or via a

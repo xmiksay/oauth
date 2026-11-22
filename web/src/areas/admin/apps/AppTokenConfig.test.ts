@@ -32,6 +32,8 @@ function fakeApp(over: Partial<Application> = {}): Application {
     refresh_token_ttl_secs: 86400,
     device_code_enabled: false,
     mfa_policy: 'inherit',
+    backchannel_logout_uri: null,
+    backchannel_logout_session_required: false,
     created_at: '',
     updated_at: '',
     ...over,

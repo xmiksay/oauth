@@ -135,7 +135,15 @@ pub async fn run(
             }
             Some(user) if opts.reset_password => {
                 let password = OneTimePassword(Zeroizing::new(password::generate_one_time()?));
-                directory::set_password(&txn, tenant.id, user.id, password.expose(), true).await?;
+                directory::set_password(
+                    &txn,
+                    &config.master_key,
+                    tenant.id,
+                    user.id,
+                    password.expose(),
+                    true,
+                )
+                .await?;
                 (user, AdminOutcome::PasswordReset { password })
             }
             Some(user) => (user, AdminOutcome::Unchanged),

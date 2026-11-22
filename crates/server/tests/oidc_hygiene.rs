@@ -147,6 +147,7 @@ async fn password_change_revokes_sessions_and_refresh_tokens() {
         .await;
     directory::set_password(
         &f.db,
+        &f.config.master_key,
         f.tenant.id,
         f.user.id,
         "an entirely new secret",

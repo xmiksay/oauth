@@ -129,7 +129,15 @@ pub(super) async fn set_password_by_link(
     {
         return Err(AuthnError::InvalidLink);
     }
-    directory::set_password(&txn, tenant_id, user.id, &body.new_password, false).await?;
+    directory::set_password(
+        &txn,
+        &ctx.state.config.master_key,
+        tenant_id,
+        user.id,
+        &body.new_password,
+        false,
+    )
+    .await?;
     let mut row: users::ActiveModel = user.into();
     row.email_verified = Set(true);
     let user = row.update(&txn).await?;

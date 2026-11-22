@@ -14,6 +14,7 @@ const tenant = ref<Tenant | null>(null)
 const name = ref('')
 const retention = ref(90)
 const mfa = ref<MfaPolicy>('optional')
+const logoutRevokes = ref(true)
 const saved = ref(false)
 const loader = useAction()
 const saver = useAction()
@@ -23,6 +24,7 @@ function fill(t: Tenant) {
   name.value = t.display_name
   retention.value = t.audit_retention_days
   mfa.value = t.mfa_policy
+  logoutRevokes.value = t.logout_revokes_refresh_tokens
 }
 
 onMounted(async () => {
@@ -38,6 +40,9 @@ async function save() {
   if (name.value.trim() !== t.display_name) body.display_name = name.value.trim()
   if (retention.value !== t.audit_retention_days) body.audit_retention_days = retention.value
   if (mfa.value !== t.mfa_policy) body.mfa_policy = mfa.value
+  if (logoutRevokes.value !== t.logout_revokes_refresh_tokens) {
+    body.logout_revokes_refresh_tokens = logoutRevokes.value
+  }
   const updated = await saver.run(() => settings.update(body))
   if (updated) {
     fill(updated)
@@ -122,6 +127,21 @@ async function save() {
           also require it on their own.
         </p>
       </div>
+      <label class="flex items-start gap-2 text-sm">
+        <input
+          id="ts-logout-revokes"
+          v-model="logoutRevokes"
+          type="checkbox"
+          class="mt-1"
+          :disabled="!isGlobalAdmin"
+        >
+        <span>
+          <span class="font-medium">Sign-out revokes refresh tokens</span>
+          <span class="muted block">When an app signs the user out, the refresh tokens issued
+            in that browser session stop working too. Signing a device out in My Account or
+            revoking a user's sessions always does this.</span>
+        </span>
+      </label>
       <p class="mono muted">
         Tenant ID {{ tenant.id }} · slug {{ tenant.slug }}
       </p>

@@ -250,9 +250,16 @@ async fn passwords_and_directory_roles() {
         .await
         .unwrap();
 
-    directory::set_password(&conn, a.id, user.id, "a long enough pw", true)
-        .await
-        .unwrap();
+    directory::set_password(
+        &conn,
+        &config.master_key,
+        a.id,
+        user.id,
+        "a long enough pw",
+        true,
+    )
+    .await
+    .unwrap();
     let stored = users::Entity::find_by_id(user.id)
         .one(&conn)
         .await
@@ -261,14 +268,21 @@ async fn passwords_and_directory_roles() {
     assert!(stored.must_change_password);
     let hash = stored.password_hash.unwrap();
     assert!(password::verify("a long enough pw", &hash).await.unwrap());
-    let short = directory::set_password(&conn, a.id, user.id, "short", false)
+    let short = directory::set_password(&conn, &config.master_key, a.id, user.id, "short", false)
         .await
         .unwrap_err();
     assert!(matches!(short, DirectoryError::Invalid(_)));
     // Wrong tenant: the user isn't visible there.
-    let cross = directory::set_password(&conn, b.id, user.id, "a long enough pw", false)
-        .await
-        .unwrap_err();
+    let cross = directory::set_password(
+        &conn,
+        &config.master_key,
+        b.id,
+        user.id,
+        "a long enough pw",
+        false,
+    )
+    .await
+    .unwrap_err();
     assert!(matches!(cross, DirectoryError::NotFound), "{cross:?}");
 
     for _ in 0..2 {

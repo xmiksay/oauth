@@ -190,7 +190,15 @@ pub async fn change(
     // commit together. (`set_password` hashes before its first statement, so
     // no row lock is held during argon2.)
     let txn = conn.begin().await?;
-    directory::set_password(&txn, tenant.id, user.id, &body.new_password, false).await?;
+    directory::set_password(
+        &txn,
+        &state.config.master_key,
+        tenant.id,
+        user.id,
+        &body.new_password,
+        false,
+    )
+    .await?;
     audit::record(
         &txn,
         audit::Event {

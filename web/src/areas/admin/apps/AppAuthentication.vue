@@ -17,6 +17,8 @@ const derivedOrigins = computed(() =>
   (app.value?.effective_web_origins ?? []).filter((o) => !app.value?.web_origins.includes(o)),
 )
 const deviceCode = ref(false)
+const backchannelUri = ref('')
+const backchannelSid = ref(false)
 const saved = ref(false)
 const { busy, error, run } = useAction()
 
@@ -25,6 +27,8 @@ watchEffect(() => {
   postLogout.value = (app.value?.post_logout_redirect_uris ?? []).join('\n')
   origins.value = (app.value?.web_origins ?? []).join('\n')
   deviceCode.value = app.value?.device_code_enabled ?? false
+  backchannelUri.value = app.value?.backchannel_logout_uri ?? ''
+  backchannelSid.value = app.value?.backchannel_logout_session_required ?? false
 })
 
 async function save() {
@@ -35,6 +39,8 @@ async function save() {
       post_logout_redirect_uris: parseLines(postLogout.value),
       web_origins: parseLines(origins.value),
       device_code_enabled: deviceCode.value,
+      backchannel_logout_uri: backchannelUri.value.trim() || null,
+      backchannel_logout_session_required: backchannelSid.value,
     }),
   )
   saved.value = !!ok
@@ -131,6 +137,37 @@ async function save() {
           (RFC 8628). Needs no redirect URI.</span>
       </span>
     </label>
+    <div>
+      <label
+        class="label"
+        for="aa-backchannel"
+      >Back-channel logout URI</label>
+      <input
+        id="aa-backchannel"
+        v-model="backchannelUri"
+        class="input font-mono"
+        :disabled="!canEditConfig"
+        aria-describedby="aa-backchannel-hint"
+      >
+      <p
+        id="aa-backchannel-hint"
+        class="hint"
+      >
+        OpenID Connect Back-Channel Logout: when a session in which the app obtained tokens
+        ends, a signed logout token (with sid and sub) is POSTed here. Absolute https:// URL,
+        no fragment; must reach a public address. Leave empty to turn it off.
+      </p>
+      <label class="mt-2 flex items-start gap-2 text-sm">
+        <input
+          id="aa-backchannel-sid"
+          v-model="backchannelSid"
+          type="checkbox"
+          class="mt-1"
+          :disabled="!canEditConfig"
+        >
+        <span>The app requires the session id (sid) in logout tokens — always included.</span>
+      </label>
+    </div>
     <ErrorAlert :error="error" />
     <StatusNote :message="saved ? 'Saved.' : null" />
     <button

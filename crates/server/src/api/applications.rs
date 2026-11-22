@@ -59,6 +59,8 @@ pub fn view(a: &applications::Model) -> Value {
         "refresh_token_ttl_secs": a.refresh_token_ttl_secs,
         "device_code_enabled": a.device_code_enabled,
         "mfa_policy": a.mfa_policy.to_value(),
+        "backchannel_logout_uri": a.backchannel_logout_uri,
+        "backchannel_logout_session_required": a.backchannel_logout_session_required,
         "created_at": ts(&a.created_at),
         "updated_at": ts(&a.updated_at),
     })
@@ -159,7 +161,8 @@ pub async fn create(
     if client_type == ClientType::Public {
         row.refresh_token_ttl_secs = Set(DEFAULT_REFRESH_TTL_PUBLIC);
     }
-    apply(&mut row, &body, &client_id, client_type)?;
+    let loopback = state.config.idp_allow_http_loopback;
+    apply(&mut row, &body, &client_id, client_type, loopback)?;
     let txn = state.db.begin().await?;
     let app = applications::Entity::insert(row)
         .exec_with_returning(&txn)
@@ -199,7 +202,8 @@ pub async fn update(
     let txn = state.db.begin().await?;
     let app = find_app(&txn, caller.tenant_id(), id).await?;
     let mut row: applications::ActiveModel = app.clone().into();
-    let fields = apply(&mut row, &body, &app.client_id, app.client_type)?;
+    let loopback = state.config.idp_allow_http_loopback;
+    let fields = apply(&mut row, &body, &app.client_id, app.client_type, loopback)?;
     if fields.is_empty() {
         return Ok(axum::Json(view(&app)));
     }
@@ -212,11 +216,16 @@ pub async fn update(
             )));
         }
     }
-    // Each opens a way to obtain the app's tokens, like a credential.
+    // Each opens a way to obtain the app's tokens (or, for the back-channel
+    // URI, its users' session ids), like a credential.
     if fields.iter().any(|f| {
         matches!(
             *f,
-            "redirect_uris" | "post_logout_redirect_uris" | "web_origins" | "device_code_enabled"
+            "redirect_uris"
+                | "post_logout_redirect_uris"
+                | "web_origins"
+                | "device_code_enabled"
+                | "backchannel_logout_uri"
         )
     }) {
         ensure_may_manage_credentials(&txn, &caller, &app).await?;

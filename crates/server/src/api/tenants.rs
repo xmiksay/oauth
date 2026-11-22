@@ -48,6 +48,7 @@ pub fn view(t: &tenants::Model) -> Value {
         "disabled": t.disabled,
         "audit_retention_days": t.audit_retention_days,
         "mfa_policy": t.mfa_policy.to_value(),
+        "logout_revokes_refresh_tokens": t.logout_revokes_refresh_tokens,
         "created_at": ts(&t.created_at),
         "updated_at": ts(&t.updated_at),
     })
@@ -172,6 +173,7 @@ pub struct UpdateTenant {
     disabled: Option<bool>,
     audit_retention_days: Option<i32>,
     mfa_policy: Option<String>,
+    logout_revokes_refresh_tokens: Option<bool>,
 }
 
 /// Validates and stores the changes on `txn` (loading the tenant there),
@@ -220,6 +222,11 @@ async fn save(
             fields.push("mfa_policy");
         }
     }
+    if let Some(revokes) = body.logout_revokes_refresh_tokens
+        && set_changed(&mut row.logout_revokes_refresh_tokens, revokes)
+    {
+        fields.push("logout_revokes_refresh_tokens");
+    }
     if fields.is_empty() {
         return Ok(tenant);
     }
@@ -240,7 +247,7 @@ async fn save(
     Ok(updated)
 }
 
-/// Rename, disable / enable, retention, MFA policy. Disabling makes the tenant 404
+/// Rename, disable / enable, retention, MFA policy, logout revocation. Disabling makes the tenant 404
 /// everywhere (sign-in, tokens, management API).
 pub async fn update(
     State(state): State<AppState>,
@@ -278,10 +285,11 @@ pub struct Settings {
     display_name: Option<String>,
     audit_retention_days: Option<i32>,
     mfa_policy: Option<String>,
+    logout_revokes_refresh_tokens: Option<bool>,
 }
 
 /// `PATCH /api/v1/settings`: a tenant's own Global Admin renames it,
-/// sets its audit retention or its MFA policy (creating, disabling and enabling tenants
+/// sets its audit retention, MFA policy or logout revocation (creating, disabling and enabling tenants
 /// stay with the system tenant's admins).
 pub async fn update_settings(
     State(state): State<AppState>,
@@ -294,6 +302,7 @@ pub async fn update_settings(
         disabled: None,
         audit_retention_days: body.audit_retention_days,
         mfa_policy: body.mfa_policy,
+        logout_revokes_refresh_tokens: body.logout_revokes_refresh_tokens,
     };
     let txn = state.db.begin().await?;
     let updated = save(&txn, &caller, &caller.tenant.slug, &body).await?;

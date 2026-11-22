@@ -15,7 +15,7 @@ use sea_orm::{ConnectionTrait, DatabaseTransaction, Statement};
 use tokio::{task::JoinHandle, time::MissedTickBehavior};
 use tokio_util::sync::CancellationToken;
 
-use crate::{app::AppState, mail::SmtpMailer};
+use crate::{app::AppState, backchannel::deliver::Notifier, mail::SmtpMailer};
 
 /// "oauthswp" in ASCII.
 pub const SWEEPER_LOCK_KEY: i64 = 0x6f61_7574_6873_7770;
@@ -60,8 +60,8 @@ where
 }
 
 /// Runs the jobs on their intervals until `shutdown` fires (the outbox per
-/// channel only when that channel is configured). A run in progress
-/// finishes first.
+/// channel only when that channel is configured; back-channel logout
+/// always). A run in progress finishes first.
 pub fn spawn(state: AppState, shutdown: CancellationToken) -> JoinHandle<()> {
     tokio::spawn(async move {
         let mut sweep = tokio::time::interval(SWEEP_EVERY);
@@ -84,6 +84,13 @@ pub fn spawn(state: AppState, shutdown: CancellationToken) -> JoinHandle<()> {
                 None
             }
         };
+        let notifier = match Notifier::new(state.config.idp_allow_http_loopback) {
+            Ok(notifier) => Some(Arc::new(notifier)),
+            Err(err) => {
+                tracing::error!(error = ?err, "HTTP client setup failed; back-channel logout is off");
+                None
+            }
+        };
         loop {
             let st = state.clone();
             tokio::select! {
@@ -101,6 +108,10 @@ pub fn spawn(state: AppState, shutdown: CancellationToken) -> JoinHandle<()> {
                 _ = deliver.tick() => {
                     if let Some(mailer) = mailer.clone() {
                         guarded("outbox", deliver_once(st.clone(), mailer, shutdown.clone())).await;
+                    }
+                    if let Some(notifier) = notifier.clone() {
+                        let run = deliver_once(st.clone(), notifier, shutdown.clone());
+                        guarded("outbox_backchannel", run).await;
                     }
                     if let Some(bot) = st.telegram.clone() {
                         let bot = Arc::new(bot);

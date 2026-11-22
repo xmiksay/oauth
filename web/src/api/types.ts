@@ -37,6 +37,8 @@ export interface Tenant {
   audit_retention_days: number
   /** `required`: every sign-in is multi-factor (users without a factor enrol one). */
   mfa_policy: MfaPolicy
+  /** RP-initiated logout also revokes the session's refresh tokens (default on). */
+  logout_revokes_refresh_tokens: boolean
   created_at: string
   updated_at: string
 }
@@ -293,6 +295,9 @@ export interface Application {
   device_code_enabled: boolean
   /** `required`: signing in to this app (as client or requested resource) needs MFA. */
   mfa_policy: AppMfaPolicy
+  /** OIDC Back-Channel Logout: where signed logout tokens are POSTed. */
+  backchannel_logout_uri: string | null
+  backchannel_logout_session_required: boolean
   created_at: string
   updated_at: string
 }
@@ -320,6 +325,8 @@ export type ApplicationPatch = Partial<
     | 'refresh_token_ttl_secs'
     | 'device_code_enabled'
     | 'mfa_policy'
+    | 'backchannel_logout_uri'
+    | 'backchannel_logout_session_required'
   >
 >
 

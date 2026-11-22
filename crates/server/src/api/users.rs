@@ -297,7 +297,7 @@ pub async fn update(
     })?;
     if disabling {
         // A disabled account keeps no live sessions or refresh tokens.
-        directory::revoke_credentials(&txn, tenant_id, id, None).await?;
+        directory::revoke_credentials(&txn, &state.config.master_key, tenant_id, id, None).await?;
     }
     if updated.email != user.email {
         email_replaced(&state, &caller, &txn, &updated, &user).await?;

@@ -18,6 +18,7 @@ const TENANT: Tenant = {
   disabled: false,
   audit_retention_days: 90,
   mfa_policy: 'optional',
+  logout_revokes_refresh_tokens: true,
   created_at: '',
   updated_at: '',
 }
@@ -49,9 +50,21 @@ describe('TenantSettings', () => {
     expect(w.text()).toContain('Saved.')
   })
 
+  it('sends the logout revocation toggle when changed', async () => {
+    const w = await mountPage(['GlobalAdmin'])
+    const box = w.find('#ts-logout-revokes')
+    expect((box.element as HTMLInputElement).checked).toBe(true)
+    settings.update.mockResolvedValue({ ...TENANT, logout_revokes_refresh_tokens: false })
+    await box.setValue(false)
+    await w.find('form').trigger('submit')
+    await flushPromises()
+    expect(settings.update).toHaveBeenCalledWith({ logout_revokes_refresh_tokens: false })
+  })
+
   it('disables the MFA policy without GlobalAdmin', async () => {
     const w = await mountPage(['UserAdmin'])
     expect(w.find('#ts-mfa').attributes('disabled')).toBeDefined()
+    expect(w.find('#ts-logout-revokes').attributes('disabled')).toBeDefined()
     expect(w.find('button[type=submit]').exists()).toBe(false)
   })
 })

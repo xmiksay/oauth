@@ -239,6 +239,8 @@ async fn finish(
             if let Some(old) = session::from_cookie(&txn, config, ctx.tenant, ctx.headers).await?
                 && origin.as_ref().is_none_or(|o| o.id != old.id)
             {
+                let ended = crate::backchannel::Ended::Session(old.id);
+                crate::backchannel::queue(&txn, &config.master_key, ctx.tenant.id, ended).await?;
                 session::delete(&txn, old.id).await?;
             }
             let (created, token) = match origin {
