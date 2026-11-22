@@ -4,7 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useAuthStore } from '@/stores/auth'
 import { groups } from '@/api/directory'
-import type { Group, User } from '@/api/types'
+import type { Group, GroupMember } from '@/api/types'
 import { useAction } from '@/composables/useAction'
 import { usePagedList } from '@/composables/usePagedList'
 import PageHeader from '@/components/PageHeader.vue'
@@ -25,7 +25,7 @@ const loader = useAction()
 const saver = useAction()
 // Its own action so a rename error (e.g. the name is taken) shows in the form, not under Members.
 const propSaver = useAction()
-const members = usePagedList<User>((q) => groups.members(id, q))
+const members = usePagedList<GroupMember>((q) => groups.members(id, q))
 
 async function load() {
   const g = await loader.run(() => groups.get(id))
@@ -175,6 +175,16 @@ function removeMember(userId: string) {
                   >
                     {{ m.display_name || m.email }}
                   </RouterLink>
+                  <span
+                    v-if="m.idp_id"
+                    class="badge ml-1"
+                    data-testid="mapped-badge"
+                    :title="
+                      m.manual
+                        ? 'Also kept by a federation group mapping'
+                        : 'Kept by a federation group mapping: removed by hand, it comes back at the user\'s next sign-in while the claim value is there'
+                    "
+                  >{{ m.manual ? 'Manual + mapping' : 'Group mapping' }}</span>
                   <span class="muted block text-xs">{{ m.email }}</span>
                 </td>
                 <td class="text-right">

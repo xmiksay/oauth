@@ -44,7 +44,7 @@ pub struct Claims {
     /// The upstream `auth_time`, never later than now.
     pub auth_time: Option<i64>,
     /// Values of the claims group mappings read (`group_map::extract`).
-    pub mapped: group_map::ClaimValues,
+    pub mapped: group_map::Mapped,
 }
 
 fn str_claim<'a>(claims: &'a Map<String, Value>, name: &str) -> Option<&'a str> {

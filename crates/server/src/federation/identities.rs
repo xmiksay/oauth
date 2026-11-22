@@ -73,6 +73,10 @@ pub struct Pending {
     pub subject: String,
     pub email: Option<String>,
     pub name: Option<String>,
+    /// What the token said for the group mappings; applied when the link
+    /// completes the sign-in. Absent in transactions parked before.
+    #[serde(default)]
+    pub mapped: super::group_map::Mapped,
 }
 
 /// Why a link was refused.

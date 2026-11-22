@@ -13,76 +13,21 @@ mod common;
 use axum::http::{Method, StatusCode};
 use common::{
     federation::{Fed, IDPS},
+    groups::{add_manually, group, map, mapped, memberships, sign_in_with, sorted},
     mgmt::{audited, audited_any},
-    upstream::Account,
 };
-use entity::{group_members, user_identities, users};
-use oauth_server::directory;
+use entity::{user_identities, users};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-const EMAIL: &str = "pat@upstream.example";
-
-fn uuid(v: &Value) -> Uuid {
-    Uuid::parse_str(v.as_str().unwrap()).unwrap()
-}
-
-async fn group(fed: &Fed, name: &str) -> Uuid {
-    let body = json!({ "display_name": name });
-    let (status, out) = fed.api(Method::POST, "/api/v1/groups", Some(body)).await;
-    assert_eq!(status, StatusCode::CREATED, "{out}");
-    uuid(&out["id"])
-}
-
-async fn map(fed: &Fed, idp: &str, claim: &str, value: &str, group: Uuid) -> (StatusCode, Value) {
-    let body = json!({ "claim": claim, "value": value, "group_id": group });
-    let path = format!("{IDPS}/{idp}/group-mappings");
-    fed.api(Method::POST, &path, Some(body)).await
-}
-
-async fn mapped(fed: &Fed, idp: &str, claim: &str, value: &str, group: Uuid) -> String {
-    let (status, out) = map(fed, idp, claim, value, group).await;
-    assert_eq!(status, StatusCode::CREATED, "{out}");
-    out["id"].as_str().unwrap().to_owned()
-}
-
-/// Signs `extra` claims in as the default upstream account.
-async fn sign_in_with(fed: &Fed, idp: &str, extra: Value) -> users::Model {
-    let mut account = Account::new("upstream-sub-1", EMAIL);
-    account.extra = extra;
-    fed.up.set_account(account);
-    let (_, location) = fed.sign_in(&mut fed.f.browser(), idp).await;
-    fed.amr(&location).await;
-    directory::find_user_by_email(&fed.f.db, fed.f.tenant.id, EMAIL)
+/// The `group.member_remove` events of `group` that a federation path wrote.
+async fn mapped_removals(fed: &Fed, group: Uuid) -> Vec<Value> {
+    audited(&fed.f.db, "group.member_remove", group)
         .await
-        .unwrap()
-        .unwrap()
-}
-
-/// The user's memberships: `(group, manual, kept by an IdP)`, by group.
-async fn memberships(fed: &Fed, user: Uuid) -> Vec<(Uuid, bool, bool)> {
-    let mut rows: Vec<_> = group_members::Entity::find()
-        .filter(group_members::Column::UserId.eq(user))
-        .all(&fed.f.db)
-        .await
-        .unwrap()
         .into_iter()
-        .map(|m| (m.group_id, m.manual, m.idp_id.is_some()))
-        .collect();
-    rows.sort();
-    rows
-}
-
-fn sorted(mut rows: Vec<(Uuid, bool, bool)>) -> Vec<(Uuid, bool, bool)> {
-    rows.sort();
-    rows
-}
-
-async fn add_manually(fed: &Fed, group: Uuid, user: Uuid) -> StatusCode {
-    let path = format!("/api/v1/groups/{group}/members");
-    let body = json!({ "user_id": user });
-    fed.api(Method::POST, &path, Some(body)).await.0
+        .filter(|e| e["via"] == "federation")
+        .collect()
 }
 
 #[tokio::test]
@@ -209,6 +154,11 @@ async fn mapping_api_validates_and_cleans_up() {
     let idp_id = Uuid::parse_str(&idp).unwrap();
     let events = audited(&fed.f.db, "identity_provider.group_mapping_remove", idp_id).await;
     assert_eq!(events[1]["memberships_removed"], 1);
+    let removed = mapped_removals(&fed, admins).await;
+    assert_eq!(removed.len(), 1);
+    assert_eq!(removed[0]["user_id"], json!(user.id));
+    assert_eq!(removed[0]["idp_id"], json!(idp_id));
+    assert!(mapped_removals(&fed, eng).await.is_empty());
     assert_eq!(events[0]["memberships_removed"], 0);
     let events = audited(&fed.f.db, "identity_provider.group_mapping_add", idp_id).await;
     assert_eq!(events.len(), 3);
@@ -231,6 +181,12 @@ async fn repoint_unlink_and_delete_drop_mapped_memberships() {
     assert_eq!(memberships(&fed, user.id).await, vec![(ops, true, false)]);
     let events = audited_any(&fed.f.db, "identity_provider.update").await;
     assert_eq!(events.last().unwrap()["memberships_removed"], 1);
+    // Each membership removed is audited by itself; an unmarked one isn't.
+    let removed = mapped_removals(&fed, eng).await;
+    assert_eq!(removed.len(), 1);
+    assert_eq!(removed[0]["user_id"], json!(user.id));
+    assert_eq!(removed[0]["idp_id"], json!(idp));
+    assert!(mapped_removals(&fed, ops).await.is_empty());
     fed.patch_idp(&idp, json!({ "client_id": common::upstream::CLIENT_ID }))
         .await;
     // Unlink (the user has a password, so the identity isn't the last way in).
@@ -268,6 +224,7 @@ async fn repoint_unlink_and_delete_drop_mapped_memberships() {
     assert_eq!(memberships(&fed, user.id).await, vec![(ops, true, false)]);
     let events = audited(&fed.f.db, "user.identity_unlink", user.id).await;
     assert_eq!(events[0]["memberships_removed"], 1);
+    assert_eq!(mapped_removals(&fed, eng).await.len(), 2);
     // Deleting the provider: same, and the manual row survives the FK.
     let link = user_identities::ActiveModel {
         id: Set(Uuid::now_v7()),
@@ -302,4 +259,8 @@ async fn repoint_unlink_and_delete_drop_mapped_memberships() {
     assert_eq!(memberships(&fed, user.id).await, vec![(ops, true, false)]);
     let events = audited_any(&fed.f.db, "identity_provider.delete").await;
     assert_eq!(events[0]["memberships_removed"], 1);
+    let removed = mapped_removals(&fed, eng).await;
+    assert_eq!(removed.len(), 3);
+    assert_eq!(removed[2]["user_id"], json!(user.id));
+    assert!(mapped_removals(&fed, ops).await.is_empty());
 }

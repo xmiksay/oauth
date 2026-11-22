@@ -39,4 +39,6 @@ Audit: `identity_provider.create` / `update` (`fields`, `identities_removed`,
 `memberships_removed`) / `delete` (`users_only_via`, `memberships_removed`)
 / `group_mapping_add` (`mapping_id`, `claim`, `value`, `group_id`,
 `group_display_name`) / `group_mapping_remove` (`mapping_id`, `claim`,
-`value`, `group_id`, `memberships_removed`).
+`value`, `group_id`, `memberships_removed`); each membership those remove
+is also its own `group.member_remove` (→ group, `user_id`, `idp_id`, `via:
+"federation"`).

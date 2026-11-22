@@ -156,6 +156,7 @@ async fn resolve(
                 subject: claims.subject.clone(),
                 email: claims.email.clone(),
                 name: claims.name.clone(),
+                mapped: claims.mapped.clone(),
             };
             let txn = conn.begin().await?;
             if idps::lock_current(&txn, tenant_id, idp.id, idp.generation)

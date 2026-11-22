@@ -233,11 +233,17 @@ pub async fn members(
         .filter(users::Column::Id.is_in(ids))
         .all(conn)
         .await?;
+    // The user plus where the membership comes from: `manual` and/or kept
+    // by `idp_id`'s group mappings.
     Ok(page.map(|m| {
-        found
-            .iter()
-            .find(|u| u.id == m.user_id)
-            .map_or(Value::Null, user_api::view)
+        let Some(mut item) = found.iter().find(|u| u.id == m.user_id).map(user_api::view) else {
+            return Value::Null;
+        };
+        if let Some(obj) = item.as_object_mut() {
+            obj.insert("manual".into(), m.manual.into());
+            obj.insert("idp_id".into(), json!(m.idp_id));
+        }
+        item
     }))
 }
 

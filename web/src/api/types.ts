@@ -54,6 +54,14 @@ export interface User {
   updated_at: string
 }
 
+/** An item of `GET groups/{id}/members`: the user plus the membership's source. */
+export interface GroupMember extends User {
+  /** Added by an administrator. */
+  manual: boolean
+  /** Kept by this identity provider's group mappings (re-added at the next sign-in). */
+  idp_id: string | null
+}
+
 export interface UserDetail extends User {
   directory_roles: DirectoryRole[]
   /** `passkeys`: how many passkeys the user has registered. */
