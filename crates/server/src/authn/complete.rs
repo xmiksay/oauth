@@ -72,7 +72,9 @@ pub async fn proceed(
     if let Some(stage) = next {
         tx::advance(conn, &tx.row, from, stage).await?;
         tx.row.stage = stage;
-        return Ok(Outcome::Step(tx::view(ctx.state, ctx.tenant, &tx).await?));
+        return Ok(Outcome::Step(
+            super::tx_view::view(ctx.state, ctx.tenant, &tx).await?,
+        ));
     }
     let client = client_of(conn, &tx).await?;
     let resource = pending_resource(conn, &client, tx.req.resource_id).await?;
@@ -166,7 +168,9 @@ async fn decide(
                 tx::advance(conn, &tx.row, from, LoginStage::Consent).await?;
             }
             tx.row.stage = LoginStage::Consent;
-            Ok(Outcome::Step(tx::view(ctx.state, ctx.tenant, &tx).await?))
+            Ok(Outcome::Step(
+                super::tx_view::view(ctx.state, ctx.tenant, &tx).await?,
+            ))
         }
     }
 }

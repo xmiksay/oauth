@@ -33,6 +33,7 @@ pub mod session;
 mod telegram;
 pub mod totp;
 pub mod tx;
+mod tx_view;
 
 use axum::{
     Json, Router,
@@ -55,7 +56,7 @@ pub use complete::{evaluate_consent, force_consent, pending_resource};
 pub fn router(state: AppState) -> Router<AppState> {
     const TX: &str = "/api/authn/tx/{tx}";
     Router::new()
-        .route(TX, get(tx::get))
+        .route(TX, get(tx_view::get))
         .route(&format!("{TX}/password"), post(password::submit))
         .route(&format!("{TX}/totp"), post(mfa::totp))
         .route(&format!("{TX}/recovery"), post(mfa::recovery))
