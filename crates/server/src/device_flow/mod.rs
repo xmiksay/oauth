@@ -108,20 +108,21 @@ pub async fn find_pending(
         .filter(|row| row.expires_at > now))
 }
 
-/// The request a device code names, row-locked (`FOR UPDATE`) so polls,
-/// redemption and the decision serialize.
-pub async fn lock_by_device_code(
+/// The request a device code names, row-locked (`FOR UPDATE`) when `lock`,
+/// so polls, redemption and the decision serialize.
+pub async fn by_device_code(
     conn: &impl ConnectionTrait,
     tenant_id: Uuid,
     device_code: &str,
+    lock: bool,
 ) -> anyhow::Result<Option<device_authorizations::Model>> {
-    device_authorizations::Entity::find()
+    let mut query = device_authorizations::Entity::find()
         .filter(device_authorizations::Column::TenantId.eq(tenant_id))
-        .filter(device_authorizations::Column::DeviceCodeHash.eq(secret::hash(device_code)))
-        .lock_exclusive()
-        .one(conn)
-        .await
-        .context("looking up device code")
+        .filter(device_authorizations::Column::DeviceCodeHash.eq(secret::hash(device_code)));
+    if lock {
+        query = query.lock_exclusive();
+    }
+    query.one(conn).await.context("looking up device code")
 }
 
 /// The signed-in user's answer.

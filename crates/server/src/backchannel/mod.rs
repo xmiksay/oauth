@@ -50,6 +50,28 @@ pub enum Ended {
     },
 }
 
+/// The first lock of anything that then locks one of the user's sessions or
+/// inserts rows referencing the user (their FK takes this same key lock, but
+/// too late): the user row `FOR KEY SHARE`. Admin revocation / disabling /
+/// deletion / password resets hold it `FOR UPDATE` while they lock the
+/// sessions, so taking a session first deadlocks against them. Global order:
+/// IdP → user → session → tokens. Its own statement: the order of row locks
+/// within one statement isn't guaranteed.
+pub async fn lock_user(
+    conn: &impl ConnectionTrait,
+    tenant_id: Uuid,
+    user_id: Uuid,
+) -> anyhow::Result<()> {
+    conn.execute_raw(Statement::from_sql_and_values(
+        conn.get_database_backend(),
+        "SELECT 1 FROM users WHERE tenant_id = $1 AND id = $2 FOR KEY SHARE",
+        [tenant_id.into(), user_id.into()],
+    ))
+    .await
+    .context("locking the user")?;
+    Ok(())
+}
+
 /// Remembers that `application_id` obtained tokens in `session_id` and
 /// returns whether the session still exists (`false`: nothing recorded,
 /// e.g. a refresh after the session ended).
@@ -72,15 +94,7 @@ pub async fn record_client(
     session_id: Uuid,
     application_id: Uuid,
 ) -> anyhow::Result<bool> {
-    // Its own statement: the order of row locks within one statement isn't
-    // guaranteed.
-    conn.execute_raw(Statement::from_sql_and_values(
-        conn.get_database_backend(),
-        "SELECT 1 FROM users WHERE tenant_id = $1 AND id = $2 FOR KEY SHARE",
-        [tenant_id.into(), user_id.into()],
-    ))
-    .await
-    .context("locking the session's user")?;
+    lock_user(conn, tenant_id, user_id).await?;
     let row = conn
         .query_one_raw(Statement::from_sql_and_values(
             conn.get_database_backend(),
