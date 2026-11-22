@@ -64,7 +64,7 @@ proxy sits in front; the server ignores the forwarded host either way).
 | `GET /readyz` — migrations done + DB ping, else 503 (any host) | app | `health` |
 | `GET /` on the apex → 302 to the system admin portal | app | `tenancy` |
 | `POST /telegram/webhook` on the apex — bot updates, secret-token authenticated ([telegram.md](telegram.md)) | app | `telegram::webhook` |
-| `GET /.well-known/openid-configuration` (CORS: [CORS](#cors) for this and JWKS / token / userinfo / revoke, incl. `OPTIONS` preflights) | app | `oidc::discovery`, `cors` |
+| `GET /.well-known/openid-configuration` (CORS: [cors.md](cors.md) for this and JWKS / token / userinfo / revoke, incl. `OPTIONS` preflights) | app | `oidc::discovery`, `cors` |
 | `GET /discovery/keys` — JWKS (next + active + unexpired retired), `max-age=300` | app | `oidc::discovery` |
 | `GET /oauth2/authorize` | app | `oidc::authorize` |
 | `POST /oauth2/token`, `POST /oauth2/devicecode` (RFC 8628 device authorization) | app | `oidc::token`, `oidc::refresh_grant`, `oidc::device_grant`, `oidc::device_authorization` |
@@ -111,7 +111,7 @@ Implemented:
 | `http` | Shared outbound client recipe (rustls on AWS-LC, webpki roots, no redirects, no proxy, timeouts) and capped body reads |
 | `federation` | Upstream OIDC / OAuth2 (relying-party side): `discovery` (discovery + JWKS caches), `exchange` (code exchange), `id_token` (signature + claims), `flow` (begin / finish of a round trip), `state` (single-use `federation_states`), `identities` (links, last-method rule), `group_map` (claim value → group mappings, applied per sign-in), `idps`, `policy`, `profile` (bounding upstream claims), `resolve` (public-address-only DNS), `urls`, `kinds` (per-preset claim checks: Google `hd`, Entra `tid` + `{tenantid}` issuer template + allowed tenants, `xms_edov` / `trust_upstream_email` as verified email), `github` (OAuth2 adapter, no OIDC: `/user` + `/user/emails`, verified primary email, numeric id as subject) — [federation.md](federation.md) |
 | `telegram` | Bot: `api` (reqwest `sendMessage` / `setWebhook`, token never logged; outbox `Courier`), `update` (pure update parsing), `links` (link codes, links), `otp` (sign-in codes), `webhook`, `set_webhook` (CLI) — [telegram.md](telegram.md) |
-| `authn` | Login JSON API + CSRF guard (`AuthnError`, `JsonBody`), `passkey` (passkey sign-in), `invite_passkey` (invitation accepted with a passkey), `cookie` (session, tx-binding and device cookies), `device` (known devices + new sign-in notice), `telegram` (sending sign-in codes), `reset` (password-reset request / completion), `email` (verify / invite link redemption), `federation` / `federation_login` / `federation_link` / `federation_pending` (upstream sign-in, linking callbacks, stage `link`), `device_code` (user-code entry → transaction, device approve / deny), `ctx`, `tx` (login transactions + browser binding + view), `password`, `mfa` (TOTP / recovery / Telegram codes), `complete` (next step, consent, session + code), `consent_eval` (consent state of a pending request), `session` (cookie), `totp` (RFC 6238 via AWS-LC HMAC, sealed secret, replay-protected step), `recovery`, `rate_limit`, `ip` |
+| `authn` | Login JSON API + CSRF guard (`AuthnError`, `JsonBody`), `passkey` (passkey sign-in), `invite_passkey` (invitation accepted with a passkey), `cookie` (session, tx-binding and device cookies), `device` (known devices + new sign-in notice), `telegram` (sending sign-in codes), `reset` (password-reset request / completion), `email` (verify / invite link redemption), `federation` / `federation_login` / `federation_link` / `federation_pending` (upstream sign-in, linking callbacks, stage `link`), `device_code` (user-code entry → transaction, device approve / deny), `ctx`, `tx` (login transactions + browser binding), `tx_view` (`GET /api/authn/tx/{id}`), `password`, `mfa` (TOTP / recovery / Telegram codes), `complete` (next step, consent, session + code), `consent_eval` (consent state of a pending request), `session` (cookie), `totp` (RFC 6238 via AWS-LC HMAC, sealed secret, replay-protected step), `recovery`, `rate_limit`, `ip` |
 | `consent` | Pure evaluation (granted / needs user / needs admin) + grant lookup / merge-upsert |
 | `tokens` | Issuance (`issue_delegated`, `issue_app_only`), `inspect` (access-token resolution incl. user-disabled check), `claims` (pure builders), `jwt` (sign with active key, verify against published keys + `typ`), `opaque`, `refresh` (family state machine, rotation, revocation), `code`, `principal` (groups, roles) |
 | `jobs` | `sweeper` (incl. audit retention), `rotation`, `outbox` (delivery per channel `Courier`: email, Telegram, back-channel logout), leader lock helper |
@@ -222,47 +222,12 @@ FKs: sessions and codes are swept while the tokens they produced live on.
   code is issued immediately; otherwise a login transaction is created.
   `prompt=none` → `login_required` / `consent_required` instead.
 
-### Consent
+### Consent and assignment required
 
-A delegated scope is covered by a user grant or a tenant-wide admin grant
-(`consent_grants.user_id IS NULL`) for (client, resource). Missing scopes
-with `admin_consent_required` → `access_denied` (interactive) /
-`consent_required` (`prompt=none`), description "admin approval required for:
-…" — users are never offered them. Other missing scopes go to the consent
-step; approval merges them into the user's grant. `prompt=consent` asks again
-for all user-consentable scopes. Built-in clients skip consent. OIDC scopes
-need no consent (grants are keyed by a resource app).
-
-### Assignment required
-
-An app with `assignment_required` (default off; not settable on built-in
-apps) only serves principals holding one of its roles (`oidc::assignment`):
-a user needs one of its user roles assigned directly or through a group, an
-app one of its application permissions — exactly the roles that would
-become the `roles` claim. It applies to the app as **client** (users signing
-in to it) and as **resource** (delegated tokens for it need the user's
-assignment, app-only tokens the calling app's). Checked at authorize after
-sign-in and before consent, and again when consent is approved (an
-unassigned user is never asked to consent, nor stores a grant) →
-`access_denied` redirect (only after the redirect URI matched; also with
-`prompt=none`), on code redemption and on every refresh (only the resource
-actually minted for: a multi-resource refresh checks the new resource
-(`mrrt`), a refresh narrowed to OIDC scopes skips it) and on
-`client_credentials` → `invalid_grant`. A refused refresh doesn't rotate
-the token, so a restored assignment works again. In the login flow the check runs once
-sign-in is complete, after any MFA step the policy demands (a password
-alone reveals nothing about assignments) and after a federated sign-in
-applied its group mappings (a mapped group's role counts; at stage `link`
-the mappings apply only on completion, so they don't count for that first
-sign-in). An app requiring
-assignment with no roles admits nobody. Access tokens already issued stay
-valid until they expire. Every grant issuing delegated tokens goes through
-`oidc::token::ensure_assigned` (the device-code grant included; its
-browser side refuses at code entry or after sign-in like authorize and
-denies the device request, `reason` `not_assigned`). The
-portal and `AppLauncher` list only built-in areas (which can't require
-assignment), so there is nothing to hide; a future list of registered apps
-must filter with `oidc::assignment::user_may_use`.
+A delegated scope needs a user or tenant-wide admin grant for (client,
+resource); `admin_consent_required` scopes are never offered to users. An app
+with `assignment_required` serves only principals holding one of its roles,
+checked before consent and on every token grant: [consent.md](consent.md).
 
 ### Token endpoint
 
@@ -283,41 +248,10 @@ must filter with `oidc::assignment::user_may_use`.
   produced (RFC 6749 §4.1.2). Replay detection works while the code row
   exists, i.e. until the sweeper deletes it (≤ 60 s after its 60 s expiry);
   later replays just get `invalid_grant`.
-- `refresh_token`: only for grants that included `offline_access` (public
-  clients too — rotation protects them). Every use rotates; the new token
-  inherits the family's absolute `expires_at` (the client's
-  `refresh_token_ttl_secs` from the first issue). Presenting a rotated token
-  revokes the whole family. `scope` may narrow the access token; the
-  new refresh token keeps the original scopes and resource. Resource scopes
-  beyond the family's grant — of another resource, or more of the grant's
-  own — go through multi-resource refresh below; OIDC scopes never widen.
-  **Multi-resource refresh** (Entra-style, `oidc::mrrt`): `scope` naming
-  another resource than the grant's (or values of its own resource the
-  family's grant lacks) (still one resource per request, so
-  every access token has one `aud`) mints an access token for it when
-  every requested value (`.default` = the client's required permissions on
-  it, as at authorize) is covered **now** by the user's or the tenant-wide
-  admin consent for this client (built-in clients: pre-consented), and the
-  token's sign-in `amr` is multi-factor if the tenant, the client or that
-  resource requires MFA; otherwise `invalid_grant` ("sign in
-  interactively"). Unknown resources (incl. other tenants' apps), values it
-  doesn't expose and an empty `.default` → `invalid_scope`; OIDC scopes
-  still can't exceed the grant. Nothing about the other resource is stored:
-  the rotated token keeps the family's grant, so a withdrawn consent stops
-  the next redemption (and its revocation hits the opaque tokens it
-  produced, which carry that resource). The consent rows are read
-  `FOR SHARE` in the issuing transaction, so a withdrawal racing a
-  redemption waits for it and then revokes the token it issued.
-  Scope / user / consent / MFA checks happen before rotation (a rejected
-  request rolls back), so a rejected request doesn't burn it. Rotation and issuance share one DB transaction, so of two
-  concurrent redemptions the loser sees the token rotated and revokes the
-  family including the winner's new token. A rotation refuses (→ reuse
-  path) when any token of its family is revoked, and family revocation
-  repeats its UPDATE until nothing changes (the first pass waits on the
-  lock of a rotation in flight; the next sees its new token), so a
-  revocation racing a rotation (replay, RFC 7009 revoke, code replay)
-  never leaves a live token. Introspection reports a refresh token
-  inactive if anything in its family is revoked.
+- `refresh_token`: only for grants that included `offline_access`; every
+  use rotates within one family (reuse revokes it), and a refresh may mint
+  an access token for another resource (multi-resource refresh): rotation,
+  races and MRRT in [refresh_tokens.md](refresh_tokens.md).
 - `client_credentials`: confidential clients only; `scope` must be exactly
   `{resource}/.default`; `roles` = app roles of the resource assigned to the
   client app (only roles allowing `application` members; delegated tokens
@@ -381,36 +315,9 @@ ID token by Headlamp, Grafana) read the ID token of a client app with
 
 ### CORS
 
-Cross-origin SPAs (public client + PKCE on another host) need to read the
-protocol endpoints from the browser. CORS — preflight and actual responses —
-exists **only** on discovery, JWKS, `/oauth2/token`, `/oauth2/revoke` and
-`/oauth2/userinfo`; never on the login API, the management API, introspection
-(confidential clients only), `/oauth2/devicecode` or logout (the `POST` is the tenant's own SPA,
-CSRF-checked by `Origin`; `GET` is a navigation).
-
-- **Allowed origins of an app** = its explicit `web_origins` ∪, for a public
-  client only, the origins of its `redirect_uris` (computed per request, never
-  stored; post-logout URIs don't count). A confidential client's redirect URIs
-  are server-side callbacks, so they grant nothing.
-- **Origin format:** exactly what a browser sends — `https://host[:port]` or
-  `http://127.0.0.1|[::1][:port]`, lowercase, no default port, no path,
-  trailing slash, query, fragment, userinfo or wildcard (`cors::validate_origin`,
-  enforced on `web_origins` input). Matching is an exact string compare, so a
-  loopback redirect registered without a port yields the portless origin only.
-- **Who may read what:** discovery, JWKS, userinfo → any origin some app of
-  the tenant allows. Token / revoke → only an origin the client named in the
-  request allows (Basic user name, else the form's `client_id`), whether or
-  not its authentication succeeds, so an SPA can read `invalid_grant`. A
-  preflight carries no body or credentials, so token / revoke preflights pass
-  any origin of the tenant and the actual response is gated per client.
-  Another tenant's origins mean nothing here.
-- Responses always carry `Vary: Origin`; `Access-Control-Allow-Origin`
-  echoes the request's `Origin` only when allowed; never
-  `Access-Control-Allow-Credentials` (bearer tokens / client ids, no
-  cookies). Preflights answer `204` with `Allow-Methods` (the route's),
-  `Allow-Headers: authorization, content-type`, `Max-Age: 600`, or a bare
-  `204` when refused. Same-origin requests (the built-in SPAs) need no CORS
-  and get none. A failed origin lookup grants nothing (logged).
+Only discovery, JWKS, token, revoke and userinfo answer cross-origin; an
+app's allowed origins are its `web_origins` plus (public clients) its
+redirect URIs' origins: [cors.md](cors.md).
 
 ### Sessions & CSRF
 
@@ -461,12 +368,8 @@ Every mutation writes its `audit_events` row in the same transaction; the
 login API records sign-ins (success with the new session, failures with a
 reason code; rate-limited attempts are not logged) and forced password
 changes; the token endpoint records refresh-token reuse and code replay.
-Withdrawing a consent grant revokes the client's refresh families and
-opaque access tokens for the resource (one user, or everyone for an admin
-grant); deleting a scope revokes the families holding it and every opaque
-access token for the resource carrying it (incl. ones minted by a
-multi-resource refresh from another resource's family), and refresh never
-re-mints a scope the resource no longer exposes.
+Withdrawing a consent grant or deleting a scope revokes the tokens built on
+it: [refresh_tokens.md](refresh_tokens.md#revocation-by-directory-changes).
 
 ## Sign-in methods
 

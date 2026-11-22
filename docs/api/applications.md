@@ -22,7 +22,7 @@ Validation:
   port, any port matches). No fragment, no userinfo, no whitespace,
   ≤ 2048 characters. `http://localhost` is rejected (may resolve off-host).
 - `web_origins` (≤ 32, no duplicates): browser origins allowed to read the
-  protocol endpoints cross-origin (CORS, [architecture](../architecture.md#cors)),
+  protocol endpoints cross-origin (CORS, [cors.md](../cors.md)),
   exactly as a browser serializes them: `https://host[:port]` (lowercase DNS
   name or IPv4, punycode for IDNs) or `http://127.0.0.1[:port]` /
   `http://[::1][:port]`; no path, trailing `/`, query, fragment, userinfo,
@@ -81,7 +81,7 @@ Validation:
   Refusals: authorize → `access_denied`, token endpoint → `invalid_grant`;
   re-checked on every code redemption and refresh, including a refresh
   for another resource (multi-resource refresh). Rules in
-  [../architecture.md](../architecture.md#assignment-required).
+  [../consent.md](../consent.md#assignment-required).
 
 ## Secrets
 
