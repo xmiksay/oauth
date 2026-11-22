@@ -22,8 +22,12 @@ pub fn clean_email(raw: &str) -> Option<String> {
 
 /// A short opaque value (`amr` entry, `acr`): 1–256 bytes, no controls.
 pub fn clean_token(raw: &str) -> Option<String> {
-    let ok = (1..=MAX_TOKEN_BYTES).contains(&raw.len()) && !raw.chars().any(char::is_control);
-    ok.then(|| raw.to_owned())
+    is_clean_token(raw).then(|| raw.to_owned())
+}
+
+/// What [`clean_token`] accepts, without the copy.
+pub fn is_clean_token(raw: &str) -> bool {
+    (1..=MAX_TOKEN_BYTES).contains(&raw.len()) && !raw.chars().any(char::is_control)
 }
 
 #[cfg(test)]

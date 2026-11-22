@@ -209,6 +209,10 @@ providers are never touched:
   change), so the source reads the same whichever came first; when the
   claim value goes, only the mark goes. Another provider's membership is
   left as it is.
+- A membership is kept by one provider at a time. When two providers map
+  the same group and the keeping one lets go (its claim value goes), the
+  membership goes; the other provider adds it again at its own next
+  sign-in while it still grants the group.
 - An administrator adding a user to a group a mapping put them in makes
   the row manual as well; when the claim value goes, only the mapping mark
   goes and the membership stays.

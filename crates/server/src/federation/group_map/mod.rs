@@ -7,7 +7,7 @@
 
 mod db;
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use entity::idp_group_mappings;
 use serde::{Deserialize, Serialize};
@@ -44,28 +44,36 @@ pub struct Mapped {
 /// (`_claim_names`, Entra's group overage) — decides nothing.
 pub fn extract(claims: &Map<String, Value>, asked: &[Pair]) -> Mapped {
     let moved = claims.get("_claim_names").and_then(Value::as_object);
+    // Each claim's valid values, built once however many pairs ask it.
+    let mut stated: BTreeMap<&str, Option<BTreeSet<&str>>> = BTreeMap::new();
     let mut out = Mapped::default();
     for (claim, value) in asked {
-        if moved.is_some_and(|m| m.contains_key(claim)) {
-            continue;
-        }
-        let carried = match claims.get(claim) {
-            Some(Value::String(v)) => profile::clean_token(v).as_ref() == Some(value),
-            Some(Value::Array(list)) if list.len() > MAX_CLAIM_VALUES => continue,
-            Some(Value::Array(list)) => list
-                .iter()
-                .filter_map(Value::as_str)
-                .filter_map(profile::clean_token)
-                .any(|v| v == *value),
-            _ => false,
-        };
+        let values = stated.entry(claim.as_str()).or_insert_with(|| {
+            if moved.is_some_and(|m| m.contains_key(claim)) {
+                return None;
+            }
+            match claims.get(claim) {
+                Some(Value::String(v)) => Some(valid([v.as_str()])),
+                Some(Value::Array(list)) if list.len() > MAX_CLAIM_VALUES => None,
+                Some(Value::Array(list)) => Some(valid(list.iter().filter_map(Value::as_str))),
+                _ => Some(BTreeSet::new()),
+            }
+        });
+        let Some(values) = values else { continue };
         let pair = (claim.clone(), value.clone());
-        if carried {
+        if values.contains(value.as_str()) {
             out.present.insert(pair.clone());
         }
         out.read.insert(pair);
     }
     out
+}
+
+fn valid<'a>(values: impl IntoIterator<Item = &'a str>) -> BTreeSet<&'a str> {
+    values
+        .into_iter()
+        .filter(|v| profile::is_clean_token(v))
+        .collect()
 }
 
 /// The groups `mappings` grant for `mapped` and, apart, those a mapping

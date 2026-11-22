@@ -2,6 +2,8 @@
 //! last-sign-in-method rule, which counts them next to passwords and
 //! passkeys.
 
+use std::net::IpAddr;
+
 use anyhow::Context;
 use entity::{identity_providers, user_identities, users};
 use sea_orm::{
@@ -11,8 +13,8 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::profile;
-use crate::{directory, passkey};
+use super::{group_map, profile};
+use crate::{audit, directory, passkey};
 
 /// The upstream identity `(idp, subject)` of this tenant, if linked.
 pub async fn find(
@@ -245,12 +247,16 @@ pub async fn linked_users(
 /// Unlinks everyone from `idp`, drops its round trips in flight and sends
 /// login transactions parked on it back to the password stage (its issuer,
 /// client or discovery URL changed: the old subjects mean nothing any
-/// more). Returns how many identities went.
+/// more), and drops the memberships its mappings keep (nothing would keep
+/// them in line any more; each removal audited as `actor`). Returns how
+/// many identities and memberships went.
 pub async fn unlink_all(
     conn: &impl ConnectionTrait,
     tenant_id: Uuid,
     idp_id: Uuid,
-) -> anyhow::Result<u64> {
+    actor: audit::Actor,
+    ip: Option<IpAddr>,
+) -> anyhow::Result<(u64, u64)> {
     // login_transactions before federation_states: the same table order as
     // the sweeper (and as login completion), so the two never wait on each
     // other's rows the other way round.
@@ -275,7 +281,8 @@ pub async fn unlink_all(
         .exec(conn)
         .await
         .context("unlinking identities")?;
-    Ok(removed.rows_affected)
+    let memberships = group_map::drop_owned(conn, tenant_id, idp_id, None, None, actor, ip).await?;
+    Ok((removed.rows_affected, memberships))
 }
 
 /// Users for whom `idp` is the only way in: no password, no passkey, no
