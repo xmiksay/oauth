@@ -38,7 +38,9 @@ unknown fields rejected. Per kind ([../federation.md](../federation.md#presets))
 containing `{tenantid}` only for `entra`, once, in its path, and with a
 `discovery_url` (which can't contain it); `allowed_tenants` (GUIDs,
 lower-cased, at most 50) only with such a templated issuer, and required
-with it for `trust_upstream_email`; `github`: the `issuer` a bare web
+with it for `trust_upstream_email` and while the provider has group
+mappings (clearing it, or switching to a templated issuer, with mappings
+is a 400); `github`: the `issuer` a bare web
 origin (no path, query or credentials), no `discovery_url`, `client_auth`
 `post`, `trust_upstream_mfa` and `trust_upstream_email` false, and a stored
 `client_secret` whenever it is enabled (GitHub's token endpoint always
@@ -50,7 +52,9 @@ addresses ([../federation.md](../federation.md#security-model)).
 Group mappings ([../federation.md](../federation.md#group-mappings)):
 `claim` 1–64 of `A-Z a-z 0-9 _ . : / -`, `value` 1–256 bytes without
 control characters (kept exactly, matched exactly), `group_id` a group of
-the tenant (400 otherwise); the same `(claim, value, group)` twice is 409,
+the tenant (400 otherwise); a provider with a `{tenantid}` issuer and no
+`allowed_tenants` can't have mappings (400: any Entra tenant could grant
+itself the groups); the same `(claim, value, group)` twice is 409,
 as is a 101st mapping of one provider. Mappings are not edited — delete and
 add. A new mapping applies from each user's next sign-in.
 

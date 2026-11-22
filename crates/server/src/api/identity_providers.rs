@@ -253,6 +253,13 @@ pub async fn update(
     }
     seal(&state, &mut row, tenant_id, id, secret)?;
     idp_rules::check_secret(&row)?;
+    if fields.contains(&"issuer") || fields.contains(&"allowed_tenants") {
+        let stored = idp_rules::Row::of(&row).ok_or_else(|| {
+            AppError::Internal(anyhow::anyhow!("identity provider row incomplete"))
+        })?;
+        let mappings = group_map::list(&txn, tenant_id, id).await?.len();
+        idp_rules::check_mappings(&stored, mappings as u64)?;
+    }
     if fields.contains(&"email_domains") {
         let domains = row.email_domains.try_as_ref().cloned().unwrap_or_default();
         ensure_domains_free(&txn, tenant_id, id, &domains).await?;

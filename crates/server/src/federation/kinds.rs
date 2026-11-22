@@ -64,6 +64,13 @@ pub fn template(issuer: &str) -> Option<(&str, &str)> {
     issuer.split_once(TENANT_PLACEHOLDER)
 }
 
+/// A templated (multi-tenant) issuer with no `allowed_tenants`: any
+/// directory signs, so claims its own admins assign (`wids`, `roles`,
+/// group names) prove nothing about us.
+pub fn any_tenant(issuer: &str, allowed_tenants: &[String]) -> bool {
+    template(issuer).is_some() && allowed_tenants.is_empty()
+}
+
 /// The tenant id `iss` fills a templated `issuer` with, if it matches.
 fn templated_tenant<'i>(issuer: &str, iss: &'i str) -> Option<&'i str> {
     let (prefix, suffix) = template(issuer)?;

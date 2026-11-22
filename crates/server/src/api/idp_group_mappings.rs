@@ -33,7 +33,7 @@ use crate::{
     audit::{EventType, Target},
     authz::{Access, Area},
     error::{AppError, AppResult},
-    federation::{group_map, idps, profile},
+    federation::{group_map, idps, kinds, profile},
 };
 
 fn view(m: &idp_group_mappings::Model, group: Option<&groups::Model>) -> Value {
@@ -127,7 +127,12 @@ pub async fn create(
     let value = claim_value(&body.value)?;
     let tenant_id = caller.tenant_id();
     let txn = state.db.begin().await?;
-    lock(&txn, tenant_id, idp_id).await?;
+    let idp = lock(&txn, tenant_id, idp_id).await?;
+    if kinds::any_tenant(&idp.issuer, &idp.allowed_tenants) {
+        return Err(AppError::BadRequest(
+            "a multi-tenant entra provider needs allowed_tenants before group mappings".into(),
+        ));
+    }
     let group = referenced(find_group(&txn, tenant_id, body.group_id).await, "group")?;
     let count = idp_group_mappings::Entity::find()
         .filter(idp_group_mappings::Column::TenantId.eq(tenant_id))

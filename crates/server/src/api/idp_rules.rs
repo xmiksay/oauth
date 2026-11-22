@@ -170,6 +170,19 @@ pub fn check(row: &Row<'_>) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Group mappings turn upstream claims into local groups: on a provider
+/// any Entra tenant can sign for, a stranger's tenant could grant itself
+/// ours (`wids` / `roles` are the same everywhere). `mappings` is the
+/// provider's count, read under its row lock.
+pub fn check_mappings(row: &Row<'_>, mappings: u64) -> Result<(), AppError> {
+    if mappings > 0 && kinds::any_tenant(row.issuer, row.allowed_tenants) {
+        return Err(bad(
+            "a multi-tenant entra provider with group mappings needs allowed_tenants",
+        ));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,6 +283,24 @@ mod tests {
             ..entra
         };
         assert!(check(&single).is_ok());
+    }
+
+    #[test]
+    fn mappings_on_multi_tenant_entra_need_allowed_tenants() {
+        let mut entra = row(IdpKind::Entra, MULTI);
+        assert!(check_mappings(&entra, 0).is_ok());
+        assert!(matches!(
+            check_mappings(&entra, 1),
+            Err(AppError::BadRequest(m)) if m.contains("needs allowed_tenants")
+        ));
+        let tenants = ["9188040d-6c67-4c5b-b112-36a304b66dad".to_owned()];
+        entra.allowed_tenants = &tenants;
+        assert!(check_mappings(&entra, 1).is_ok());
+        let single = row(
+            IdpKind::Entra,
+            "https://login.example/9188040d-6c67-4c5b-b112-36a304b66dad/v2.0",
+        );
+        assert!(check_mappings(&single, 1).is_ok());
     }
 
     #[test]

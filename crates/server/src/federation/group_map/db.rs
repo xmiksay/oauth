@@ -4,7 +4,7 @@
 use std::net::IpAddr;
 
 use anyhow::Context;
-use entity::{enums::Outcome, group_members, idp_group_mappings};
+use entity::{enums::Outcome, group_members, identity_providers, idp_group_mappings};
 use sea_orm::{
     ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder,
     QuerySelect, sea_query::Expr,
@@ -13,7 +13,10 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::{Mapped, Pair, wanted};
-use crate::audit::{self, EventType};
+use crate::{
+    audit::{self, EventType},
+    federation::kinds,
+};
 
 pub async fn list(
     conn: &impl ConnectionTrait,
@@ -30,12 +33,18 @@ pub async fn list(
 }
 
 /// The `(claim, value)` pairs the provider's mappings name: all the ID
-/// token check keeps of the token for them.
+/// token check keeps of the token for them. None for a provider any Entra
+/// tenant can sign for (`kinds::any_tenant`): the API refuses mappings
+/// there, but rows older than that rule must still decide nothing, so the
+/// memberships they kept stay undecided.
 pub async fn pairs(
     conn: &impl ConnectionTrait,
-    tenant_id: Uuid,
-    idp_id: Uuid,
+    idp: &identity_providers::Model,
 ) -> anyhow::Result<Vec<Pair>> {
+    if kinds::any_tenant(&idp.issuer, &idp.allowed_tenants) {
+        return Ok(Vec::new());
+    }
+    let (tenant_id, idp_id) = (idp.tenant_id, idp.id);
     idp_group_mappings::Entity::find()
         .select_only()
         .column(idp_group_mappings::Column::Claim)
