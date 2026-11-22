@@ -12,11 +12,9 @@
 //! its client — revoking the refresh token and queueing the notification.
 mod common;
 
-use std::time::Duration;
-
 use axum::http::StatusCode;
 use common::{
-    backchannel::{queued, set_uri},
+    backchannel::{queued, set_uri, wait_for_lock_waiter},
     browser::{Browser, authorize_url},
     flow::{Fixture, WEB_CB},
 };
@@ -85,6 +83,8 @@ async fn session_tokens(f: &Fixture, sid: Uuid) -> Vec<refresh_tokens::Model> {
 fn assert_refused(resp: &(StatusCode, Value)) {
     assert_eq!(resp.0, StatusCode::BAD_REQUEST, "{:?}", resp.1);
     assert_eq!(resp.1["error"], "invalid_grant");
+    // Not some other refusal (an expired code would pass vacuously).
+    assert_eq!(resp.1["error_description"], "the sign-in session has ended");
 }
 
 #[tokio::test]
@@ -109,7 +109,7 @@ async fn redemption_waits_for_a_logout_holding_the_session() {
     let (_browser, code, sid) = code(&f).await;
     let txn = begin_logout(&f, sid).await;
     let (redeemed, ()) = tokio::join!(redeem(&f, &code), async {
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        wait_for_lock_waiter(&f.db).await;
         finish_logout(&f, txn, sid).await;
     });
     assert_refused(&redeemed);
@@ -137,7 +137,7 @@ async fn logout_waits_for_a_redemption_holding_the_session() {
             finish_logout(&f, txn, sid).await;
         },
         async {
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            wait_for_lock_waiter(&f.db).await;
             redemption.commit().await.unwrap();
         }
     );

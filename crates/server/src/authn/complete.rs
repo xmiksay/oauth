@@ -207,6 +207,11 @@ async fn finish(
         super::federation_pending::refuse_changed(ctx, &tx, user.id, idp_id).await?;
         return Err(AuthnError::Upstream);
     }
+    // Then the user, before the transaction row and any session (lock order
+    // IdP → user → session, see `backchannel::lock_user`): the sessions
+    // locked below and the session / device / code rows inserted for the
+    // user would otherwise deadlock against an admin revocation.
+    crate::backchannel::lock_user(&txn, ctx.tenant.id, user.id).await?;
     // Claim the transaction first: a concurrent duplicate gets no second code.
     if !tx::take(&txn, tx.row.id, from).await? {
         return Err(AuthnError::WrongStep);
