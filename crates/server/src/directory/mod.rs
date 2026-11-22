@@ -4,6 +4,7 @@
 
 pub mod builtin_apps;
 pub mod password;
+mod retired_slugs;
 pub mod slug;
 mod system_tenant;
 mod tenants;
@@ -13,6 +14,9 @@ use sea_orm::{DbErr, RuntimeErr, sqlx};
 
 use crate::error::AppError;
 
+pub use retired_slugs::{
+    ensure_not_retired as ensure_slug_not_retired, servable as servable_tenant,
+};
 pub use system_tenant::{SlugOutcome, Via as SlugVia, reconcile_slug as reconcile_system_slug};
 pub(crate) use tenants::create_system_tenant;
 pub use tenants::{
