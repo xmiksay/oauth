@@ -20,7 +20,7 @@ CREATE TABLE idp_group_mappings (
     tenant_id uuid NOT NULL,
     idp_id uuid NOT NULL,
     claim text NOT NULL CHECK (claim ~ '^[A-Za-z0-9_.:/-]{1,64}$'),
-    value text NOT NULL CHECK (char_length(value) BETWEEN 1 AND 256),
+    value text NOT NULL CHECK (octet_length(value) BETWEEN 1 AND 256),
     group_id uuid NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
     UNIQUE (tenant_id, id),

@@ -261,7 +261,7 @@ can be the `groups` claim (`groups_claim_format`).
 | `GET groups` *paged* `?search=` | – | `Group`s |
 | `POST groups` | `{ display_name, description? }` | 201 `Group` (409 if the name is taken) |
 | `GET groups/{id}` · `PATCH groups/{id}` · `DELETE groups/{id}` | `{ display_name?, description? }` | `Group` / 204 (409 if the new name is taken) |
-| `GET groups/{id}/members` *paged* | – | `User`s, each with the membership's source: `manual` (an administrator added it) and `idp_id` (kept by that identity provider's group mappings, else `null`; a mapped membership removed by hand comes back at the user's next sign-in) |
+| `GET groups/{id}/members` *paged* | – | `User`s, each with the membership's source: `manual` (an administrator added it) and `idp_id` (kept by that identity provider's group mappings, else `null`; a manual membership a mapping also grants carries both; a mapped membership removed by hand comes back at the user's next sign-in) |
 | `POST groups/{id}/members` | `{ user_id }` | 204 (409 if already a member; a membership only a federation group mapping kept becomes manual as well, so it stays when the mapping lets go) |
 | `DELETE groups/{id}/members/{user_id}` | – | 204 (also a mapped membership; a mapping adds it again at the user's next sign-in while the claim value is there) |
 

@@ -121,7 +121,7 @@ pub async fn finish(
     consumed: &Consumed,
     params: &HashMap<String, String>,
     reauth: Reauth,
-    mapped_claims: &[String],
+    mapped_claims: &[super::group_map::Pair],
 ) -> Result<Claims, Failure> {
     if params.contains_key("error") {
         return Err(Failure("upstream_error"));

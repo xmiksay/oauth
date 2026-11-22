@@ -75,7 +75,7 @@ pub async fn complete(
         return back("upstream_failed");
     }
     let reauth = flow::Reauth::of(&tx.req);
-    let mapped = group_map::claim_names(conn, ctx.tenant.id, idp.id).await?;
+    let mapped = group_map::pairs(conn, ctx.tenant.id, idp.id).await?;
     let finished = flow::finish(
         ctx.state,
         &ctx.tenant.slug,
@@ -258,6 +258,9 @@ async fn sign_in(
         drop(txn);
         return fail(ctx, idp, "idp_repointed").await;
     }
+    // Deliberately before any local MFA / password-change stage: the
+    // upstream is authoritative for its claims, and this is the transaction
+    // holding the provider `FOR SHARE` (docs/federation.md#group-mappings).
     group_map::sync(&txn, ctx.tenant.id, idp.id, user.id, ctx.ip, &claims.mapped).await?;
     txn.commit().await?;
     let user = sync_profile(ctx, user, claims).await?;
