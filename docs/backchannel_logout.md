@@ -74,8 +74,11 @@ too; any other order deadlocks against the admin paths. The same
 `backchannel::lock_user` comes first wherever a session of the user is
 locked or rows referencing the user are inserted: sign-in completion
 (`authn::complete::finish`, after the IdP lock, before the login
-transaction, the session it builds on or the one it replaces) and the
-device code grant (the approving user before the request row). A
+transaction, the session it builds on or the one it replaces), a
+federated sign-in (after the IdP lock, before touching the identity and
+applying group mappings), the refresh grant (right after `BEGIN`, before a
+multi-resource refresh locks consent rows) and the device code grant (the
+approving user before the request row). A
 refresh that loses this race gets a plain `invalid_grant` — a token
 revoked (not rotated) meanwhile is no replay, so no reuse alarm.
 

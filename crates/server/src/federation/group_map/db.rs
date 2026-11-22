@@ -91,9 +91,10 @@ pub async fn sync(
 }
 
 /// Brings `user_id`'s memberships owned by `idp_id` in line with `mapped`.
-/// Run in the sign-in transaction, after `idps::lock_current`: mapping
-/// writes lock the provider `FOR UPDATE`, so the mappings read here stay
-/// the current ones until it commits.
+/// Run in the sign-in transaction, after `idps::lock_current` and then
+/// `backchannel::lock_user` (the lock order): mapping writes lock the
+/// provider `FOR UPDATE`, so the mappings read here stay the current ones
+/// until it commits.
 pub async fn apply(
     conn: &impl ConnectionTrait,
     tenant_id: Uuid,

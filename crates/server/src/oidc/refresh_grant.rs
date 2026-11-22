@@ -95,6 +95,10 @@ pub async fn grant(
     // under lock (`mrrt::resolve`); a request rejected before `mark_rotated`
     // rolls back and does not burn the token.
     let txn = conn.begin().await?;
+    // The user first (global order user → consent / session → tokens, see
+    // `backchannel::lock_user`): `mrrt::resolve` locks consent rows, which
+    // deleting the user (holding it `FOR UPDATE`) cascades to.
+    backchannel::lock_user(&txn, tenant.id, row.user_id).await?;
     let (oidc, resource, values) = match params.get("scope") {
         None => (original_oidc, original_resource, original_values),
         Some(raw) => {
