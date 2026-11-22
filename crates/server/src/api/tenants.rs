@@ -281,15 +281,14 @@ pub async fn update(
         // Startup refuses enabled tenants whose slug fails today's rules, so
         // enabling one would stop every new replica.
         let tenant = by_slug(&state.db, &slug).await?;
-        if !tenant.is_system
-            && slug::validate(&tenant.slug, &state.config.system_tenant_slug).is_err()
-        {
-            return Err(AppError::BadRequest(format!(
-                "tenant slug `{}` is no longer a valid host name; the tenant can't be re-enabled",
-                tenant.slug
-            )));
-        }
         if !tenant.is_system {
+            if slug::validate(&tenant.slug, &state.config.system_tenant_slug).is_err() {
+                return Err(AppError::BadRequest(format!(
+                    "tenant slug `{}` is no longer a valid host name; the tenant can't be re-enabled",
+                    tenant.slug
+                )));
+            }
+            // Keeps the shared "reserved" wording that create and the docs use.
             directory::ensure_slug_not_retired(&state.db, &tenant.slug).await?;
         }
     }
