@@ -7,7 +7,11 @@ One Vue 3 SPA (TypeScript, Tailwind v4, Pinia, vue-router) with the `/` portal, 
 page and four areas — `/login`, `/logout`, `/myaccount`, `/admin` — built to `web/dist` and served
 by the backend same-origin on every tenant host (`spa`). The tenant is the
 first hostname label (`stores/tenant`; a single-label dev apex like `localhost`
-redirects to `system.<host>/admin`); dev runs Vite on `*.localhost:5173`,
+redirects to `<system slug>.<host>/admin`, the slug being `SYSTEM_TENANT_SLUG` from the repo's
+`.env`, which `vite.config.ts` bakes in as `__SYSTEM_TENANT_SLUG__`, default `system`; production
+never serves the SPA on the apex). Whether the page's tenant IS the system tenant comes from
+`me.tenant_is_system` (`auth.isSystemAdmin` = that + GlobalAdmin), never from the host label;
+dev runs Vite on `*.localhost:5173`,
 proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`).
 
 - **Portal** (`areas/portal`, route `portal` at `/`, title "Dashboard · {tenant}"): signed in
@@ -182,8 +186,8 @@ proxying backend paths with the `Host` kept (`PUBLIC_URL=http://localhost:5173`)
   (`AppSecrets`) offers "Never" as an expiry only when the tenant allows it (read from
   `GET settings`) and lists such secrets as "Never". Caller-supplied values are an API /
   automation feature, not offered in the UI.
-- **Tenants** (admin `areas/admin/access/TenantsPage`, nav "Tenants": only on the system host
-  for a Global Admin): list, create (first admin's one-time password via `SecretOnceDialog`),
+- **Tenants** (admin `areas/admin/access/TenantsPage`, nav "Tenants": only for a Global Admin
+  of the system tenant, `auth.isSystemAdmin`): list, create (first admin's one-time password via `SecretOnceDialog`),
   edit, enable / disable. Every tenant but the system one links "Users" to
   `/admin/tenants/{slug}/users` (`TenantUsersPage`, also for disabled tenants), whose
   `TenantUsersList` (fresh search, page and selection per tenant because AdminLayout keys the

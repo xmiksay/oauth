@@ -103,6 +103,8 @@ export type Me = UserDetail & {
    * `telegram`: a Telegram bot is configured (sign-in codes, notifications).
    */
   features: { email: boolean; telegram: boolean }
+  /** The page's tenant is the system tenant (tenant management); its slug is configurable. */
+  tenant_is_system: boolean
 }
 
 /** `GET me/telegram`; `username` (no `@`) may be null even when linked. */

@@ -28,8 +28,17 @@ describe('tenantOrigin', () => {
 
 describe('systemAdminUrl', () => {
   it('prefixes the dev apex with the system label', () => {
-    expect(systemAdminUrl({ protocol: 'http:', host: 'localhost:5173' })).toBe(
+    expect(systemAdminUrl({ protocol: 'http:', host: 'localhost:5173' }, 'system')).toBe(
       'http://system.localhost:5173/admin',
+    )
+    expect(systemAdminUrl({ protocol: 'http:', host: 'localhost:5173' }, 'config')).toBe(
+      'http://config.localhost:5173/admin',
+    )
+  })
+
+  it('defaults to the configured system slug', () => {
+    expect(systemAdminUrl({ protocol: 'http:', host: 'localhost:5173' })).toBe(
+      `http://${__SYSTEM_TENANT_SLUG__}.localhost:5173/admin`,
     )
   })
 })

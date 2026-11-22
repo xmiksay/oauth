@@ -30,7 +30,7 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
 |---|---|
 | `make dev-db` | Postgres 17 + Mailpit (SMTP :1025, inbox http://localhost:8025) via docker compose (creds in `.env.example`) |
 | `make run` | `oauth serve`, loads `.env` |
-| `make web-dev` | Vite dev server on `*.localhost:5173` proxying to :8080 with `Host` kept (needs `PUBLIC_URL=http://localhost:5173`, the `.env.example` default); open `http://system.localhost:5173/admin` |
+| `make web-dev` | Vite dev server on `*.localhost:5173` proxying to :8080 with `Host` kept (needs `PUBLIC_URL=http://localhost:5173`, the `.env.example` default); open `http://system.localhost:5173/admin` (`system` = `SYSTEM_TENANT_SLUG`) |
 | `make build` / `make web-build` | release binary + SPA / SPA only |
 | `make lint` | `lint-rust` (`cargo fmt --check`, clippy `-D warnings`) + `lint-web` (eslint, vue-tsc) |
 | `make fmt` | `cargo fmt` |
@@ -39,7 +39,7 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
 | `make test-integration` | `cargo test --workspace --test '*'`: one fresh database per test on `TEST_DATABASE_URL` (default the local `postgres://postgres@localhost:5432/postgres`: a TCP superuser URL, Postgres ≥ 17; dropped after the test); `TEST_DATABASE_URL=` (empty) → testcontainers Postgres 17 (Docker; what CI runs) |
 | `make test-db-clean` | drop `oauth_it_*` databases and roles that killed test runs left on `TEST_DATABASE_URL` — only while no tests run (it drops live ones too) |
 | `make docker` | build image (`IMAGE=` to override tag) |
-| `make bootstrap ADMIN_EMAIL=… [RESET=1]` | migrate, then create `system` tenant + Global Admin (idempotent; `RESET=1` issues a new one-time password) |
+| `make bootstrap ADMIN_EMAIL=… [RESET=1]` | migrate, then create the system tenant (`SYSTEM_TENANT_SLUG`) + Global Admin (idempotent; `RESET=1` issues a new one-time password) |
 | `make telegram-webhook` | `oauth telegram set-webhook`: register `{PUBLIC_URL}/telegram/webhook` + secret with the bot (loads `.env`) |
 
 Toolchains are pinned: `rust-toolchain.toml` (1.99.0) and `.nvmrc` (22). CI reads
@@ -53,6 +53,9 @@ See `.env.example` (authoritative, commented). Required: `DATABASE_URL`,
 (text|json), `RUST_LOG`, `KEY_ROTATION_DAYS` (90), `KEY_PREPUBLISH_HOURS` (48),
 `SESSION_TTL_HOURS` (24), `WEB_DIST_DIR` (web/dist), `COOKIE_SECURE` (true;
 `false` only with an `http://` `PUBLIC_URL`), `TRUSTED_PROXY_HEADER` (unset),
+`SYSTEM_TENANT_SLUG` (system), `SYSTEM_TENANT_RENAME` (0; `1` lets startup
+rename a stored system tenant to a changed slug — new issuer, see
+[docs/deploy.md](../docs/deploy.md#system-tenant-slug)),
 `SMTP_URL` + `SMTP_FROM` (both or neither; unset hides every email feature —
 [docs/email.md](../docs/email.md)). `SMTP_URL` is a secret, `SMTP_FROM`
 plain config. `TELEGRAM_BOT_TOKEN` + `TELEGRAM_WEBHOOK_SECRET` (secret) +
@@ -95,14 +98,20 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   several `Host` headers → 400; default port normalised; unknown / disabled /
   other-port / nested hosts and tenants with a now-invalid slug → 404, apex `/` →
   system admin portal); never read `X-Forwarded-Host` / `Forwarded`. Startup
-  (`db::migrate_and_reconcile`) refuses enabled tenants whose slug fails
-  `slug::validate`. Routes have no tenant
+  (`db::migrate_and_reconcile`) first reconciles the system tenant's slug with
+  `config.system_tenant_slug` (`directory::reconcile_system_slug`: mismatch →
+  refuse, or rename with `SYSTEM_TENANT_RENAME=1`), then refuses enabled
+  tenants whose slug fails `slug::validate`. Never hard-code `system`: use
+  `config.system_tenant_slug` or the tenant's `is_system` (SPA:
+  `me.tenant_is_system`). Routes have no tenant
   segment; take the `Tenant` extractor. Built-in SPA redirect URIs derive from
   `PUBLIC_URL`; `builtin_apps::reconcile_all` rewrites them at startup.
 - Tenant slugs are DNS labels: `^[a-z0-9][a-z0-9-]{1,62}$` (DB CHECK), plus
   (`slug::validate`) no trailing `-` and no `--` as characters 3–4 (`xn--`),
   minus `directory::slug::RESERVED_SLUGS` (service host names like `www`,
-  `mail`, `api`, and `system`). Older tenants may violate the newer rules:
+  `mail`, `api`, and `system`) and the configured system slug
+  (`slug::validate(slug, &config.system_tenant_slug)`; `slug::validate_system`
+  checks `SYSTEM_TENANT_SLUG` itself). Older tenants may violate the newer rules:
   startup refuses any such tenant that is enabled, and re-enabling one through
   `PATCH /api/v1/tenants/{slug}` is a 400.
 - Application crypto goes through one provider: AWS-LC via `aws-lc-rs` for key

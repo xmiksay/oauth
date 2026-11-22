@@ -7,7 +7,7 @@ and objects there).
 
 | Method & path | Body | Response |
 |---|---|---|
-| `GET me` | – | `Me` = `UserDetail` + `features: { email, telegram }` (whether the server can send email / has a Telegram bot) |
+| `GET me` | – | `Me` = `UserDetail` + `features: { email, telegram }` (whether the server can send email / has a Telegram bot) + `tenant_is_system` (the host's tenant is the system tenant, whose slug is configurable: the SPA shows tenant management there) |
 | `PATCH me` | `{ display_name }` | `Me` (same shape as `GET me`) |
 | `POST me/change-password` | `{ current_password, new_password }` or `{ passkey, new_password }` | 204 (the passkey variant lets a passkey-only user set a first password) |
 | `POST me/verify-email` | – | 202 `{ sent: true }`: a 24 h verification link to the current address (409 already verified, 400 email not configured) |

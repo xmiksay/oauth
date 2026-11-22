@@ -18,10 +18,7 @@ use entity::tenants;
 use crate::{
     app::AppState,
     config::HostKind,
-    directory::{
-        self,
-        slug::{self, SYSTEM_TENANT_SLUG},
-    },
+    directory::{self, slug},
     error::AppError,
     oidc::redirect,
     telegram::webhook,
@@ -68,7 +65,11 @@ async fn active(state: &AppState, slug: &str) -> Result<Option<Tenant>, AppError
     // covers one re-enabled at runtime (`www` must never serve a sign-in page).
     Ok(directory::find_tenant_by_slug(&state.db, slug)
         .await?
-        .filter(|t| !t.disabled && (t.is_system || slug::validate(&t.slug).is_ok()))
+        .filter(|t| {
+            !t.disabled
+                && (t.is_system
+                    || slug::validate(&t.slug, &state.config.system_tenant_slug).is_ok())
+        })
         .map(|t| Tenant(Arc::new(t))))
 }
 
@@ -97,7 +98,10 @@ pub async fn resolve_host(State(state): State<AppState>, mut req: Request, next:
         HostKind::Apex
             if req.uri().path() == "/" && matches!(*req.method(), Method::GET | Method::HEAD) =>
         {
-            let admin = format!("{}/admin", state.config.tenant_origin(SYSTEM_TENANT_SLUG));
+            let admin = format!(
+                "{}/admin",
+                state.config.tenant_origin(&state.config.system_tenant_slug)
+            );
             redirect::found(&admin)
         }
         _ => AppError::NotFound.into_response(),

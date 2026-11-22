@@ -37,11 +37,14 @@ pub async fn me(state: &AppState, caller: &Caller) -> AppResult<users::Model> {
     find_user(&state.db, caller.tenant_id(), caller.user_id()?).await
 }
 
-/// `UserDetail` + `features` (what the server offers the SPA) — the shape
-/// of every `me` response.
-async fn me_view(state: &AppState, user: &users::Model) -> AppResult<Value> {
+/// `UserDetail` + `features` (what the server offers the SPA) +
+/// `tenant_is_system` (the SPA offers tenant management there; it can't tell
+/// from the host, the system slug is configurable) — the shape of every `me`
+/// response.
+async fn me_view(state: &AppState, caller: &Caller, user: &users::Model) -> AppResult<Value> {
     let mut view = detailed_view(&state.db, user).await?;
     if let Some(obj) = view.as_object_mut() {
+        obj.insert("tenant_is_system".into(), caller.tenant.is_system.into());
         obj.insert(
             "features".into(),
             json!({
@@ -55,7 +58,7 @@ async fn me_view(state: &AppState, user: &users::Model) -> AppResult<Value> {
 
 pub async fn get(State(state): State<AppState>, caller: Caller) -> AppResult<axum::Json<Value>> {
     let user = me(&state, &caller).await?;
-    Ok(axum::Json(me_view(&state, &user).await?))
+    Ok(axum::Json(me_view(&state, &caller, &user).await?))
 }
 
 #[derive(Deserialize)]
@@ -75,7 +78,7 @@ pub async fn update(
         &mut row.display_name,
         display_name(&body.display_name, "user")?,
     ) {
-        return Ok(axum::Json(me_view(&state, &user).await?));
+        return Ok(axum::Json(me_view(&state, &caller, &user).await?));
     }
     row.updated_at = Set(chrono::Utc::now().fixed_offset());
     let txn = state.db.begin().await?;
@@ -89,7 +92,7 @@ pub async fn update(
         )
         .await?;
     txn.commit().await?;
-    Ok(axum::Json(me_view(&state, &updated).await?))
+    Ok(axum::Json(me_view(&state, &caller, &updated).await?))
 }
 
 #[derive(Deserialize)]

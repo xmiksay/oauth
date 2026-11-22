@@ -59,6 +59,12 @@ pub struct Config {
     pub smtp: Option<SmtpConfig>,
     /// Telegram bot; `None` hides every Telegram feature.
     pub telegram: Option<TelegramConfig>,
+    /// Slug (first host label) of the system tenant (`SYSTEM_TENANT_SLUG`,
+    /// default `system`).
+    pub system_tenant_slug: String,
+    /// `SYSTEM_TENANT_RENAME=1`: startup renames a stored system tenant
+    /// whose slug differs from `system_tenant_slug` instead of refusing.
+    pub system_tenant_rename: bool,
     /// Upstream identity providers may use plain `http://` on loopback
     /// hosts. Derived from an `http://` `PUBLIC_URL` (local development);
     /// integration tests set it for their in-process fake provider.
@@ -83,6 +89,8 @@ impl fmt::Debug for Config {
             .field("trusted_proxy_header", &self.trusted_proxy_header)
             .field("smtp", &self.smtp)
             .field("telegram", &self.telegram)
+            .field("system_tenant_slug", &self.system_tenant_slug)
+            .field("system_tenant_rename", &self.system_tenant_rename)
             .field("idp_allow_http_loopback", &self.idp_allow_http_loopback)
             .finish()
     }

@@ -18,13 +18,14 @@ make web-dev       # (second terminal) SPA on http://*.localhost:5173
 ```
 
 Every tenant `t` lives on its own host `t.{PUBLIC_URL host}` (the apex only
-redirects to the `system` tenant's admin center). The default `.env` has
+redirects to the system tenant's admin center; its slug is `SYSTEM_TENANT_SLUG`,
+default `system`, see [docs/deploy.md](docs/deploy.md#system-tenant-slug)). The default `.env` has
 `PUBLIC_URL=http://localhost:5173`, the Vite dev server, which proxies the
 backend paths with the `Host` header kept; `*.localhost` resolves to loopback
 in browsers. Without Vite, `make web-build` and set
 `PUBLIC_URL=http://localhost:8080` (then use port 8080 below).
 
-Then create the `system` tenant and its first Global Admin (idempotent; prints
+Then create the system tenant and its first Global Admin (idempotent; prints
 a one-time password that must be changed at first sign-in):
 
 ```sh
@@ -58,7 +59,7 @@ One Vue SPA served by the backend on every tenant host `{t}.{PUBLIC_URL host}`:
 | URL | What |
 |---|---|
 | `/` | Dashboard: greeting, tiles for My Account and (with a directory role) the Admin center, quick links; signs in as My Account |
-| `/admin` | Admin center (Entra-portal-like): users, groups, app registrations (authentication, secrets, token configuration, expose an API, app roles, API permissions + admin consent), role assignments, directory roles, identity providers, audit log, settings; in the `system` tenant also tenants |
+| `/admin` | Admin center (Entra-portal-like): users, groups, app registrations (authentication, secrets, token configuration, expose an API, app roles, API permissions + admin consent), role assignments, directory roles, identity providers, audit log, settings; in the system tenant also tenants |
 | `/myaccount` | My Account: profile, email, password, authenticator app + recovery codes, passkeys, Telegram, linked accounts, notifications, sessions, app permissions |
 | `/login?tx=…` | Sign-in steps (password, passkey or an upstream identity provider → link an unknown identity → authenticator / recovery / Telegram code / passkey → forced password change → consent) |
 | `/logout` | Sign-out confirmation / "signed out" page |

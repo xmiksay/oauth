@@ -37,12 +37,16 @@ pub async fn migrate(db: &DatabaseConnection) -> anyhow::Result<()> {
     txn.commit().await.context("committing migrations")
 }
 
-/// [`migrate`], then [`builtin_apps::reconcile_all`] in the same locked
-/// transaction, so replicas starting together never interleave rewrites and
-/// nothing serves stale built-in redirect URIs once ready.
+/// [`migrate`], then the system tenant's slug
+/// ([`directory::reconcile_system_slug`]: refuse a mismatch, or rename with
+/// `SYSTEM_TENANT_RENAME=1`) and [`builtin_apps::reconcile_all`] in the same
+/// locked transaction, so replicas starting together never interleave
+/// rewrites and nothing serves stale built-in redirect URIs once ready.
 pub async fn migrate_and_reconcile(db: &DatabaseConnection, config: &Config) -> anyhow::Result<()> {
     let txn = begin_migrated(db).await?;
-    let invalid = directory::invalid_enabled_slugs(&txn).await?;
+    // Before the slug check and redirect URI rewrite: both see the new slug.
+    directory::reconcile_system_slug(&txn, config).await?;
+    let invalid = directory::invalid_enabled_slugs(&txn, &config.system_tenant_slug).await?;
     if !invalid.is_empty() {
         anyhow::bail!(
             "enabled tenants with slugs that are no longer valid host names: {}. \

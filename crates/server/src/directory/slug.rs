@@ -5,14 +5,17 @@
 
 use super::DirectoryError;
 
-/// The built-in tenant created by `oauth bootstrap`.
-pub const SYSTEM_TENANT_SLUG: &str = "system";
+/// Default slug of the built-in tenant created by `oauth bootstrap`
+/// (`SYSTEM_TENANT_SLUG` overrides it). Stays reserved whatever the
+/// configured slug is, so a renamed system tenant's old host can't be taken.
+pub const DEFAULT_SYSTEM_TENANT_SLUG: &str = "system";
 
 /// Labels that are not tenant names. WHY: under a wildcard DNS record and
 /// certificate every label resolves to us, so a tenant called `www`, `mail`
 /// or `status` would capture the hostname an operator (or a user typing it)
 /// expects to be the website, mail server or status page — and could serve a
-/// convincing sign-in page there. `system` is the bootstrap tenant.
+/// convincing sign-in page there. `system` is the default bootstrap tenant;
+/// [`validate`] also reserves the configured system slug.
 pub const RESERVED_SLUGS: &[&str] = &[
     "www",
     "api",
@@ -47,7 +50,7 @@ pub const RESERVED_SLUGS: &[&str] = &[
     "status",
     "metrics",
     "localhost",
-    SYSTEM_TENANT_SLUG,
+    DEFAULT_SYSTEM_TENANT_SLUG,
 ];
 
 /// Checks the shape `^[a-z0-9][a-z0-9-]{1,62}$` (mirrored by a DB CHECK).
@@ -68,14 +71,30 @@ pub fn validate_format(slug: &str) -> Result<(), DirectoryError> {
     }
 }
 
-/// Full validation for user-chosen slugs: format, DNS label rules the DB
-/// CHECK predates, and reserved names.
-pub fn validate(slug: &str) -> Result<(), DirectoryError> {
-    if RESERVED_SLUGS.contains(&slug) {
-        return Err(DirectoryError::Invalid(format!(
-            "tenant slug `{slug}` is reserved"
-        )));
+/// Full validation for user-chosen (regular tenant) slugs: format, DNS label
+/// rules the DB CHECK predates, and reserved names — including
+/// `system_slug`, the configured slug of the system tenant.
+pub fn validate(slug: &str, system_slug: &str) -> Result<(), DirectoryError> {
+    if slug == system_slug || RESERVED_SLUGS.contains(&slug) {
+        return Err(reserved(slug));
     }
+    label_rules(slug)
+}
+
+/// Validation of the configured system tenant slug (`SYSTEM_TENANT_SLUG`):
+/// the rules of [`validate`], except that the default `system` is allowed.
+pub fn validate_system(slug: &str) -> Result<(), DirectoryError> {
+    if slug != DEFAULT_SYSTEM_TENANT_SLUG && RESERVED_SLUGS.contains(&slug) {
+        return Err(reserved(slug));
+    }
+    label_rules(slug)
+}
+
+fn reserved(slug: &str) -> DirectoryError {
+    DirectoryError::Invalid(format!("tenant slug `{slug}` is reserved"))
+}
+
+fn label_rules(slug: &str) -> Result<(), DirectoryError> {
     validate_format(slug)?;
     if slug.ends_with('-') {
         return Err(DirectoryError::Invalid(format!(
@@ -96,6 +115,8 @@ pub fn validate(slug: &str) -> Result<(), DirectoryError> {
 mod tests {
     use super::*;
 
+    const SYS: &str = DEFAULT_SYSTEM_TENANT_SLUG;
+
     #[test]
     fn accepts_valid_slugs() {
         for slug in [
@@ -109,7 +130,7 @@ mod tests {
             "healthz",
             &"a".repeat(63),
         ] {
-            assert!(validate(slug).is_ok(), "{slug} rejected");
+            assert!(validate(slug, SYS).is_ok(), "{slug} rejected");
         }
     }
 
@@ -131,22 +152,44 @@ mod tests {
             ".git",
             &"a".repeat(64),
         ] {
-            let err = validate(slug).unwrap_err();
+            let err = validate(slug, SYS).unwrap_err();
             assert!(matches!(err, DirectoryError::Invalid(_)), "{slug}: {err}");
+            assert!(validate_system(slug).is_err(), "{slug}");
         }
     }
 
     #[test]
     fn rejects_reserved() {
         for slug in RESERVED_SLUGS {
-            let err = validate(slug).unwrap_err().to_string();
+            let err = validate(slug, SYS).unwrap_err().to_string();
             assert!(err.contains("reserved"), "{slug}: {err}");
         }
     }
 
     #[test]
-    fn system_slug_has_valid_format() {
-        assert!(validate_format(SYSTEM_TENANT_SLUG).is_ok());
-        assert!(validate(SYSTEM_TENANT_SLUG).is_err());
+    fn configured_system_slug_is_reserved_too() {
+        assert!(validate("config", SYS).is_ok());
+        let err = validate("config", "config").unwrap_err().to_string();
+        assert!(err.contains("reserved"), "{err}");
+        // `system` stays reserved after the system tenant moved away from it.
+        assert!(validate(DEFAULT_SYSTEM_TENANT_SLUG, "config").is_err());
+    }
+
+    #[test]
+    fn system_slug_validation() {
+        for slug in [DEFAULT_SYSTEM_TENANT_SLUG, "config", "ab"] {
+            assert!(validate_system(slug).is_ok(), "{slug} rejected");
+        }
+        for slug in [
+            "www",
+            "api",
+            "admin",
+            "ab-",
+            "xn--80ak6aa92e",
+            "Config",
+            "a",
+        ] {
+            assert!(validate_system(slug).is_err(), "{slug} accepted");
+        }
     }
 }

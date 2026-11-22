@@ -1,5 +1,6 @@
-//! `oauth bootstrap`: idempotently ensure the `system` tenant and a Global
-//! Admin in it exist. Safe to re-run (e.g. from every deploy).
+//! `oauth bootstrap`: idempotently ensure the system tenant
+//! (`SYSTEM_TENANT_SLUG`) and a Global Admin in it exist. Safe to re-run
+//! (e.g. from every deploy).
 
 use anyhow::Context;
 use entity::{enums::DirectoryRole, users};
@@ -9,7 +10,7 @@ use zeroize::Zeroizing;
 use crate::{
     config::Config,
     db,
-    directory::{self, NewUser, password, slug::SYSTEM_TENANT_SLUG},
+    directory::{self, NewUser, SlugOutcome, builtin_apps, password},
 };
 
 /// Serializes concurrent bootstraps ("oauthbst" in ASCII); distinct from the
@@ -51,6 +52,7 @@ pub enum AdminOutcome {
 
 #[derive(Debug)]
 pub struct Report {
+    pub tenant_slug: String,
     pub tenant_created: bool,
     pub admin_email: String,
     pub admin: AdminOutcome,
@@ -62,10 +64,11 @@ impl Report {
     /// one was issued — it is never logged or stored in plaintext.
     pub fn render(&self) -> String {
         let mut out = Vec::new();
+        let slug = &self.tenant_slug;
         out.push(if self.tenant_created {
-            format!("Created tenant `{SYSTEM_TENANT_SLUG}`.")
+            format!("Created tenant `{slug}`.")
         } else {
-            format!("Tenant `{SYSTEM_TENANT_SLUG}` already exists.")
+            format!("Tenant `{slug}` already exists.")
         });
         let email = &self.admin_email;
         match &self.admin {
@@ -111,6 +114,11 @@ pub async fn run(
     .await
     .context("acquiring bootstrap lock")?;
 
+    // Same rule as `serve`: a stored system tenant under another slug is
+    // refused, or renamed with SYSTEM_TENANT_RENAME=1.
+    if let SlugOutcome::Renamed { .. } = directory::reconcile_system_slug(&txn, config).await? {
+        builtin_apps::reconcile_all(&txn, config).await?;
+    }
     let (tenant, tenant_created) = match directory::find_system_tenant(&txn).await? {
         Some(tenant) => (tenant, false),
         None => (directory::create_system_tenant(&txn, config).await?, true),
@@ -158,6 +166,7 @@ pub async fn run(
         email, disabled, ..
     } = admin;
     Ok(Report {
+        tenant_slug: tenant.slug,
         tenant_created,
         admin_email: email,
         admin: outcome,
@@ -175,6 +184,7 @@ mod tests {
 
     fn report(admin: AdminOutcome) -> Report {
         Report {
+            tenant_slug: "system".into(),
             tenant_created: false,
             admin_email: "root@example.com".into(),
             admin,

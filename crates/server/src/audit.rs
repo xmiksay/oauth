@@ -39,6 +39,7 @@ event_types! {
     DeviceCodeRedeem => "device_code.redeem",
     TenantCreate => "tenant.create",
     TenantUpdate => "tenant.update",
+    TenantRename => "tenant.rename",
     UserCreate => "user.create",
     UserUpdate => "user.update",
     UserDelete => "user.delete",

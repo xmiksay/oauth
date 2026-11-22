@@ -120,7 +120,7 @@ pub async fn create(
     Json(body): Json<CreateTenant>,
 ) -> AppResult<Response> {
     // Validate before the slow key generation.
-    slug::validate(&body.slug)?;
+    slug::validate(&body.slug, &state.config.system_tenant_slug)?;
     display_name(&body.display_name, "tenant")?;
     let email = normalize_email(&body.admin_email)?;
     let admin_name = body
@@ -268,7 +268,9 @@ pub async fn update(
         // Startup refuses enabled tenants whose slug fails today's rules, so
         // enabling one would stop every new replica.
         let tenant = by_slug(&state.db, &slug).await?;
-        if !tenant.is_system && slug::validate(&tenant.slug).is_err() {
+        if !tenant.is_system
+            && slug::validate(&tenant.slug, &state.config.system_tenant_slug).is_err()
+        {
             return Err(AppError::BadRequest(format!(
                 "tenant slug `{}` is no longer a valid host name; the tenant can't be re-enabled",
                 tenant.slug

@@ -5,6 +5,7 @@ export const AUDIT_EVENT_TYPES = [
   'token.code_replay',
   'tenant.create',
   'tenant.update',
+  'tenant.rename',
   'user.create',
   'user.update',
   'user.delete',

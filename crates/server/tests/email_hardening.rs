@@ -138,6 +138,7 @@ async fn patch_me_keeps_the_me_shape() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(me["features"], json!({ "email": true, "telegram": false }));
+    assert_eq!(me["tenant_is_system"], false);
     let (_, me) = call(
         &f.app,
         Method::PATCH,

@@ -33,6 +33,7 @@ async function mountList(roles: ('UserAdmin' | 'ApplicationAdmin')[] = ['UserAdm
     directory_roles: roles,
     mfa: { totp: false, totp_pending: false, recovery_codes_remaining: 0, passkeys: 0, telegram: false },
     features: { email: false, telegram: false },
+    tenant_is_system: false,
   })
   const router = createRouter({
     history: createMemoryHistory(),
