@@ -6,8 +6,8 @@ use std::net::IpAddr;
 use anyhow::Context;
 use entity::{enums::Outcome, group_members, identity_providers, idp_group_mappings};
 use sea_orm::{
-    ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder,
-    QuerySelect, sea_query::Expr,
+    ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter,
+    QueryOrder, QuerySelect, sea_query::Expr,
 };
 use serde_json::json;
 use uuid::Uuid;
@@ -30,6 +30,20 @@ pub async fn list(
         .all(conn)
         .await
         .context("loading group mappings")
+}
+
+/// How many mappings the provider has.
+pub async fn count(
+    conn: &impl ConnectionTrait,
+    tenant_id: Uuid,
+    idp_id: Uuid,
+) -> anyhow::Result<u64> {
+    idp_group_mappings::Entity::find()
+        .filter(idp_group_mappings::Column::TenantId.eq(tenant_id))
+        .filter(idp_group_mappings::Column::IdpId.eq(idp_id))
+        .count(conn)
+        .await
+        .context("counting group mappings")
 }
 
 /// The `(claim, value)` pairs the provider's mappings name: all the ID

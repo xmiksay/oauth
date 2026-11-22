@@ -245,7 +245,10 @@ pub async fn update(
             fields.push("client_secret");
         }
     }
-    if repointed {
+    // Narrowing who may sign in must also fail a callback verified against
+    // the wider list (it would still get mapped groups); no unlink needed.
+    let narrowed = fields.contains(&"allowed_tenants") || fields.contains(&"hosted_domain");
+    if repointed || narrowed {
         row.generation = Set(idp.generation.saturating_add(1));
     }
     if fields.is_empty() {
@@ -257,8 +260,8 @@ pub async fn update(
         let stored = idp_rules::Row::of(&row).ok_or_else(|| {
             AppError::Internal(anyhow::anyhow!("identity provider row incomplete"))
         })?;
-        let mappings = group_map::list(&txn, tenant_id, id).await?.len();
-        idp_rules::check_mappings(&stored, mappings as u64)?;
+        let mappings = group_map::count(&txn, tenant_id, id).await?;
+        idp_rules::check_mappings(&stored, mappings)?;
     }
     if fields.contains(&"email_domains") {
         let domains = row.email_domains.try_as_ref().cloned().unwrap_or_default();

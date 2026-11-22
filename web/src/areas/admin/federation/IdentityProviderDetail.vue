@@ -19,7 +19,13 @@ import CopyButton from '@/components/CopyButton.vue'
 import ModalDialog from '@/components/ModalDialog.vue'
 import IdpForm from './IdpForm.vue'
 import GroupMappings from './GroupMappings.vue'
-import { POLICY_LABELS, changedIdpFields, lockoutWarning, relinkWarning } from './idpForm'
+import {
+  POLICY_LABELS,
+  changedIdpFields,
+  isMultiTenant,
+  lockoutWarning,
+  relinkWarning,
+} from './idpForm'
 
 const route = useRoute()
 const router = useRouter()
@@ -201,6 +207,7 @@ async function remove() {
         class="mt-4"
         :idp-id="idp.id"
         :can-write="isGlobalAdmin"
+        :open-to-any-tenant="isMultiTenant(idp) && idp.allowed_tenants.length === 0"
       />
     </template>
     <ModalDialog

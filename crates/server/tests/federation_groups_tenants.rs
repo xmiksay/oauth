@@ -12,10 +12,12 @@ mod common;
 
 use axum::http::{Method, StatusCode};
 use common::{
-    federation::{Fed, IDPS},
+    federation::{Fed, IDPS, login_error},
     groups::{group, map, mapped, memberships, sign_in_with, uuid},
+    mgmt::{audited_any, call},
+    upstream::Account,
 };
-use entity::idp_group_mappings;
+use entity::{group_members, idp_group_mappings};
 use sea_orm::{ActiveModelTrait, ActiveValue::Set};
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -97,10 +99,7 @@ async fn only_allowed_tenants_get_mapped_memberships() {
     let claims = json!({ "wids": [GLOBAL_ADMIN] });
     from_tenant(&fed, T2);
     let (_, location) = fed.sign_in(&mut fed.f.browser(), &idp).await;
-    assert_eq!(
-        common::federation::login_error(&location).as_deref(),
-        Some("upstream_failed")
-    );
+    assert_eq!(login_error(&location).as_deref(), Some("upstream_failed"));
     from_tenant(&fed, T1);
     let user = sign_in_with(&fed, &idp, claims).await;
     assert_eq!(
@@ -131,4 +130,55 @@ async fn legacy_mappings_on_an_open_provider_decide_nothing() {
     from_tenant(&fed, T2);
     let user = sign_in_with(&fed, &idp, json!({ "wids": [GLOBAL_ADMIN] })).await;
     assert!(memberships(&fed, user.id).await.is_empty());
+
+    // A membership the mapping kept (before the rule) is not removed when
+    // the claim value is gone either.
+    group_members::ActiveModel {
+        tenant_id: Set(fed.f.tenant.id),
+        group_id: Set(admins),
+        user_id: Set(user.id),
+        created_at: Set(chrono::Utc::now().fixed_offset()),
+        manual: Set(false),
+        idp_id: Set(Some(uuid(&json!(idp)))),
+    }
+    .insert(&fed.f.db)
+    .await
+    .unwrap();
+    let again = sign_in_with(&fed, &idp, json!({})).await;
+    assert_eq!(again.id, user.id);
+    assert_eq!(
+        memberships(&fed, user.id).await,
+        vec![(admins, false, true)]
+    );
+}
+
+/// Removing a tenant from `allowed_tenants` while its user is mid-sign-in:
+/// the callback, verified against the wider list, fails instead of getting
+/// mapped groups.
+#[tokio::test]
+async fn narrowing_allowed_tenants_during_the_exchange_wins() {
+    let fed = Fed::new().await;
+    let idp = entra_idp(&fed, json!({ "allowed_tenants": [T1, T2] })).await;
+    let admins = group(&fed, "k8s-admins").await;
+    mapped(&fed, &idp, "wids", GLOBAL_ADMIN, admins).await;
+    let (app, token, path) = (
+        fed.f.app.clone(),
+        fed.admin.clone(),
+        format!("{IDPS}/{idp}"),
+    );
+    fed.up.on_token(Box::new(move || {
+        Box::pin(async move {
+            let body = json!({ "allowed_tenants": [T2] });
+            let (status, out) = call(&app, Method::PATCH, &path, Some(&token), Some(&body)).await;
+            assert_eq!(status, StatusCode::OK, "{out}");
+        })
+    }));
+    from_tenant(&fed, T1);
+    let mut account = Account::new("upstream-sub-1", "pat@upstream.example");
+    account.extra = json!({ "wids": [GLOBAL_ADMIN] });
+    fed.up.set_account(account);
+    let (_, location) = fed.sign_in(&mut fed.f.browser(), &idp).await;
+    assert_eq!(login_error(&location).as_deref(), Some("upstream_failed"));
+    let events = audited_any(&fed.f.db, "sign_in").await;
+    assert_eq!(events.last().unwrap()["reason"], "idp_repointed");
 }
