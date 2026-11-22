@@ -86,7 +86,12 @@ the tenant host without the port).
 - [Architecture](docs/architecture.md) — endpoints, flows, token formats, jobs
 - [Frontend](docs/frontend.md) — the SPA: areas, auth state, API layer
 - [Login JSON API](docs/api/authn.md) — contract for the login SPA
-- [Management API](docs/api/management.md) — `/api/v1` REST contract for the admin / My Account SPAs and service apps ([`me`](docs/api/me.md), [identity providers](docs/api/identity_providers.md))
+- [Management API](docs/api/management.md) — `/api/v1` REST contract for the admin / My Account SPAs and service apps ([`me`](docs/api/me.md), [identity providers](docs/api/identity_providers.md), [applications](docs/api/applications.md))
+- [Consent](docs/consent.md) — user / admin consent and assignment required
+- [Refresh tokens](docs/refresh_tokens.md) — rotation, reuse detection, multi-resource refresh (MRRT)
+- [Device code](docs/device_code.md) — RFC 8628 device authorization grant
+- [CORS](docs/cors.md) — cross-origin SPAs: which endpoints, allowed `web_origins`
+- [Back-channel logout](docs/backchannel_logout.md) — logout, refresh-token revocation, OIDC back-channel logout delivery
 - [Email](docs/email.md) — verification, password reset, invitations, security notices
 - [Sign-in](docs/authn.md) — login transactions, stages, `amr`, sessions & CSRF, rate limits
 - [Passkeys](docs/passkeys.md) — WebAuthn verifier, passwordless / MFA sign-in, re-authentication
