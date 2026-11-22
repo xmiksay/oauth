@@ -24,23 +24,18 @@ use axum::{
     routing::post,
 };
 use common::{
+    backchannel::{logout_url, queued, set_uri},
     flow::Fixture,
     get,
     mgmt::{call, mint_user_token, user_with_roles},
 };
-use entity::{
-    applications,
-    enums::{Channel, DirectoryRole},
-    outbox, tenants,
-};
+use entity::{enums::DirectoryRole, tenants};
 use oauth_server::{
     backchannel::{deliver::Notifier, token},
     jobs::outbox::{Report, run_once},
     tokens::jwt,
 };
-use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
-};
+use sea_orm::{ActiveModelTrait, ActiveValue::Set, ConnectionTrait};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
@@ -94,12 +89,6 @@ impl MockRp {
     }
 }
 
-async fn set_uri(f: &Fixture, uri: Option<&str>) {
-    let mut row: applications::ActiveModel = f.web.clone().into();
-    row.backchannel_logout_uri = Set(uri.map(str::to_owned));
-    row.update(&f.db).await.unwrap();
-}
-
 async fn deliver(f: &Fixture) -> Report {
     let now = chrono::Utc::now().fixed_offset();
     let clock = move || now;
@@ -114,21 +103,6 @@ async fn deliver(f: &Fixture) -> Report {
     .await
     .unwrap()
     .unwrap()
-}
-
-async fn queued(f: &Fixture) -> Vec<outbox::Model> {
-    outbox::Entity::find()
-        .filter(outbox::Column::Channel.eq(Channel::Backchannel))
-        .all(&f.db)
-        .await
-        .unwrap()
-}
-
-fn logout_url(id_token: &str) -> String {
-    let q = form_urlencoded::Serializer::new(String::new())
-        .append_pair("id_token_hint", id_token)
-        .finish();
-    format!("/oauth2/logout?{q}")
 }
 
 fn claim<'a>(claims: &'a serde_json::Map<String, Value>, name: &str) -> &'a str {

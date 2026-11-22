@@ -47,16 +47,24 @@ transaction first calls `backchannel::queue`, which puts one `backchannel`
 outbox row per (ended session, recorded client that has a
 `backchannel_logout_uri` now). Sessions end through: RP-initiated logout,
 My Account session revocation (one / all), admin `revoke-sessions`,
-password change / reset (other sessions), disabling a user, and a new
-sign-in replacing another session in the same browser. **Sessions that just
+password change / reset (other sessions), disabling or deleting a user
+(its outbox rows outlive it), and a new sign-in replacing another session
+in the same browser. **Sessions that just
 expire notify nobody.**
+
+Ordering: `queue` first locks the ended sessions `FOR UPDATE`;
+`record_client` reads its session `FOR KEY SHARE`. A token issuance racing
+a logout therefore either commits first (and its client is notified) or
+waits and then finds the session gone (no row, no FK error).
 
 The outbox row: `recipient` = application id, `kind` =
 `backchannel_logout`, sealed body `{"sid", "sub"}`, 24 h lifetime.
 
 ### Delivery
 
-`jobs::outbox` runs the `backchannel` channel every tick (always on) with
+`jobs::outbox` runs the `backchannel` channel every tick (always on, on
+its own task beside the job loop, one run at a time, so slow RPs never
+delay the sweeper or the other channels) with
 the usual lease, backoff (1 m, 5 m, 30 m, 2 h, then 6 h; dead after 8) and
 fencing. Each attempt re-reads the application (deleted, no URI or a URI
 that no longer passes the policy → dead) and signs a **fresh** logout token
@@ -72,7 +80,7 @@ claims  { "iss", "aud": client_id, "iat", "exp": iat + 120, "jti",
 No `nonce`, ever. It is POSTed as `application/x-www-form-urlencoded`
 `logout_token=…`. 2xx → sent; 408 / 429 / 5xx / network errors / timeouts →
 retry; any other status → dead. The client is the federation recipe
-(`http::client`: rustls on AWS-LC, no redirects, no proxy, 10 s total / 5 s
+(`http::client`: rustls on AWS-LC, no redirects, no proxy, 10 s total / 3 s
 connect) and, outside development, resolves through
 `federation::resolve::PublicOnly` (no private, loopback or link-local
 destinations). A disabled tenant's rows are dead.

@@ -6,7 +6,7 @@ use axum::{extract::State, http::StatusCode};
 use entity::{applications, consent_grants, enums::NotifyEvent, sessions, users};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, EntityTrait, QueryFilter, QueryOrder,
-    TransactionTrait,
+    QuerySelect, TransactionTrait,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -180,19 +180,17 @@ pub async fn revoke_session(
     let user_id = caller.user_id()?;
     let tenant_id = caller.tenant_id();
     let txn = state.db.begin().await?;
-    let ended = backchannel::Ended::Session(id);
-    // Scoped to the caller's own sessions by the delete below (a foreign id
-    // queues nothing: the user filter of the delete then rolls it back).
-    backchannel::queue(&txn, &state.config.master_key, tenant_id, ended).await?;
-    let removed = sessions::Entity::delete_many()
+    // Ownership first: only the caller's own session is queued and ended.
+    sessions::Entity::find_by_id(id)
         .filter(sessions::Column::TenantId.eq(tenant_id))
         .filter(sessions::Column::UserId.eq(user_id))
-        .filter(sessions::Column::Id.eq(id))
-        .exec(&txn)
-        .await?;
-    if removed.rows_affected == 0 {
-        return Err(AppError::NotFound);
-    }
+        .lock_exclusive()
+        .one(&txn)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    let ended = backchannel::Ended::Session(id);
+    backchannel::queue(&txn, &state.config.master_key, tenant_id, ended).await?;
+    sessions::Entity::delete_by_id(id).exec(&txn).await?;
     refresh::revoke_by_session(&txn, tenant_id, id).await?;
     caller
         .audit(
