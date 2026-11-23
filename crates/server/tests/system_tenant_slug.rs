@@ -30,9 +30,8 @@ use common::{PUBLIC_URL, TestDb};
 
 fn opts() -> Options {
     Options {
-        admin_email: "root@example.com".into(),
-        display_name: None,
-        reset_password: false,
+        admin_email: Some("root@example.com".into()),
+        ..Options::default()
     }
 }
 

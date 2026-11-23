@@ -334,10 +334,11 @@ async fn jit(
         display_name: name,
         password: None,
         must_change_password: false,
-        email_verified: false,
+        // The upstream address is verified (`decide` checked it).
+        email_verified: true,
         disabled: false,
     };
-    let mut user = match directory::create_user(&txn, ctx.tenant.id, new).await {
+    let user = match directory::create_user(&txn, ctx.tenant.id, new).await {
         Ok(user) => user,
         // A concurrent sign-up took the address after `decide` looked.
         Err(DirectoryError::EmailTaken(_)) => {
@@ -350,15 +351,6 @@ async fn jit(
         }
         Err(other) => return Err(other.into()),
     };
-    users::Entity::update_many()
-        .col_expr(
-            users::Column::EmailVerified,
-            sea_orm::sea_query::Expr::value(true),
-        )
-        .filter(users::Column::Id.eq(user.id))
-        .exec(&txn)
-        .await?;
-    user.email_verified = true;
     let new = NewIdentity {
         tenant_id: ctx.tenant.id,
         user_id: user.id,

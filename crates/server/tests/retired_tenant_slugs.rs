@@ -31,9 +31,8 @@ async fn a_regular_tenant_on_a_retired_slug_is_refused() {
     let conn = db::connect(&pg.url).await.unwrap();
     let cfg = common::config_with(&pg.url, PUBLIC_URL, &[]).unwrap();
     let opts = Options {
-        admin_email: "root@example.com".into(),
-        display_name: None,
-        reset_password: false,
+        admin_email: Some("root@example.com".into()),
+        ..Options::default()
     };
     bootstrap::run(&conn, &cfg, &opts).await.unwrap();
     let system = directory::find_system_tenant(&conn).await.unwrap().unwrap();
@@ -89,4 +88,45 @@ async fn a_regular_tenant_on_a_retired_slug_is_refused() {
         .unwrap()
         .unwrap();
     assert!(stored.disabled);
+}
+
+#[tokio::test]
+async fn bootstrap_does_not_create_a_tenant_on_a_retired_slug() {
+    let pg = common::start_postgres().await;
+    let conn = db::connect(&pg.url).await.unwrap();
+    let cfg = common::config_with(&pg.url, PUBLIC_URL, &[]).unwrap();
+    let admin = Options {
+        admin_email: Some("root@example.com".into()),
+        ..Options::default()
+    };
+    bootstrap::run(&conn, &cfg, &admin).await.unwrap();
+    let system = directory::find_system_tenant(&conn).await.unwrap().unwrap();
+    retired_tenant_slugs::Entity::insert(retired_tenant_slugs::ActiveModel {
+        slug: Set("oldsys".into()),
+        tenant_id: Set(system.id),
+        ..Default::default()
+    })
+    .exec(&conn)
+    .await
+    .unwrap();
+
+    let opts = Options {
+        admin_email: Some("boss@oldsys.example".into()),
+        tenant: Some(bootstrap::TenantOptions {
+            slug: "oldsys".into(),
+            display_name: None,
+        }),
+        ..Options::default()
+    };
+    let err = format!(
+        "{:#}",
+        bootstrap::run(&conn, &cfg, &opts).await.unwrap_err()
+    );
+    assert!(err.contains("reserved"), "{err}");
+    assert!(
+        directory::find_tenant_by_slug(&conn, "oldsys")
+            .await
+            .unwrap()
+            .is_none()
+    );
 }

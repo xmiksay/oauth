@@ -26,8 +26,9 @@ pub struct NewUser<'a> {
     /// `None` creates a user without a local password.
     pub password: Option<&'a str>,
     pub must_change_password: bool,
-    /// An administrator vouches for the address (`POST users`); every
-    /// other path starts unverified.
+    /// An administrator (`POST users`) or a verified upstream identity
+    /// (federation JIT) vouches for the address; every other path starts
+    /// unverified.
     pub email_verified: bool,
     pub disabled: bool,
 }
