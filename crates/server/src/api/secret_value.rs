@@ -4,11 +4,11 @@
 //! base64url or hex of at least 32 bytes. The server can't prove a value is
 //! random; the checks below only reject obviously predictable shapes
 //! (repeated substrings, alphabet runs, sequential bytes, small or skewed
-//! alphabets). They
-//! cannot detect words or a passphrase that repeats nothing and happens to be
-//! valid base64 (`MyAcmeCorpProductionOauthClientSecretKey2026` passes), so
-//! the value must come from a CSPRNG (`openssl rand -base64 32`); the docs
-//! and error messages say so.
+//! alphabets). They cannot detect words or a passphrase that repeats nothing
+//! and happens to be valid base64
+//! (`MyAcmeCorpProductionOauthClientSecretKey2026` passes), so the value must
+//! come from a CSPRNG (`openssl rand -base64 32`); the docs and error
+//! messages say so.
 //! Repetition is any substring occurring twice, not only a whole-value
 //! period: a repeated word followed by a short random tail has no period but
 //! still repeats its word. It is looked for twice: as a repeated 4-byte
@@ -73,8 +73,10 @@ fn estimated_bits(value: &str) -> f64 {
         .sum()
 }
 
-/// The bytes `value` encodes: hex when it is an even number of hex digits,
-/// else base64 or base64url (padding optional, alphabets not mixed).
+/// The bytes `value` encodes: hex when it is all hex digits (an odd count is
+/// no encoding, not unpadded base64: 43 hex digits would otherwise decode to
+/// 32 bytes while carrying only 21.5), else base64 or base64url (padding
+/// optional, alphabets not mixed).
 fn decode(value: &str) -> Option<Zeroizing<Vec<u8>>> {
     if is_hex(value) {
         return decode_hex(value);
@@ -87,10 +89,13 @@ fn decode(value: &str) -> Option<Zeroizing<Vec<u8>>> {
 }
 
 fn is_hex(value: &str) -> bool {
-    value.len().is_multiple_of(2) && value.bytes().all(|b| b.is_ascii_hexdigit())
+    value.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 fn decode_hex(value: &str) -> Option<Zeroizing<Vec<u8>>> {
+    if !value.len().is_multiple_of(2) {
+        return None;
+    }
     let nibbles: Option<Vec<u8>> = value
         .chars()
         .map(|c| c.to_digit(16).and_then(|d| u8::try_from(d).ok()))
@@ -383,5 +388,9 @@ mod tests {
     #[test]
     fn hex_decodes_either_case() {
         assert_eq!(decode("00ffA0").unwrap().as_slice(), &[0x00, 0xff, 0xa0]);
+        // An odd count of hex digits is malformed hex, never unpadded base64.
+        let odd = &"5e59485c1bab61984690ba25a4682f511363b54b75e59485f25679b8104eb547"[..43];
+        assert!(decode(odd).is_none());
+        assert!(validate(odd).is_err());
     }
 }
