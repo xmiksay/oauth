@@ -2,9 +2,12 @@
 //! are stored as a plain (unsalted) SHA-256 like generated ones, so only an
 //! encoding of random bytes may stand in for a generated value: base64,
 //! base64url or hex of at least 32 bytes. The server can't prove a value is
-//! random; the checks below reject the predictable shapes a human or a
-//! template produces when it picks a "strong looking" string instead
-//! (repeated units, alphabet runs, small alphabets, words with punctuation).
+//! random; the checks below only reject obviously predictable shapes
+//! (repeated substrings, alphabet runs, small or skewed alphabets). They
+//! cannot detect words or a passphrase that repeats nothing and happens to be
+//! valid base64 (`MyAcmeCorpProductionOauthClientSecretKey2026` passes), so
+//! the value must come from a CSPRNG (`openssl rand -base64 32`); the docs
+//! and error messages say so.
 //! Repetition is any substring occurring twice, not only a whole-value
 //! period: a repeated word followed by a short random tail has no period but
 //! still repeats its word. It is looked for twice: as a repeated 4-byte
@@ -25,10 +28,10 @@ use zeroize::Zeroizing;
 
 use crate::error::{AppError, AppResult};
 
-pub const MAX_LEN: usize = 256;
+const MAX_LEN: usize = 256;
 /// What the server generates, and what the docs promise: 256 bits.
-pub const MIN_BYTES: usize = 32;
-pub const MIN_BITS: f64 = 128.0;
+const MIN_BYTES: usize = 32;
+const MIN_BITS: f64 = 128.0;
 /// Ascending / descending character runs this long (`abcdefgh`, `98765432`)
 /// are rejected; a random value has one with probability below 1e-6.
 const MAX_RUN: usize = 8;
@@ -44,7 +47,7 @@ const FORMAT: &str = "secret must be base64, base64url or hex encoding of at lea
 /// Estimated entropy in bits: the length times the Shannon entropy of the
 /// value's own character distribution. Blind to order (the period and run
 /// checks cover that), it rejects small-alphabet and skewed values.
-pub fn estimated_bits(value: &str) -> f64 {
+fn estimated_bits(value: &str) -> f64 {
     let mut counts = [0u32; 128];
     let mut n = 0u32;
     for b in value.bytes() {
@@ -63,7 +66,7 @@ pub fn estimated_bits(value: &str) -> f64 {
 
 /// The bytes `value` encodes: hex when it is an even number of hex digits,
 /// else base64 or base64url (padding optional, alphabets not mixed).
-pub fn decode(value: &str) -> Option<Zeroizing<Vec<u8>>> {
+fn decode(value: &str) -> Option<Zeroizing<Vec<u8>>> {
     if is_hex(value) {
         return decode_hex(value);
     }
@@ -96,14 +99,14 @@ fn decode_hex(value: &str) -> Option<Zeroizing<Vec<u8>>> {
 
 /// Whether some `window`-long substring of `bytes` occurs twice (overlaps
 /// count: `aaaaa` repeats `aaaa`).
-pub fn has_repeated_window(bytes: &[u8], window: usize) -> bool {
+fn has_repeated_window(bytes: &[u8], window: usize) -> bool {
     let mut seen = HashSet::new();
     bytes.windows(window).any(|w| !seen.insert(w))
 }
 
 /// The longest run of characters each one above (or each one below) the
 /// previous: `xabcdy` → 4.
-pub fn longest_sequential_run(value: &str) -> usize {
+fn longest_sequential_run(value: &str) -> usize {
     let bytes = value.as_bytes();
     let mut longest = usize::from(!bytes.is_empty());
     for step in [1i16, -1] {
@@ -152,7 +155,9 @@ pub fn validate(value: &str) -> AppResult<()> {
         || estimated_bits(value) < MIN_BITS
     {
         return Err(AppError::BadRequest(
-            "secret is too predictable: use random bytes (e.g. `openssl rand -base64 32`)".into(),
+            "secret has a predictable shape (repeats, character runs or low variety): \
+             generate it with a CSPRNG (e.g. `openssl rand -base64 32`)"
+                .into(),
         ));
     }
     Ok(())
@@ -232,6 +237,16 @@ mod tests {
             &decode(&company).unwrap(),
             BYTE_WINDOW
         ));
+    }
+
+    #[test]
+    fn non_repeating_words_pass_a_known_limit() {
+        // #81 review: a word-built value that is valid base64 of 32+ bytes and
+        // repeats nothing passes. The checks reject predictable shapes, not
+        // human choice; the docs require a CSPRNG for exactly this reason.
+        let phrase = "MyAcmeCorpProductionOauthClientSecretKey2026";
+        assert!(decode(phrase).unwrap().len() >= MIN_BYTES);
+        assert!(validate(phrase).is_ok());
     }
 
     #[test]
