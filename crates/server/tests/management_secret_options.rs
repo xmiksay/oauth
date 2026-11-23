@@ -79,6 +79,9 @@ async fn a_caller_supplied_secret_is_checked_stored_hashed_and_never_echoed() {
         &company,
         &password_tail,
         &company_tail,
+        // #81 review: sequential bytes, hex and base64 (bytes 0..31).
+        "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+        "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
     ] {
         let (st, body) = post(&f, &token, &path, json!({ "secret": weak })).await;
         assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
