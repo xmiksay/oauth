@@ -29,6 +29,8 @@ async fn fixture() -> Fixture {
     Fixture::with_env(&[("TRUSTED_PROXY_HEADER", "x-forwarded-for")], false).await
 }
 
+type Resp = (StatusCode, Option<String>, Value);
+
 /// POSTs a form from `ip` with Basic credentials.
 async fn post(
     f: &Fixture,
@@ -36,20 +38,29 @@ async fn post(
     ip: &str,
     client: (&str, &str),
     form: &[(&str, &str)],
-) -> (StatusCode, Option<String>, Value) {
+) -> Resp {
+    let (id, secret) = client;
+    let basic = format!("Basic {}", STANDARD.encode(format!("{id}:{secret}")));
+    send_form(f, path, ip, Some(basic), form).await
+}
+
+async fn send_form(
+    f: &Fixture,
+    path: &str,
+    ip: &str,
+    authorization: Option<String>,
+    form: &[(&str, &str)],
+) -> Resp {
     let body = form_urlencoded::Serializer::new(String::new())
         .extend_pairs(form)
         .finish();
-    let (id, secret) = client;
-    let req = Request::post(path)
+    let mut req = Request::post(path)
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
-        .header("x-forwarded-for", ip)
-        .header(
-            header::AUTHORIZATION,
-            format!("Basic {}", STANDARD.encode(format!("{id}:{secret}"))),
-        )
-        .body(Body::from(body))
-        .unwrap();
+        .header("x-forwarded-for", ip);
+    if let Some(value) = authorization {
+        req = req.header(header::AUTHORIZATION, value);
+    }
+    let req = req.body(Body::from(body)).unwrap();
     let (status, headers, text) = send(&f.app, req).await;
     let retry_after = headers
         .get(header::RETRY_AFTER)
@@ -66,17 +77,17 @@ const CLIENT_CREDENTIALS: &[(&str, &str)] = &[
     ("scope", "api://orders/.default"),
 ];
 
-async fn token(f: &Fixture, ip: &str, client: (&str, &str)) -> (StatusCode, Option<String>, Value) {
+async fn token(f: &Fixture, ip: &str, client: (&str, &str)) -> Resp {
     post(f, "/oauth2/token", ip, client, CLIENT_CREDENTIALS).await
 }
 
-fn assert_failed(resp: &(StatusCode, Option<String>, Value)) {
+fn assert_failed(resp: &Resp) {
     assert_eq!(resp.0, StatusCode::UNAUTHORIZED, "{}", resp.2);
     assert_eq!(resp.2["error"], "invalid_client");
     assert_eq!(resp.1, None);
 }
 
-fn assert_limited(resp: &(StatusCode, Option<String>, Value)) {
+fn assert_limited(resp: &Resp) {
     assert_eq!(resp.0, StatusCode::TOO_MANY_REQUESTS, "{}", resp.2);
     assert_eq!(resp.2["error"], "invalid_client");
     let secs: u64 = resp.1.as_deref().expect("Retry-After").parse().unwrap();
@@ -168,11 +179,70 @@ async fn unknown_clients_are_limited_the_same_way() {
     }
     assert_eq!(token(&f, ATTACKER, wrong).await.2, body);
 
+    // Only the real client's lockout is audited: random client_ids must not
+    // flood the audit log, and the response above was the same regardless.
     let events = lockouts(&f).await;
-    assert_eq!(events.len(), 2);
-    let ghost_event = events.iter().find(|e| e.target_id.is_none()).unwrap();
-    assert_eq!(ghost_event.target_type, None);
-    assert_eq!(ghost_event.ip.as_deref(), Some(ATTACKER));
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].target_id, Some(f.web.id));
+}
+
+fn device(secret: &str) -> [(&str, &str); 4] {
+    [
+        ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+        ("device_code", "nope"),
+        ("client_id", "web-app"),
+        ("client_secret", secret),
+    ]
+}
+
+/// `client_secret_post` and other grants go through the same limiter: the
+/// check sits in client authentication, not in one grant's branch.
+#[tokio::test]
+async fn secret_post_and_other_grants_are_limited() {
+    let f = fixture().await;
+    let refresh = [
+        ("grant_type", "refresh_token"),
+        ("refresh_token", "nope"),
+        ("client_id", "web-app"),
+        ("client_secret", "guess"),
+    ];
+    for i in 0..LIMIT {
+        let form: &[_] = if i % 2 == 0 {
+            &device("guess")
+        } else {
+            &refresh
+        };
+        let (status, retry, body) = send_form(&f, "/oauth2/token", ATTACKER, None, form).await;
+        assert_eq!(body["error"], "invalid_client", "{body}");
+        assert_ne!(status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(retry, None);
+    }
+    let right = device(&f.web_secret);
+    assert_limited(&send_form(&f, "/oauth2/token", ATTACKER, None, &right).await);
+    // Authentication passes from elsewhere; only the bogus code is refused.
+    let (_, _, body) = send_form(&f, "/oauth2/token", OTHER, None, &right).await;
+    assert_ne!(body["error"], "invalid_client", "{body}");
+}
+
+/// A public client presenting a secret fails authentication and counts.
+#[tokio::test]
+async fn public_client_sending_a_secret_counts() {
+    let f = fixture().await;
+    let form = [
+        ("grant_type", "refresh_token"),
+        ("refresh_token", "nope"),
+        ("client_id", "spa-app"),
+        ("client_secret", "anything"),
+    ];
+    for _ in 0..LIMIT {
+        let (_, _, body) = send_form(&f, "/oauth2/token", ATTACKER, None, &form).await;
+        assert_eq!(body["error"], "invalid_client", "{body}");
+    }
+    assert_limited(&send_form(&f, "/oauth2/token", ATTACKER, None, &form).await);
+    let without_secret = &form[..3];
+    assert_limited(&send_form(&f, "/oauth2/token", ATTACKER, None, without_secret).await);
+    let (_, _, body) = send_form(&f, "/oauth2/token", OTHER, None, without_secret).await;
+    assert_ne!(body["error"], "invalid_client", "{body}");
 }
 
 #[tokio::test]

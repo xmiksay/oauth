@@ -3,8 +3,11 @@
 //! claimed client_id + client IP). [`guard`] runs before the client is even
 //! looked up and refuses a full bucket WITHOUT verifying the secret, so
 //! guesses past the limit learn nothing — not even whether the client
-//! exists. [`failed`] counts a failure; the one that fills the bucket is
-//! audited once (`client_auth.lockout`).
+//! exists. [`failed`] counts a failure; the one that fills the bucket of an
+//! existing client is audited once (`client_auth.lockout`). An unknown
+//! client_id gets the same bucket and 429 but no audit row: an event naming
+//! nothing helps nobody, and random client_ids would let one address fill
+//! the tenant's audit log.
 //!
 //! Concurrent attempts can each pass [`guard`] before any of them is
 //! counted, so a burst overshoots the limit by at most its in-flight
@@ -94,14 +97,16 @@ pub async fn failed(
         Utc::now(),
     )
     .await?;
-    if fills_bucket(count) {
+    if let Some(app_id) = app_id
+        && fills_bucket(count)
+    {
         audit::record(
             conn,
             Event {
                 tenant_id: attempt.tenant_id,
                 actor: Actor::User(None),
                 event_type: EventType::ClientAuthLockout,
-                target: app_id.map(Target::Application),
+                target: Some(Target::Application(app_id)),
                 outcome: Outcome::Failure,
                 ip: attempt.ip,
                 details: json!({ "endpoint": attempt.endpoint.as_str() }),

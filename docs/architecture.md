@@ -213,8 +213,10 @@ checked before consent and on every token grant: [consent.md](consent.md).
   out only from the guesser's own address. Concurrent attempts may all pass
   the check before any is counted (overshoot ≤ the burst in flight):
   counting before verification would make every success write twice and
-  refuse a busy client's parallel calls. The failure that fills the bucket
-  is audited once (`client_auth.lockout`); refused attempts count in
+  refuse a busy client's parallel calls. The failure that fills an
+  existing client's bucket is audited once (`client_auth.lockout`; not for
+  an unknown client_id, whose events would name nothing and let random ids
+  flood the audit log — the response is the same); refused attempts count in
   `oauth_client_auth_rate_limited_total{endpoint}`.
 - `authorization_code`: code must belong to the client, be unexpired and
   unconsumed, `redirect_uri` must match, PKCE verified — all **before** the
