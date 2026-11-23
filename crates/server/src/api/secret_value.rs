@@ -3,7 +3,8 @@
 //! encoding of random bytes may stand in for a generated value: base64,
 //! base64url or hex of at least 32 bytes. The server can't prove a value is
 //! random; the checks below only reject obviously predictable shapes
-//! (repeated substrings, alphabet runs, small or skewed alphabets). They
+//! (repeated substrings, alphabet runs, sequential bytes, small or skewed
+//! alphabets). They
 //! cannot detect words or a passphrase that repeats nothing and happens to be
 //! valid base64 (`MyAcmeCorpProductionOauthClientSecretKey2026` passes), so
 //! the value must come from a CSPRNG (`openssl rand -base64 32`); the docs
@@ -17,6 +18,10 @@
 //! multiple of 4 (`"password1"` × 5 repeats no byte window at offset 9).
 //! Window sizes keep a random value's false-reject chance below ~1e-5 even
 //! at the 256-character maximum (about 1e-6 for 32 bytes).
+//! Sequences are looked for in both forms too: an alphabet run in the text
+//! (`abcdefgh`), and an arithmetic progression in the decoded bytes (bytes
+//! 0..31, every second byte, ASCII `A`..), which an encoding turns into
+//! text with no character run (`000102…`, `AAECAwQF…`).
 
 use std::collections::HashSet;
 
@@ -35,6 +40,10 @@ const MIN_BITS: f64 = 128.0;
 /// Ascending / descending character runs this long (`abcdefgh`, `98765432`)
 /// are rejected; a random value has one with probability below 1e-6.
 const MAX_RUN: usize = 8;
+/// Decoded byte runs this long with one constant (wrapping) step are
+/// rejected: a random byte starts one with probability 256^-4, so a 192-byte
+/// value is falsely rejected with probability about 190 × 256^-4 ≈ 4e-8.
+const MAX_BYTE_PROGRESSION: usize = 6;
 /// Repeated-window lengths (see the module doc): decoded bytes, case-folded
 /// base64 text, case-folded hex text.
 const BYTE_WINDOW: usize = 4;
@@ -125,6 +134,24 @@ fn longest_sequential_run(value: &str) -> usize {
     longest
 }
 
+/// The longest run of bytes with one constant wrapping step between
+/// neighbours (`00 02 04 06` → 4; any step, including 0).
+fn longest_byte_progression(bytes: &[u8]) -> usize {
+    let mut longest = bytes.len().min(2);
+    let mut run = longest;
+    for triple in bytes.windows(3) {
+        if let [a, b, c] = triple
+            && b.wrapping_sub(*a) == c.wrapping_sub(*b)
+        {
+            run += 1;
+            longest = longest.max(run);
+        } else {
+            run = 2;
+        }
+    }
+    longest
+}
+
 /// Whether the decoded bytes or the case-folded text repeat a substring.
 fn repeats(value: &str, bytes: &[u8]) -> bool {
     let folded = Zeroizing::new(value.to_ascii_lowercase());
@@ -138,7 +165,8 @@ fn repeats(value: &str, bytes: &[u8]) -> bool {
 
 /// 400 unless `value` is base64 / base64url / hex of at least 32 bytes,
 /// neither those bytes nor the case-folded text repeat a substring, with no
-/// long alphabet run and at least 128 estimated bits. The message never
+/// long alphabet run in the text, no long arithmetic progression in the
+/// bytes and at least 128 estimated bits. The message never
 /// contains the value.
 pub fn validate(value: &str) -> AppResult<()> {
     if value.len() > MAX_LEN {
@@ -152,10 +180,11 @@ pub fn validate(value: &str) -> AppResult<()> {
     }
     if repeats(value, &bytes)
         || longest_sequential_run(value) >= MAX_RUN
+        || longest_byte_progression(&bytes) >= MAX_BYTE_PROGRESSION
         || estimated_bits(value) < MIN_BITS
     {
         return Err(AppError::BadRequest(
-            "secret has a predictable shape (repeats, character runs or low variety): \
+            "secret has a predictable shape (repeats, sequences or low variety): \
              generate it with a CSPRNG (e.g. `openssl rand -base64 32`)"
                 .into(),
         ));
@@ -295,6 +324,60 @@ mod tests {
         assert_eq!(longest_sequential_run("z"), 1);
         assert_eq!(longest_sequential_run("xabcdy"), 4);
         assert_eq!(longest_sequential_run("q98765r"), 5);
+    }
+
+    #[test]
+    fn sequential_bytes_fail_in_any_encoding() {
+        use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+        let ascending: Vec<u8> = (0..32).collect();
+        let evens: Vec<u8> = (0..64).step_by(2).collect();
+        let printable: Vec<u8> = (32..64).collect();
+        let letters: Vec<u8> = (b'A'..=b'`').collect();
+        let descending: Vec<u8> = (0..40u8).map(|i| 200 - 3 * i).collect();
+        let mut probes = Vec::new();
+        for bytes in [&ascending, &evens, &printable, &letters, &descending] {
+            probes.push(hex(bytes));
+            probes.push(STANDARD.encode(bytes));
+            probes.push(URL_SAFE_NO_PAD.encode(bytes));
+        }
+        // #81 review: the usual base64 test vector of bytes 0..31.
+        assert!(probes.contains(&"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=".to_owned()));
+        assert!(probes.contains(
+            &"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f".to_owned()
+        ));
+        for value in &probes {
+            let bytes = decode(value).unwrap();
+            assert!(bytes.len() >= MIN_BYTES, "{value}");
+            assert!(
+                longest_byte_progression(&bytes) >= MAX_BYTE_PROGRESSION,
+                "{value}"
+            );
+            assert!(validate(value).is_err(), "{value}");
+        }
+        // Only the byte check catches these: the text neither repeats nor runs.
+        for bytes in [&ascending, &evens] {
+            for value in [hex(bytes), STANDARD.encode(bytes)] {
+                let decoded = decode(&value).unwrap();
+                assert!(!repeats(&value, &decoded), "{value}");
+                assert!(longest_sequential_run(&value) < MAX_RUN, "{value}");
+                assert!(estimated_bits(&value) >= MIN_BITS, "{value}");
+            }
+        }
+    }
+
+    #[test]
+    fn byte_progressions() {
+        assert_eq!(longest_byte_progression(&[]), 0);
+        assert_eq!(longest_byte_progression(&[7]), 1);
+        assert_eq!(longest_byte_progression(&[7, 200]), 2);
+        assert_eq!(longest_byte_progression(&[9, 0, 2, 4, 6, 1]), 4);
+        // Wrapping: 0xfe, 0xff, 0x00, 0x01 is one step of +1.
+        assert_eq!(longest_byte_progression(&[0xfe, 0xff, 0x00, 0x01, 0x50]), 4);
+        assert_eq!(longest_byte_progression(&[5, 5, 5, 5, 5, 5]), 6);
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
 
     #[test]
