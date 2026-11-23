@@ -17,7 +17,9 @@ use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, Transactio
 use uuid::Uuid;
 
 use super::{
-    assignment, client_auth, device_grant,
+    assignment, client_auth,
+    client_limit::Endpoint,
+    device_grant,
     error::{ErrorCode, OAuthError, OAuthResult},
     form_params, pkce, refresh_grant, scope,
 };
@@ -58,7 +60,9 @@ async fn handle(
     body: &[u8],
 ) -> OAuthResult<(TokenSet, &'static str)> {
     let params = form_params(headers, body)?;
-    let client = client_auth::authenticate(&state.db, tenant.id, headers, &params).await?;
+    let client =
+        client_auth::authenticate(&state.db, tenant.id, ip, Endpoint::Token, headers, &params)
+            .await?;
     match params.get("grant_type").map(String::as_str) {
         Some("authorization_code") => Ok((
             authorization_code(state, tenant, ip, &client, &params).await?,

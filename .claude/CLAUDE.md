@@ -213,6 +213,10 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
 - Bearer values (cookies, codes, tokens) come from `secret::random_token`
   and are stored only as `secret::hash`; unguessable handles from
   `secret::random_uuid` (not UUIDv7).
+- Client secrets are verified only by `oidc::client_auth::authenticate`
+  (token, revoke, introspect, devicecode): it runs the failure-only
+  `oidc::client_limit` bucket (client_id + IP) before the lookup, so a new
+  back-channel endpoint must authenticate through it, never on its own.
 - Protocol errors: `oidc::error::OAuthError` (RFC 6749 JSON); login API:
   `authn::AuthnError`. Never redirect to a `redirect_uri` before it matched
   the client's registration.

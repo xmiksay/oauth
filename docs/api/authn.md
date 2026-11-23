@@ -275,6 +275,7 @@ successes too. IPv6 clients are bucketed per /64.
 | client IP, per tenant | 10 / 5 min | `POST /api/authn/device` (user codes entered) |
 | tenant | 300 / 5 min | `POST /api/authn/device`: only codes matching no pending request count; when full, every entry is refused |
 | client IP, per tenant | 30 / 5 min | `POST /oauth2/devicecode` → `429` JSON (`rate_limited`) |
+| client_id + client IP, per tenant | 10 / 5 min | FAILED client authentications only, at `/oauth2/token` (every grant), `/oauth2/revoke`, `/oauth2/introspect`, `/oauth2/devicecode` together; when full → `429` + `Retry-After`, RFC 6749 JSON `{"error":"invalid_client"}`, without checking the secret (a correct one is refused too) — same for unknown client_ids ([../architecture.md](../architecture.md#token-endpoint)) |
 
 ## Passkeys
 

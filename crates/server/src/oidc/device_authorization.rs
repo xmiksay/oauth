@@ -2,6 +2,8 @@
 //! §3.1–3.2). Only apps that opted in (`device_code_enabled`) may use it;
 //! client authentication as at the token endpoint.
 
+use std::net::IpAddr;
+
 use axum::{
     Json,
     body::Bytes,
@@ -13,6 +15,7 @@ use serde_json::json;
 
 use super::{
     client_auth,
+    client_limit::Endpoint,
     error::{ErrorCode, OAuthError, OAuthResult, no_store},
     form_params, scope,
 };
@@ -41,7 +44,7 @@ pub async fn device_authorization(
         Ok(Err(retry_after)) => return AuthnError::RateLimited { retry_after }.into_response(),
         Err(err) => return OAuthError::from(err).into_response(),
     }
-    match handle(&state, &tenant, &headers, &body).await {
+    match handle(&state, &tenant, ip, &headers, &body).await {
         Ok(response) => response,
         Err(err) => err.into_response(),
     }
@@ -50,12 +53,21 @@ pub async fn device_authorization(
 async fn handle(
     state: &AppState,
     tenant: &Tenant,
+    ip: Option<IpAddr>,
     headers: &HeaderMap,
     body: &[u8],
 ) -> OAuthResult<Response> {
     let conn = &state.db;
     let params = form_params(headers, body)?;
-    let client = client_auth::authenticate(conn, tenant.id, headers, &params).await?;
+    let client = client_auth::authenticate(
+        conn,
+        tenant.id,
+        ip,
+        Endpoint::DeviceAuthorization,
+        headers,
+        &params,
+    )
+    .await?;
     if !client.device_code_enabled {
         return Err(OAuthError::new(
             ErrorCode::UnauthorizedClient,

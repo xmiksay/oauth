@@ -3,6 +3,7 @@ export const AUDIT_EVENT_TYPES = [
   'sign_in',
   'token.refresh_reuse',
   'token.code_replay',
+  'client_auth.lockout',
   'tenant.create',
   'tenant.update',
   'tenant.rename',

@@ -101,6 +101,17 @@ pub const MAIL_PER_ACCOUNT: Limit = Limit {
     window_secs: 900,
 };
 
+/// FAILED client authentications at the back-channel endpoints (token,
+/// revoke, introspect, device authorization) per client_id and client IP
+/// ([`client_auth_key`]). Failure-only: [`check`] gates every attempt,
+/// [`count`] runs only on a failure, so a client with the right secret never
+/// fills it. Keyed by IP too, so a guesser can't lock a confidential client
+/// out everywhere — only from the guesser's own address (/64).
+pub const CLIENT_AUTH_FAILURES: Limit = Limit {
+    max: 10,
+    window_secs: 300,
+};
+
 /// Start of the window containing `now` (unix seconds).
 pub fn window_start(now: i64, window_secs: i64) -> i64 {
     now.div_euclid(window_secs) * window_secs
@@ -123,6 +134,14 @@ pub fn ip_key(ip: Option<IpAddr>) -> String {
             format!("ip:{}/64", std::net::Ipv6Addr::from(prefix))
         }
     }
+}
+
+/// The [`CLIENT_AUTH_FAILURES`] bucket of a claimed client_id from one
+/// address. Built the same way whether or not the client exists, so the
+/// limiter reveals nothing about that. The IP part comes first and is
+/// self-delimiting, so no (ip, client_id) pair can collide with another.
+pub fn client_auth_key(client_id: &str, ip: Option<IpAddr>) -> String {
+    format!("client-auth:{}:{client_id}", ip_key(ip))
 }
 
 /// The account bucket of a resolved user. Keyed by id, so every spelling
@@ -170,6 +189,23 @@ pub async fn hit(
     limit: Limit,
     now: DateTime<Utc>,
 ) -> anyhow::Result<Result<(), u64>> {
+    let count = count(conn, tenant_id, key, limit, now).await?;
+    if count > limit.max {
+        Ok(Err(retry_after(now.timestamp(), limit.window_secs)))
+    } else {
+        Ok(Ok(()))
+    }
+}
+
+/// Counts one attempt and returns the window's count including it. The
+/// upsert is atomic, so exactly one caller sees each value.
+pub async fn count(
+    conn: &impl ConnectionTrait,
+    tenant_id: Uuid,
+    key: &str,
+    limit: Limit,
+    now: DateTime<Utc>,
+) -> anyhow::Result<i32> {
     let start = window_start_at(now, limit)?;
     let expires = start + chrono::Duration::seconds(limit.window_secs);
     let row = conn
@@ -190,14 +226,7 @@ pub async fn hit(
         .await
         .context("counting rate limit attempt")?
         .context("rate limit upsert returned no row")?;
-    let count: i32 = row
-        .try_get("", "count")
-        .context("reading rate limit count")?;
-    if count > limit.max {
-        Ok(Err(retry_after(now.timestamp(), limit.window_secs)))
-    } else {
-        Ok(Ok(()))
-    }
+    row.try_get("", "count").context("reading rate limit count")
 }
 
 /// Whether the bucket is already full, without counting an attempt — for a
@@ -272,5 +301,18 @@ mod tests {
         );
         assert_eq!(ip_key(Some("10.1.2.3".parse().unwrap())), "ip:10.1.2.3");
         assert_eq!(user_key(Uuid::nil()), format!("acct:{}", Uuid::nil()));
+        assert_eq!(
+            client_auth_key("web-app", Some("10.1.2.3".parse().unwrap())),
+            "client-auth:ip:10.1.2.3:web-app"
+        );
+        assert_eq!(
+            client_auth_key("web-app", Some("2001:db8:1:2::7".parse().unwrap())),
+            "client-auth:ip:2001:db8:1:2::/64:web-app"
+        );
+        assert_ne!(
+            client_auth_key("web-app", Some("10.1.2.3".parse().unwrap())),
+            client_auth_key("web-app", Some("10.1.2.4".parse().unwrap()))
+        );
+        assert_eq!(client_auth_key("x", None), "client-auth:ip:unknown:x");
     }
 }
