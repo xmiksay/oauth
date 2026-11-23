@@ -42,7 +42,11 @@ fn rename_event(tenant: &str, outcome: &str, from: &str, at: &str) -> String {
 async fn earlier_renames_are_backfilled_from_the_audit_log() {
     let pg = common::start_postgres().await;
     let conn = db::connect(&pg.url).await.unwrap();
-    let before = Migrator::migrations().len() - 1;
+    // Up to (not incl.) the migration under test, which need not be the last.
+    let before = Migrator::migrations()
+        .iter()
+        .position(|m| m.name() == "m20261122_000021_retired_tenant_slugs")
+        .expect("the retired_tenant_slugs migration is registered");
     Migrator::up(&conn, Some(u32::try_from(before).unwrap()))
         .await
         .unwrap();
