@@ -64,7 +64,7 @@ Implemented:
 | `tenancy` | `resolve_host` middleware (host → active tenant, `APEX_TENANT` on the apex or the apex redirect, else 404) and the `Tenant` extractor reading its result |
 | `secret` | Random bearer secrets (256-bit, base64url), random UUIDv4 handles, SHA-256 storage hash, constant-time compare |
 | `cors` | CORS on discovery / JWKS / userinfo / token / revoke only: `validate_origin`, `origin_of` (a redirect URI's origin), `effective_origins` (explicit ∪ a public client's redirect-URI origins), `tenant_allows`; `http` (preflight handlers, `tenant_wide` middleware, `for_client` for token / revoke) — see [CORS](#cors) |
-| `oidc` | Protocol endpoints; `params` (duplicate-rejecting form/query parsing, `AuthRequest`), `pkce`, `redirect` (matching + building), `scope` (parsing, resource resolution, `resolve_request` shared by authorize and device authorization), `mrrt` (refresh token redeemed for another consented resource), `assignment` (assignment-required checks), `client_auth`, `error` (`OAuthError`, RFC 6749 JSON + `WWW-Authenticate`, `no-store`), `device_authorization` / `device_grant` (RFC 8628); sibling `backchannel`: Back-Channel Logout (`record_client` on issuance, `queue` before sessions are deleted, `token`, `deliver::Notifier` outbox `Courier`) — [backchannel_logout.md](backchannel_logout.md) |
+| `oidc` | Protocol endpoints; `params` (duplicate-rejecting form/query parsing, `AuthRequest`), `pkce`, `redirect` (matching + building), `scope` (parsing, resource resolution, `resolve_request` shared by authorize and device authorization), `mrrt` (refresh token redeemed for another consented resource), `assignment` (assignment-required checks), `client_auth`, `client_limit` (failure-only client-auth rate limit), `error` (`OAuthError`, RFC 6749 JSON + `WWW-Authenticate`, `no-store`), `device_authorization` / `device_grant` (RFC 8628); sibling `backchannel`: Back-Channel Logout (`record_client` on issuance, `queue` before sessions are deleted, `token`, `deliver::Notifier` outbox `Courier`) — [backchannel_logout.md](backchannel_logout.md) |
 | `device_flow` | Device authorization state: `user_code` (alphabet, normalising, hashing), issue (code pair, user code unique per tenant), lookup by user code, the decision (CAS on `pending`, records the approving session), poll bookkeeping (`slow_down`), the approving session's lock + liveness, denying unredeemed approvals on revocation, consumption |
 | `mail` | `Mailer` trait (`Email`, `MailError` transient/permanent) + `SmtpMailer` (lettre, rustls on AWS-LC, webpki roots, 15 s command timeout); `templates` (plain-text link messages and security notices); `outbox` (`enqueue` on the caller's transaction, body sealed, backoff schedule); `tokens` (email link tokens: issue voids the user's older ones of that purpose, atomic single-use `consume` scoped to the tenant); `links::send` (token + message + outbox row) |
 | `notify` | Security notices (`notify::event`, `email_changed` to the old address) honouring `notification_prefs` (no row = on); email only to a verified address, Telegram to a linked chat |
@@ -195,7 +195,27 @@ checked before consent and on every token grant: [consent.md](consent.md).
 - Client auth: `client_secret_basic` or `client_secret_post` for confidential
   clients (unexpired secrets, SHA-256 compared in constant time), `client_id`
   alone for public clients (a public client sending a secret is rejected);
-  more than one method → `invalid_request`.
+  more than one method → `invalid_request`. The same `client_auth` serves
+  revoke, introspect and device authorization.
+- Failed client authentication is rate limited (`oidc::client_limit`,
+  bucket `authn::rate_limit::CLIENT_AUTH_FAILURES`): 10 failures / 5 min
+  per tenant + claimed `client_id` + client IP (IPv6 per /64, derived like
+  every other rate limit), shared by token (every grant), revoke,
+  introspect and devicecode. Only failures count (a malformed Basic header
+  or a request without `client_id` names no bucket and isn't counted). A
+  full bucket is checked before the client is looked up and answered `429`
+  + `Retry-After`, `{"error":"invalid_client"}` — `invalid_client` is
+  RFC 6749's code for failed client authentication (`slow_down` is RFC 8628
+  device polls only), 429 marks it temporary — WITHOUT verifying the
+  secret, so further guesses learn nothing, a correct secret from that
+  address is refused too until the window ends, and unknown client_ids
+  behave exactly like known ones. Keyed by IP so a guesser locks a client
+  out only from the guesser's own address. Concurrent attempts may all pass
+  the check before any is counted (overshoot ≤ the burst in flight):
+  counting before verification would make every success write twice and
+  refuse a busy client's parallel calls. The failure that fills the bucket
+  is audited once (`client_auth.lockout`); refused attempts count in
+  `oauth_client_auth_rate_limited_total{endpoint}`.
 - `authorization_code`: code must belong to the client, be unexpired and
   unconsumed, `redirect_uri` must match, PKCE verified — all **before** the
   atomic consume, so nobody without the verifier can burn a code. Consume
@@ -292,7 +312,9 @@ Cookies, browser binding, CSRF and client IPs: [authn.md](authn.md#sessions--csr
 
 `oauth_logins_total{outcome}` (success, invalid_credentials, mfa_failed,
 disabled, rate_limited, upstream_failed), `oauth_tokens_issued_total{grant,format}`,
-`oauth_token_errors_total{error}` — label values are compile-time constants.
+`oauth_token_errors_total{error}`,
+`oauth_client_auth_rate_limited_total{endpoint}` (token, revoke, introspect,
+devicecode) — label values are compile-time constants.
 
 ### Built-ins per tenant
 

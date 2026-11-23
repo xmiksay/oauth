@@ -19,6 +19,7 @@ pub const HTTP_REQUEST_DURATION: &str = "http_request_duration_seconds";
 pub const LOGINS_TOTAL: &str = "oauth_logins_total";
 pub const TOKENS_ISSUED_TOTAL: &str = "oauth_tokens_issued_total";
 pub const TOKEN_ERRORS_TOTAL: &str = "oauth_token_errors_total";
+pub const CLIENT_AUTH_LIMITED_TOTAL: &str = "oauth_client_auth_rate_limited_total";
 
 // Label values below are `&'static str` from closed sets on purpose: callers
 // cannot pass request data, so cardinality stays bounded.
@@ -38,6 +39,13 @@ pub fn token_issued(grant: &'static str, format: &'static str) {
 /// `error`: an RFC 6749 §5.2 error code (`oidc::error::ErrorCode`).
 pub fn token_error(error: &'static str) {
     metrics::counter!(TOKEN_ERRORS_TOTAL, "error" => error).increment(1);
+}
+
+/// A client authentication refused unverified because its failure bucket
+/// was full. `endpoint`: token | revoke | introspect | devicecode
+/// (`oidc::client_limit::Endpoint`).
+pub fn client_auth_limited(endpoint: &'static str) {
+    metrics::counter!(CLIENT_AUTH_LIMITED_TOTAL, "endpoint" => endpoint).increment(1);
 }
 
 /// Installs the global recorder. Call once per process; tests skip it, in which

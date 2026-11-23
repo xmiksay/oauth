@@ -3,6 +3,8 @@
 //! recalled and simply expire. Unknown tokens and tokens of other clients
 //! still get 200 (§2.2), so the endpoint is no token oracle.
 
+use std::net::IpAddr;
+
 use axum::{
     body::Bytes,
     extract::State,
@@ -12,11 +14,13 @@ use axum::{
 
 use super::{
     client_auth,
+    client_limit::Endpoint,
     error::{OAuthError, OAuthResult, no_store},
     form_params,
 };
 use crate::{
     app::AppState,
+    authn::ip::ClientIp,
     cors,
     tenancy::Tenant,
     tokens::{opaque, refresh},
@@ -25,10 +29,11 @@ use crate::{
 pub async fn revoke(
     State(state): State<AppState>,
     tenant: Tenant,
+    ClientIp(ip): ClientIp,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    let response = match handle(&state, &tenant, &headers, &body).await {
+    let response = match handle(&state, &tenant, ip, &headers, &body).await {
         Ok(()) => no_store(StatusCode::OK.into_response()),
         Err(err) => err.into_response(),
     };
@@ -38,12 +43,14 @@ pub async fn revoke(
 async fn handle(
     state: &AppState,
     tenant: &Tenant,
+    ip: Option<IpAddr>,
     headers: &HeaderMap,
     body: &[u8],
 ) -> OAuthResult<()> {
     let conn = &state.db;
     let params = form_params(headers, body)?;
-    let client = client_auth::authenticate(conn, tenant.id, headers, &params).await?;
+    let client =
+        client_auth::authenticate(conn, tenant.id, ip, Endpoint::Revoke, headers, &params).await?;
     let token = params
         .get("token")
         .ok_or_else(|| OAuthError::invalid_request("token is required"))?;

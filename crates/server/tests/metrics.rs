@@ -47,6 +47,7 @@ async fn requests_are_counted_with_bounded_labels() {
     metrics::login("success");
     metrics::token_issued("authorization_code", "jwt");
     metrics::token_error("invalid_grant");
+    metrics::client_auth_limited("token");
 
     let (status, body) = common::get(&metrics::router(handle), "/metrics").await;
     assert!(
@@ -59,6 +60,10 @@ async fn requests_are_counted_with_bounded_labels() {
     );
     assert!(
         body.contains(r#"oauth_token_errors_total{error="invalid_grant"} 1"#),
+        "{body}"
+    );
+    assert!(
+        body.contains(r#"oauth_client_auth_rate_limited_total{endpoint="token"} 1"#),
         "{body}"
     );
     assert_eq!(status, StatusCode::OK);

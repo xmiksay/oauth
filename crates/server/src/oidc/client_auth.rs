@@ -1,8 +1,9 @@
 //! Client authentication at the back-channel endpoints (RFC 6749 §2.3):
 //! `client_secret_basic` / `client_secret_post` for confidential clients,
 //! `client_id` alone for public clients. Exactly one method per request.
+//! Failed attempts are rate limited per client_id + IP (`client_limit`).
 
-use std::collections::HashMap;
+use std::{collections::HashMap, net::IpAddr};
 
 use anyhow::Context;
 use axum::http::{HeaderMap, header};
@@ -11,7 +12,10 @@ use entity::{applications, client_secrets, enums::ClientType};
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter};
 use uuid::Uuid;
 
-use super::error::{ErrorCode, OAuthError, OAuthResult};
+use super::{
+    client_limit::{self, Attempt, Endpoint},
+    error::{ErrorCode, OAuthError, OAuthResult},
+};
 use crate::secret;
 
 /// RFC 6749 §2.3.1: Basic credentials are form-urlencoded before base64.
@@ -100,6 +104,8 @@ async fn secret_matches(
 pub async fn authenticate(
     conn: &impl ConnectionTrait,
     tenant_id: Uuid,
+    ip: Option<IpAddr>,
+    endpoint: Endpoint,
     headers: &HeaderMap,
     params: &HashMap<String, String>,
 ) -> OAuthResult<applications::Model> {
@@ -122,17 +128,28 @@ pub async fn authenticate(
             None => return Err(invalid_client(false, "client authentication required")),
         },
     };
-    let app = find_client(conn, tenant_id, &client_id)
-        .await?
-        .ok_or_else(|| invalid_client(used_basic, "client authentication failed"))?;
-    match (app.client_type, presented) {
-        (ClientType::Confidential, Some(secret))
-            if secret_matches(conn, tenant_id, app.id, &secret).await? =>
-        {
-            Ok(app)
+    let attempt = Attempt {
+        tenant_id,
+        ip,
+        endpoint,
+        client_id: &client_id,
+    };
+    // Before the lookup: known and unknown clients are limited alike.
+    client_limit::guard(conn, &attempt).await?;
+    let app = find_client(conn, tenant_id, &client_id).await?;
+    let verified = match (&app, presented) {
+        (Some(app), Some(secret)) if app.client_type == ClientType::Confidential => {
+            secret_matches(conn, tenant_id, app.id, &secret).await?
         }
-        (ClientType::Public, None) => Ok(app),
-        _ => Err(invalid_client(used_basic, "client authentication failed")),
+        (Some(app), None) => app.client_type == ClientType::Public,
+        _ => false,
+    };
+    match app {
+        Some(app) if verified => Ok(app),
+        app => {
+            client_limit::failed(conn, &attempt, app.map(|a| a.id)).await?;
+            Err(invalid_client(used_basic, "client authentication failed"))
+        }
     }
 }
 

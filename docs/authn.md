@@ -126,6 +126,7 @@ Request logs record method + route template only — never the query string
 | password-reset requests per IP / per address | 10 / 15 min, 3 / 15 min |
 | email-link redemptions per IP | 30 / 5 min |
 | self-service mails per account | 5 / 15 min |
+| failed client authentications per client_id + IP (token, revoke, introspect, devicecode; failures only) | 10 / 5 min |
 
 ## Last sign-in method
 

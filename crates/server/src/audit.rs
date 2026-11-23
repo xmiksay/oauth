@@ -34,6 +34,7 @@ event_types! {
     SignIn => "sign_in",
     TokenRefreshReuse => "token.refresh_reuse",
     TokenCodeReplay => "token.code_replay",
+    ClientAuthLockout => "client_auth.lockout",
     DeviceCodeApprove => "device_code.approve",
     DeviceCodeDeny => "device_code.deny",
     DeviceCodeRedeem => "device_code.redeem",
@@ -131,7 +132,8 @@ impl Target {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Actor {
     /// `None`: anonymous — a sign-in attempt for an account that doesn't
-    /// exist, or a password-reset request (whoever sent it).
+    /// exist, a password-reset request or a client-authentication lockout
+    /// (whoever sent it).
     User(Option<Uuid>),
     Application(Uuid),
     System,

@@ -3,6 +3,8 @@
 //! or to the resource app it is for (by app id); anyone else gets
 //! `{"active": false}`, indistinguishable from an invalid token.
 
+use std::net::IpAddr;
+
 use axum::{
     Json,
     body::Bytes,
@@ -15,12 +17,14 @@ use serde_json::{Value, json};
 
 use super::{
     client_auth,
+    client_limit::Endpoint,
     error::{ErrorCode, OAuthError, OAuthResult, no_store},
     form_params, scope,
     token::load_app,
 };
 use crate::{
     app::AppState,
+    authn::ip::ClientIp,
     tenancy::Tenant,
     tokens::{
         inspect::{self, Inspected},
@@ -31,10 +35,11 @@ use crate::{
 pub async fn introspect(
     State(state): State<AppState>,
     tenant: Tenant,
+    ClientIp(ip): ClientIp,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    match handle(&state, &tenant, &headers, &body).await {
+    match handle(&state, &tenant, ip, &headers, &body).await {
         Ok(body) => no_store(Json(body).into_response()),
         Err(err) => err.into_response(),
     }
@@ -47,11 +52,20 @@ fn inactive() -> Value {
 async fn handle(
     state: &AppState,
     tenant: &Tenant,
+    ip: Option<IpAddr>,
     headers: &HeaderMap,
     body: &[u8],
 ) -> OAuthResult<Value> {
     let params = form_params(headers, body)?;
-    let caller = client_auth::authenticate(&state.db, tenant.id, headers, &params).await?;
+    let caller = client_auth::authenticate(
+        &state.db,
+        tenant.id,
+        ip,
+        Endpoint::Introspect,
+        headers,
+        &params,
+    )
+    .await?;
     if caller.client_type != ClientType::Confidential {
         return Err(OAuthError::new(
             ErrorCode::InvalidClient,

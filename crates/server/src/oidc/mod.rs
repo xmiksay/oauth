@@ -4,6 +4,7 @@
 pub mod assignment;
 mod authorize;
 pub mod client_auth;
+pub mod client_limit;
 mod device_authorization;
 mod device_grant;
 mod discovery;
