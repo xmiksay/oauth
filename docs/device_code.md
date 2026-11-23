@@ -10,7 +10,11 @@ GlobalAdmin, like its redirect URIs; never on built-in apps). Others get
 `unauthorized_client` at both endpoints.
 
 - `POST /oauth2/devicecode` (client auth as at the token endpoint, `scope`
-  validated like `/authorize`'s, rate limited 30 / 5 min per IP; no CORS:
+  validated like `/authorize`'s, rate limited 30 / 5 min per IP; failed
+  client authentication also fills the client_id + IP bucket shared with
+  token / revoke / introspect, 10 / 5 min → `429 invalid_client`:
+  [architecture.md](architecture.md#token-endpoint),
+  [api/authn.md](api/authn.md#rate-limits); no CORS:
   its clients are devices, not web pages) →
   `device_code` (256-bit bearer), `user_code` (`XXXX-XXXX` over the 20
   consonants `BCDFGHJKLMNPQRSTVWXZ`, ~34.5 bits, unique per tenant),
@@ -36,7 +40,9 @@ GlobalAdmin, like its redirect URIs; never on built-in apps). Others get
   transaction; Deny records `denied`. The browser ends on `/device?result=approved` or
   `/device?error=…` ([api/authn.md](api/authn.md#device-code)).
 - Token endpoint, `grant_type=urn:ietf:params:oauth:grant-type:device_code`
-  + `device_code`: the row is taken `FOR UPDATE`, so polls, the decision's
+  + `device_code` (polls authenticate the client through the same
+  failure-only client-auth limiter as every grant): the row is taken
+  `FOR UPDATE`, so polls, the decision's
   CAS and redemption serialize. Unknown / another client's / redeemed →
   `invalid_grant`; expired → `expired_token`; `denied` → `access_denied`;
   `approved` whose approving session has ended → `access_denied` (below);
