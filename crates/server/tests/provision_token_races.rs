@@ -16,11 +16,17 @@
 //! The race tests hold a token transaction's user lock, let apply run until
 //! it waits for that user, then record the session's client and commit:
 //! both sides must succeed. The last one shows a token request for a
-//! declared app doesn't wait for a running apply at all.
+//! declared app doesn't wait for a running apply at all, and the refresh
+//! one that a real refresh blocked on an app apply deletes waits before its
+//! token row (`backchannel::lock_apps`).
 
 mod common;
 
-use common::{backchannel::wait_for_lock_waiter, flow::Fixture};
+use axum::http::StatusCode;
+use common::{
+    backchannel::{wait_for_lock_waiter, wait_for_lock_waiters},
+    flow::Fixture,
+};
 use entity::{applications, sessions, users};
 use oauth_server::{
     authn::session::{self, NewSession},
@@ -227,4 +233,61 @@ applications:
         report.changes.iter().any(|c| c == "- application spa-app"),
         "{report:#?}"
     );
+}
+
+#[tokio::test]
+async fn a_refresh_racing_the_deletion_of_its_client_does_not_deadlock() {
+    let f = Fixture::new().await;
+    // `extra-app` is created now, so its id sorts after `web-app`'s: apply
+    // locks `web-app` for its delete, then waits for `extra-app`.
+    apply(
+        &f,
+        "tenant: contoso
+applications:
+  - { client_id: web-app, display_name: Contoso Web }
+  - { client_id: extra-app, display_name: Extra }
+",
+    )
+    .await
+    .unwrap();
+    // The family's `session_clients` row exists, so the rotation's own
+    // insert runs no FK check: only an explicit app lock puts the app
+    // before the presented token's row lock.
+    let (_browser, tokens) = f
+        .web_tokens("openid offline_access", "ann@example.com")
+        .await;
+    let refresh_token = tokens["refresh_token"].as_str().unwrap().to_owned();
+    let extra = applications::Entity::find()
+        .filter(applications::Column::ClientId.eq("extra-app"))
+        .one(&f.db)
+        .await
+        .unwrap()
+        .unwrap();
+    let holder = f.db.begin().await.unwrap();
+    holder
+        .execute_raw(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Postgres,
+            "SELECT 1 FROM applications WHERE id = $1 FOR KEY SHARE",
+            [extra.id.into()],
+        ))
+        .await
+        .unwrap();
+    let refreshing = async {
+        wait_for_lock_waiter(&f.db).await;
+        // Apply holds `web-app` for its delete: the refresh waits for it.
+        let release = async {
+            wait_for_lock_waiters(&f.db, 2).await;
+            holder.commit().await.unwrap();
+        };
+        let (response, ()) = tokio::join!(f.refresh(&refresh_token, None), release);
+        response
+    };
+    let (report, (status, body)) = tokio::join!(apply(&f, "tenant: contoso\n"), refreshing);
+    let report = report.expect("apply must not deadlock with the refresh");
+    for line in ["- application web-app", "- application extra-app"] {
+        assert!(report.changes.iter().any(|c| c == line), "{report:#?}");
+    }
+    // The client is gone: a plain refusal, not a deadlock's 500.
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"], "invalid_grant", "{body}");
 }

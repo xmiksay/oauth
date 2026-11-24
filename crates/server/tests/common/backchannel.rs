@@ -31,6 +31,11 @@ pub fn logout_url(id_token: &str) -> String {
 /// lock — the interleaving a race test sets up — instead of sleeping and
 /// hoping. Panics after a generous deadline.
 pub async fn wait_for_lock_waiter(db: &sea_orm::DatabaseConnection) {
+    wait_for_lock_waiters(db, 1).await;
+}
+
+/// [`wait_for_lock_waiter`] until at least `n` backends wait on a lock.
+pub async fn wait_for_lock_waiters(db: &sea_orm::DatabaseConnection, n: i64) {
     use sea_orm::{ConnectionTrait, Statement};
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
     loop {
@@ -44,7 +49,7 @@ pub async fn wait_for_lock_waiter(db: &sea_orm::DatabaseConnection) {
             .await
             .unwrap()
             .unwrap();
-        if row.try_get::<i64>("", "n").unwrap() > 0 {
+        if row.try_get::<i64>("", "n").unwrap() >= n {
             return;
         }
         assert!(

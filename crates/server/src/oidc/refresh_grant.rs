@@ -8,11 +8,12 @@ use std::{collections::HashMap, net::IpAddr};
 
 use entity::{applications, enums::NotifyEvent, refresh_tokens, users};
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, TransactionTrait};
+use uuid::Uuid;
 
 use super::{
     error::{ErrorCode, OAuthError, OAuthResult},
     mrrt, scope,
-    token::{active_user, ensure_assigned, inactive_user, load_app},
+    token::{active_user, app_gone, ensure_assigned, inactive_user, load_app},
 };
 use crate::{
     app::AppState,
@@ -95,8 +96,8 @@ pub async fn grant(
     // under lock (`mrrt::resolve`); a request rejected before `mark_rotated`
     // rolls back and does not burn the token.
     let txn = conn.begin().await?;
-    // The user first (global order user → consent / session → tokens, see
-    // `backchannel::lock_user`): `mrrt::resolve` locks consent rows, which
+    // The user first (global order user → application → consent / session
+    // → tokens, see `backchannel::lock_user`): `mrrt::resolve` locks consent rows, which
     // deleting the user (holding it `FOR UPDATE`) cascades to.
     // `user` was read before the lock: a disable that committed meanwhile
     // shows only here.
@@ -106,15 +107,37 @@ pub async fn grant(
     {
         return Err(inactive_user());
     }
-    let (oidc, resource, values) = match params.get("scope") {
+    let requested = params
+        .get("scope")
+        .map(|raw| scope::parse(raw))
+        .transpose()
+        .map_err(|m| invalid_scope(&m))?;
+    let found = match requested.as_ref().and_then(|r| r.resource.as_ref()) {
+        Some((prefix, _)) => scope::find_resource(&txn, tenant.id, prefix).await?,
+        None => None,
+    };
+    // Then the apps — client, the grant's resource and the requested one,
+    // together in id order — before any consent or token row lock
+    // (`backchannel::lock_apps`): deleting one cascades to them. Gone, the
+    // presented token went with the first two.
+    let apps: Vec<Uuid> = [
+        Some(client.id),
+        row.resource_application_id,
+        found.as_ref().map(|f| f.id),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if !backchannel::lock_apps(&txn, tenant.id, &apps).await? {
+        return Err(app_gone());
+    }
+    let (oidc, resource, values) = match requested {
         None => (original_oidc, original_resource, original_values),
-        Some(raw) => {
-            let requested = scope::parse(raw).map_err(|m| invalid_scope(&m))?;
+        Some(requested) => {
             let oidc = narrow_oidc(&original_oidc, &requested)?;
             match &requested.resource {
                 None => (oidc, None, Vec::new()),
-                Some((prefix, values)) => {
-                    let found = scope::find_resource(&txn, tenant.id, prefix).await?;
+                Some((_, values)) => {
                     let narrowed = match (&found, &original_resource) {
                         (Some(found), Some(orig)) if found.id == orig.id => {
                             narrow_values(&original_values, values)

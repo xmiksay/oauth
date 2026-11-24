@@ -116,6 +116,11 @@ pub(super) fn inactive_user() -> OAuthError {
     OAuthError::invalid_grant("the user is disabled or no longer exists")
 }
 
+/// The client or the resource was deleted while the request ran.
+pub(super) fn app_gone() -> OAuthError {
+    OAuthError::invalid_grant("the client or resource no longer exists")
+}
+
 /// `invalid_grant` unless the user is assigned where required
 /// ([`assignment`]).
 pub(super) async fn ensure_assigned(
@@ -205,6 +210,15 @@ async fn authorization_code(
         .is_active()
     {
         return Err(inactive_user());
+    }
+    // Then the apps, before the code's row lock (`backchannel::lock_apps`):
+    // deleting the client cascades to the code. Gone, the code went with it.
+    let apps: Vec<Uuid> = [Some(client.id), row.resource_application_id]
+        .into_iter()
+        .flatten()
+        .collect();
+    if !backchannel::lock_apps(&txn, tenant.id, &apps).await? {
+        return Err(app_gone());
     }
     // The code's session must still be live, and stays so (its row lock is
     // held to commit): a logout either already ended it — the code is dead

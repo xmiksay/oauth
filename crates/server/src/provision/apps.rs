@@ -6,6 +6,7 @@ use anyhow::{Context, bail};
 use entity::{app_roles, app_scopes, applications, enums::ClientType};
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
+    QueryOrder, QuerySelect, sea_query::LockType,
 };
 use serde_json::json;
 
@@ -26,6 +27,54 @@ use crate::{
     config::Config,
     directory::display_name,
 };
+
+/// Locks, in id order and before apply writes to any app, consent or token,
+/// every existing app the run will write: the undeclared managed apps it
+/// deletes (returned, for [`prune`]) and declared apps whose
+/// `identifier_uri` changes take `FOR UPDATE` (a delete, a key column
+/// update); the other declared apps `FOR NO KEY UPDATE` (`lock_app`). A
+/// token request locks its user, then its client and resource apps
+/// `FOR KEY SHARE` in id order, then consent and token rows
+/// (`backchannel::lock_apps`); taking these here one at a time, between
+/// writes, would let a request hold one app while apply holds another or
+/// a token row it needs.
+pub async fn lock(
+    conn: &impl ConnectionTrait,
+    cx: &Ctx,
+    specs: &[AppSpec],
+) -> anyhow::Result<Vec<applications::Model>> {
+    let mut apps = applications::Entity::find()
+        .filter(applications::Column::TenantId.eq(cx.tenant_id))
+        .filter(applications::Column::Builtin.eq(false))
+        .order_by_asc(applications::Column::Id)
+        .all(conn)
+        .await?;
+    apps.retain(|a| a.managed || specs.iter().any(|s| s.client_id == a.client_id));
+    let mut stale = Vec::new();
+    for app in apps {
+        let spec = specs.iter().find(|s| s.client_id == app.client_id);
+        let lock = lock_type(&app.identifier_uri, spec.map(|s| &s.identifier_uri));
+        let found = applications::Entity::find_by_id(app.id)
+            .filter(applications::Column::TenantId.eq(cx.tenant_id))
+            .lock(lock)
+            .one(conn)
+            .await?;
+        if let (None, Some(app)) = (spec, found) {
+            stale.push(app);
+        }
+    }
+    Ok(stale)
+}
+
+/// `declared`: the file's `identifier_uri` for the app (`None`: the app
+/// isn't declared; `Some(None)`: declared without one, so it's kept).
+fn lock_type(stored: &Option<String>, declared: Option<&Option<Option<String>>>) -> LockType {
+    match declared {
+        None => LockType::Update,
+        Some(Some(uri)) if uri != stored => LockType::Update,
+        Some(_) => LockType::NoKeyUpdate,
+    }
+}
 
 pub async fn apply(
     conn: &impl ConnectionTrait,
@@ -273,19 +322,13 @@ async fn roles(
     Ok(())
 }
 
-/// Deletes managed apps the file no longer declares (everything hanging
+/// Deletes the undeclared managed apps [`lock`] locked (everything hanging
 /// off them cascades).
-pub async fn prune(conn: &impl ConnectionTrait, cx: &mut Ctx) -> anyhow::Result<()> {
-    let managed = applications::Entity::find()
-        .filter(applications::Column::TenantId.eq(cx.tenant_id))
-        .filter(applications::Column::Managed.eq(true))
-        .filter(applications::Column::Builtin.eq(false))
-        .all(conn)
-        .await?;
-    let stale: Vec<_> = managed
-        .into_iter()
-        .filter(|a| !cx.kept.contains(&a.id))
-        .collect();
+pub async fn prune(
+    conn: &impl ConnectionTrait,
+    cx: &mut Ctx,
+    stale: Vec<applications::Model>,
+) -> anyhow::Result<()> {
     for app in stale {
         applications::Entity::delete_by_id(app.id)
             .exec(conn)
@@ -297,4 +340,21 @@ pub async fn prune(conn: &impl ConnectionTrait, cx: &mut Ctx) -> anyhow::Result<
             .await?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deleted_apps_and_key_changes_take_the_strong_lock() {
+        let uri = || Some("api://a".to_owned());
+        assert_eq!(lock_type(&uri(), None), LockType::Update);
+        assert_eq!(lock_type(&uri(), Some(&Some(None))), LockType::Update);
+        let other = Some(Some("api://b".to_owned()));
+        assert_eq!(lock_type(&uri(), Some(&other)), LockType::Update);
+        assert_eq!(lock_type(&uri(), Some(&Some(uri()))), LockType::NoKeyUpdate);
+        assert_eq!(lock_type(&uri(), Some(&None)), LockType::NoKeyUpdate);
+        assert_eq!(lock_type(&None, Some(&Some(None))), LockType::NoKeyUpdate);
+    }
 }

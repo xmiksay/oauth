@@ -201,17 +201,19 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   transaction (`directory::revoke_credentials` does it for its callers);
   delegated issuance records its client (`record_client`, before inserting
   any token bound to the session; the code grant refuses a code whose session
-  ended). Global lock order: IdP → user → session → tokens; take the user
-  with `backchannel::lock_user` (`record_client` does) before locking a
-  session or a row that inserts referencing the user — never after — and
-  issue nothing unless it returns `UserLock::Active` (a `disabled` read
-  before the lock is stale). Applications come after users: issuance's
-  inserts take the app row `FOR KEY SHARE` (FK), so a writer locks an app
-  only `FOR NO KEY UPDATE` (`app_rules::lock_app`), and anything that also
-  locks users takes them before its first app write (deleting an app or
-  changing its `client_id` / `identifier_uri` takes `FOR UPDATE`;
-  `oauth apply` runs its user steps, and locks the users it deletes last,
-  before its app steps). Each outbox channel has its own leader lock (`jobs::outbox::policy`).
+  ended). Global lock order: IdP → user → application → consent / session →
+  tokens. Take the user with `backchannel::lock_user` (`record_client` does)
+  before locking a session or a row that inserts referencing the user —
+  never after — and issue nothing unless it returns `UserLock::Active` (a
+  `disabled` read before the lock is stale). Then the client and resource
+  apps with `backchannel::lock_apps` (`FOR KEY SHARE`, id order) before any
+  consent, code, device request, `session_clients` or token row: deleting
+  an app cascades to those, and an `ON CONFLICT DO NOTHING` insert runs no
+  FK check. App writers lock it `FOR NO KEY UPDATE` (`app_rules::lock_app`;
+  no conflict with key-share), deleting it or changing `client_id` /
+  `identifier_uri` takes `FOR UPDATE`; `oauth apply` takes every user lock,
+  then every app lock (`provision::apps::lock`), before its first app,
+  consent or token write. Each outbox channel has its own leader lock (`jobs::outbox::policy`).
   Delivery is an
   outbox `Courier` (`channel = backchannel`) through `http::client` +
   `federation::urls` / `resolve::PublicOnly`; never log a logout token or an

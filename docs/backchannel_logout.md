@@ -76,19 +76,26 @@ locked or rows referencing the user are inserted: sign-in completion
 (`authn::complete::finish`, after the IdP lock, before the login
 transaction, the session it builds on or the one it replaces), a
 federated sign-in (after the IdP lock, before touching the identity and
-applying group mappings), the refresh grant (right after `BEGIN`, before a
-multi-resource refresh locks consent rows) and the device code grant (the
+applying group mappings), the refresh grant (right after `BEGIN`, before its
+apps and before a multi-resource refresh locks consent rows) and the device code grant (the
 approving user before the request row), and denying a device request
 (`authn::device_code::deny`, which writes the user into the request row;
 callers that also claim a login transaction lock the user before it). A
 refresh that loses this race gets a plain `invalid_grant` — a token
 revoked (not rotated) meanwhile is no replay, so no reuse alarm.
-Applications rank after the user: `session_clients`, refresh tokens and
-opaque access tokens reference the app, so their inserts take its row
-`FOR KEY SHARE` after the user lock. A writer therefore locks an app only
-`FOR NO KEY UPDATE` (`api::app_rules::lock_app`, which conflicts with other
-writers but not with those FK checks), and `oauth apply` takes every user
-lock before its first app write ([provisioning.md](provisioning.md#oauth-apply)).
+The global lock order is IdP → user → application → consent / session →
+tokens. Right after the user, the code, refresh and device code grants lock
+their client and resource apps `FOR KEY SHARE`, in id order
+(`backchannel::lock_apps`), before any consent, code, device request,
+`session_clients` or token row: deleting an app takes it `FOR UPDATE` and
+then cascades to exactly those rows, and the FK check of a later insert
+would come too late — a refresh's `session_clients` insert usually
+conflicts with the existing row and runs none. A grant whose app was
+deleted meanwhile gets a plain `invalid_grant`. Writers that keep the app
+lock it only `FOR NO KEY UPDATE` (`api::app_rules::lock_app`), which
+conflicts with other writers but not with these key-share locks, and
+`oauth apply` takes every user lock, then every app lock, before its first
+app, consent or token write ([provisioning.md](provisioning.md#oauth-apply)).
 
 `lock_user` returns the user's state as read under the lock
 (`UserLock::{Active, Disabled, Gone}`): a disable or deletion that committed
