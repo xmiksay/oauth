@@ -129,10 +129,22 @@ or deletes, in id order (`provision::apps::lock`). Only after that does it
 write any application, required permission, consent or role assignment; the
 only session and token rows it touches before are those of users it already
 holds. So it never holds an app, consent, session or token row while waiting
-for a user or an app a token request holds, and never deadlocks with one.
-Login completion (issuing the authorization code or approving a device
-request) and the management API's admin consent grant lock their apps the
-same way, so deleting an app never deadlocks with them either.
+for a user or an app a token request holds: on user and application locks it
+never deadlocks with one. Login completion (issuing the authorization code or
+approving a device request), the device code grant and the management API's
+admin consent grant lock their apps the same way, so deleting an app never
+deadlocks with them either. An existing app the file declares that the
+management API creates while apply runs (after `provision::apps::lock`)
+stops the apply with an error, rather than being locked out of order: run it
+again.
+
+Below applications the order is not complete yet: removing a managed scope
+(as `DELETE …/scopes/{id}`) drops it from consent grants and then revokes the
+refresh tokens carrying it, while a multi-resource refresh can hold its
+refresh token and then need such a consent grant. That pair can still
+deadlock; Postgres then aborts one side (the apply fails and can be run
+again, or the refresh fails with a server error). This predates the
+application locks and applies to the management API's scope delete too.
 
 Output lines:
 `+` created, `~` updated, `-` deleted. A `~` line lists each changed field

@@ -26,6 +26,9 @@ pub struct Ctx {
     /// The identity providers [`super::idps::lock_all`] locked before any
     /// user: only these may be locked again later.
     pub locked_idps: HashSet<Uuid>,
+    /// The existing applications [`super::apps::lock`] locked before any
+    /// app write: only these may be locked again later.
+    pub locked_apps: HashSet<Uuid>,
 }
 
 impl Ctx {

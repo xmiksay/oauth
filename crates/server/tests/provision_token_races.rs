@@ -204,6 +204,10 @@ applications:
     )
     .await
     .unwrap();
+    assert!(
+        f.web.id < f.spa.id,
+        "apply must lock web-app before it waits for spa-app"
+    );
     let session = new_session(&f).await;
     // A redemption for `spa-app` holds it until apply, which drops it, waits
     // in its delete — by then apply has locked `web-app`.

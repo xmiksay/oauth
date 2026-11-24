@@ -95,6 +95,7 @@ pub async fn run(
         changes: Vec::new(),
         kept: Default::default(),
         locked_idps,
+        locked_apps: Default::default(),
     };
     refs::check(&txn, &cx, spec).await?;
     // Creates and updates in dependency order, then deletions in reverse —
@@ -113,7 +114,7 @@ pub async fn run(
     access::directory_roles(&txn, &mut cx, &spec.directory_roles).await?;
     let stale_users = users::lock_stale(&txn, &cx).await?;
     users::finish_disabling(&txn, &cx, &config.master_key, disabled).await?;
-    let stale_apps = apps::lock(&txn, &cx, &spec.applications).await?;
+    let stale_apps = apps::lock(&txn, &mut cx, &spec.applications).await?;
     apps::apply(&txn, &mut cx, config, &spec.applications).await?;
     consents::required(&txn, &mut cx, &spec.applications).await?;
     let consented = consents::admin(&txn, &mut cx, &spec.admin_consents).await?;
