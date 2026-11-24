@@ -210,8 +210,9 @@ runs Vite on `*.localhost:5173`, proxying backend paths with the `Host` kept
 - **Managed by apply**: apps, groups, users and identity providers (list + detail) with
   `managed` (created or adopted by `oauth apply`, [provisioning.md](provisioning.md)) carry a
   `ManagedBadge` in lists / user badges and on the identity provider detail page; the app and group detail
-  pages show a notice instead (app: the next apply overwrites declared settings; group: it restores the
-  description and declared members, and a renamed group is deleted and re-created).
+  pages show a notice instead (`ManagedNote`; app: the next apply overwrites declared settings; group: it
+  restores the declared description and members, and a group renamed beyond letter case is deleted and
+  re-created).
   Editing stays allowed (the server doesn't lock managed objects).
 - **Identity providers** (admin `areas/admin/federation`, nav "Identity providers"): list
   (`usePagedList`, no search) and detail pages over `identity-providers`; anyone with a directory

@@ -93,7 +93,8 @@ describe('GroupDetail', () => {
     const managed = await mountDetail()
     const note = managed.find('[data-testid=managed-note]')
     expect(note.text()).toContain('Managed by oauth apply')
-    expect(note.text()).toContain('members')
+    expect(note.text()).toContain('declared members')
+    expect(note.text()).toContain('beyond letter case')
   })
 
   it('shows a taken name (409) in the properties form', async () => {
