@@ -15,7 +15,7 @@ let a Kubernetes Job or CI pipeline set up a tenant without a manual UI step:
 oauth bootstrap [--tenant <slug> [--tenant-name <name>]]
                 [--admin-email <email> [--display-name <name>] [--reset-password]]
                 [--provisioning-app <client_id> [--provisioning-role read|read-write] [--rotate-secret] [--adopt-app]]
-# make bootstrap [TENANT=…] [ADMIN_EMAIL=… [RESET=1]] [PROVISIONING_APP=… [PROVISIONING_ROLE=…] [ROTATE=1] [ADOPT=1]]
+# make bootstrap [TENANT=… [TENANT_NAME=…]] [ADMIN_EMAIL=… [DISPLAY_NAME=…] [RESET=1]] [PROVISIONING_APP=… [PROVISIONING_ROLE=…] [ROTATE=1] [ADOPT=1]]
 ```
 
 Idempotent, migrates first, runs in one transaction holding the bootstrap
