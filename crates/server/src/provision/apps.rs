@@ -15,6 +15,7 @@ use uuid::Uuid;
 
 use super::{
     ctx::{Ctx, Revocation, diff, update_line},
+    grant_locks,
     spec::{AppSpec, RoleSpec, ScopeSpec},
 };
 use crate::{
@@ -38,9 +39,8 @@ use crate::{
 /// update); the other declared apps `FOR NO KEY UPDATE` (`lock_app`). A
 /// token request locks its user, then its client and resource apps
 /// `FOR KEY SHARE` in id order, then consent and token rows
-/// (`backchannel::lock_apps`); taking these here one at a time, between
-/// writes, would let a request hold one app while apply holds another or
-/// a token row it needs. Records the ids it locked in `cx.locked_apps`.
+/// (`backchannel::lock_apps`); locking them one at a time, between writes,
+/// could deadlock with it. Records the ids it locked in `cx.locked_apps`.
 pub async fn lock(
     conn: &impl ConnectionTrait,
     cx: &mut Ctx,
@@ -196,6 +196,7 @@ async fn scopes(
 ) -> anyhow::Result<()> {
     let existing = app_scopes::Entity::find()
         .filter(app_scopes::Column::ApplicationId.eq(app.id))
+        .order_by_asc(app_scopes::Column::Id)
         .all(conn)
         .await?;
     let target = Some(Target::Application(app.id));
@@ -204,6 +205,7 @@ async fn scopes(
         .iter()
         .filter(|s| s.managed && !specs.iter().any(|w| w.value == s.value))
     {
+        grant_locks::ensure_scope_grants_locked(conn, cx, app.id, &scope.value).await?;
         delete_scope(conn, app, scope).await?;
         cx.revocations.push(Revocation::Scope {
             resource: app.id,

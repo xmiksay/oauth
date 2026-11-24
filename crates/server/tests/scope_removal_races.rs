@@ -197,3 +197,77 @@ async fn deleting_a_scope_through_the_api_racing_a_multi_resource_refresh_does_n
     assert_eq!(body["scope"], manage, "{body}");
     assert_family_revoked(&f, &body).await;
 }
+
+/// web-app requires `Orders.Read` + `Orders.Manage` and holds the admin
+/// consent for both: the admin grant is older than Ann's own grant.
+const ADMIN_ORDERS: &str = "tenant: contoso
+applications:
+  - client_id: orders
+    display_name: Orders
+    scopes: [{ value: Orders.Read }, { value: Orders.Write }, { value: Orders.Manage }]
+  - client_id: web-app
+    display_name: Contoso Web
+    required_permissions:
+      - { resource: orders, type: delegated, value: Orders.Read }
+      - { resource: orders, type: delegated, value: Orders.Manage }
+admin_consents:
+  - { client: web-app, resource: orders }
+";
+
+/// Drops `Orders.Write` (only in Ann's grant), then the required permission
+/// `Orders.Read`, then narrows the admin consent to `Orders.Manage`.
+const NARROW: &str = "tenant: contoso
+applications:
+  - client_id: orders
+    display_name: Orders
+    scopes: [{ value: Orders.Read }, { value: Orders.Manage }]
+  - client_id: web-app
+    display_name: Contoso Web
+    required_permissions: [{ resource: orders, type: delegated, value: Orders.Manage }]
+admin_consents:
+  - { client: web-app, resource: orders, scopes: [Orders.Manage] }
+";
+
+/// Issue #109: apply writes consent rows in several statements. Removing a
+/// scope rewrote (and locked) Ann's grant; narrowing the admin consent then
+/// locked the older admin grant. A refresh holding the admin grant
+/// `FOR SHARE` while it waits for Ann's grant deadlocked with it. Apply now
+/// locks every grant it may write up front, in id order.
+#[tokio::test]
+async fn apply_narrowing_an_admin_consent_after_a_scope_removal_does_not_deadlock() {
+    let f = Fixture::new().await;
+    apply(&f, ADMIN_ORDERS).await.unwrap();
+    let rt = orders_rw_token(&f).await;
+    // Holds the required permission `Orders.Read`, which apply deletes
+    // after its scope removal and before its admin consent write.
+    let holder = f.db.begin().await.unwrap();
+    holder
+        .execute_raw(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Postgres,
+            "SELECT 1 FROM app_required_permissions WHERE scope_id = (\
+               SELECT id FROM app_scopes WHERE application_id = $1 AND value = 'Orders.Read') \
+             FOR UPDATE",
+            [f.orders.id.into()],
+        ))
+        .await
+        .unwrap();
+    let applying = apply(&f, NARROW);
+    let refreshing = async {
+        wait_for_lock_waiter(&f.db).await;
+        let release = async {
+            wait_for_lock_waiters(&f.db, 2).await;
+            holder.commit().await.unwrap();
+        };
+        let (reply, ()) = tokio::join!(f.refresh(&rt, Some("api://orders/Orders.Manage")), release);
+        reply
+    };
+    let (report, (status, body)) = tokio::join!(applying, refreshing);
+    let report = report.expect("apply must not deadlock with the refresh");
+    for line in [
+        "- scope orders/Orders.Write",
+        "- admin consent web-app -> orders",
+    ] {
+        assert!(report.changes.iter().any(|c| c == line), "{report:#?}");
+    }
+    assert_ne!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+}

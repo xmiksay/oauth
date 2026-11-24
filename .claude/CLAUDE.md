@@ -225,8 +225,10 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   rows `FOR SHARE` (id order) before its token row, so a writer finishes
   every consent write before it revokes a token it doesn't hold through a
   user lock (scope deletion rewrites the grants in id order first, then
-  `revoke_by_scope`; apply defers scope and admin consent revocations to
-  `provision::consents::revoke_tokens`, after its last consent write). Each outbox channel has its own leader lock (`jobs::outbox::policy`).
+  `revoke_by_scope`; apply locks every grant it may write up front in one
+  `ORDER BY id FOR UPDATE` (`provision::grant_locks`), then defers scope and
+  admin consent revocations to `provision::consents::revoke_tokens`, after
+  its last consent write). Each outbox channel has its own leader lock (`jobs::outbox::policy`).
   Delivery is an
   outbox `Courier` (`channel = backchannel`) through `http::client` +
   `federation::urls` / `resolve::PublicOnly`; never log a logout token or an

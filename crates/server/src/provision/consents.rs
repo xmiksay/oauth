@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 use super::{
     ctx::{Ctx, Revocation, diff, update_line},
+    grant_locks::ensure_locked,
     spec::{AppSpec, ConsentSpec, PermissionSpec},
 };
 use crate::{
@@ -222,6 +223,7 @@ async fn grant(
         insert(conn, cx, &client, &resource, &scopes, &label, details).await?;
         return Ok(roles);
     };
+    ensure_locked(&cx.locked_grants, &[found.id])?;
     let mut current = found.scopes.clone();
     current.sort();
     if current == scopes {
@@ -307,6 +309,7 @@ pub async fn prune(conn: &impl ConnectionTrait, cx: &mut Ctx) -> anyhow::Result<
         .filter(|g| !cx.kept.contains(&g.id))
         .collect();
     for grant in stale {
+        ensure_locked(&cx.locked_grants, &[grant.id])?;
         delete_grant(conn, cx, &grant).await?;
         let name = |id: Uuid| async move {
             applications::Entity::find_by_id(id)
