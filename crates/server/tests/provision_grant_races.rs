@@ -17,7 +17,11 @@
 //! Apply locks the doomed app, then waits for `extra-app` (created later, so
 //! its id sorts after), which a test transaction holds `FOR KEY SHARE`. The
 //! request starts, and once it waits too, the holder lets apply go on.
-//! Also: an app the management API creates while apply runs stops it.
+//! Also: an app the management API creates while apply runs stops it, and
+//! so does a consent grant apply would write that the management API or a
+//! sign-in creates after apply locked the grants (issue #109,
+//! `provision::grant_locks`): a test transaction holds a scope row apply
+//! updates right after that lock, and the grant is stored meanwhile.
 
 mod common;
 
@@ -28,11 +32,14 @@ use common::{
     flow::Fixture,
     mgmt::{app_admin_token, app_by_client_id, post},
 };
-use entity::applications;
-use oauth_server::provision::{self, Options, Report};
+use entity::{app_scopes, applications, consent_grants};
+use oauth_server::{
+    consent,
+    provision::{self, Options, Report},
+};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ConnectionTrait, DatabaseTransaction, EntityTrait,
-    QuerySelect, TransactionTrait,
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseTransaction,
+    EntityTrait, QueryFilter, QuerySelect, TransactionTrait,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -240,4 +247,121 @@ applications:
         .unwrap();
     assert_eq!(web.display_name, f.web.display_name);
     assert!(!web.managed);
+}
+
+/// `ledger` and `orders` managed (ledger first, so apply writes it first),
+/// `web-app` requiring `Orders.Read`.
+const ORDERS: &str = "tenant: contoso
+applications:
+  - client_id: ledger
+    display_name: Ledger
+    scopes: [{ value: Ledger.Read }]
+  - client_id: orders
+    display_name: Orders
+    scopes: [{ value: Orders.Read }, { value: Orders.Write }, { value: Orders.Manage }]
+  - client_id: web-app
+    display_name: Contoso Web
+    required_permissions: [{ resource: orders, type: delegated, value: Orders.Read }]
+";
+
+/// [`ORDERS`] with `Ledger.Read` described (an update of its scope row,
+/// apply's first write after it locked the grants), then `tail`.
+fn ledger_described(scopes: &str, tail: &str) -> String {
+    format!(
+        "tenant: contoso
+applications:
+  - client_id: ledger
+    display_name: Ledger
+    scopes: [{{ value: Ledger.Read, description: Reads the ledger }}]
+  - client_id: orders
+    display_name: Orders
+    scopes: [{scopes}]
+  - client_id: web-app
+    display_name: Contoso Web
+    required_permissions: [{{ resource: orders, type: delegated, value: Orders.Read }}]
+{tail}"
+    )
+}
+
+/// Runs `yaml` while a test transaction holds the `Ledger.Read` scope row:
+/// once apply waits for it (after it locked the grants), stores the admin
+/// grant `web-app` → `orders` for `scopes`, then lets apply go on. Returns
+/// apply's error.
+async fn apply_around_late_grant(f: &Fixture, yaml: &str, scopes: &[&str]) -> String {
+    let holder = f.db.begin().await.unwrap();
+    holder
+        .execute_raw(sea_orm::Statement::from_sql_and_values(
+            sea_orm::DbBackend::Postgres,
+            "SELECT 1 FROM app_scopes WHERE application_id = $1 AND value = 'Ledger.Read' \
+             FOR UPDATE",
+            [f.ledger.id.into()],
+        ))
+        .await
+        .unwrap();
+    let late = async {
+        wait_for_lock_waiter(&f.db).await;
+        let values: Vec<String> = scopes.iter().map(|s| (*s).to_owned()).collect();
+        consent::store_grant(&f.db, f.tenant.id, f.web.id, f.orders.id, None, &values)
+            .await
+            .unwrap();
+        holder.commit().await.unwrap();
+    };
+    let (report, ()) = tokio::join!(apply(f, yaml), late);
+    format!("{:#}", report.unwrap_err())
+}
+
+/// Apply rolled back: `Ledger.Read` keeps no description, `orders` keeps
+/// `Orders.Write`, and the late admin grant is untouched.
+async fn assert_nothing_written(f: &Fixture, late_scopes: &[&str]) {
+    let ledger_read = app_scopes::Entity::find()
+        .filter(app_scopes::Column::ApplicationId.eq(f.ledger.id))
+        .filter(app_scopes::Column::Value.eq("Ledger.Read"))
+        .one(&f.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(ledger_read.description, "Reads the ledger");
+    let write = app_scopes::Entity::find()
+        .filter(app_scopes::Column::ApplicationId.eq(f.orders.id))
+        .filter(app_scopes::Column::Value.eq("Orders.Write"))
+        .one(&f.db)
+        .await
+        .unwrap();
+    assert!(write.is_some());
+    let grant = consent_grants::Entity::find()
+        .filter(consent_grants::Column::ClientApplicationId.eq(f.web.id))
+        .filter(consent_grants::Column::ResourceApplicationId.eq(f.orders.id))
+        .filter(consent_grants::Column::UserId.is_null())
+        .one(&f.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(grant.scopes, late_scopes);
+    assert!(!grant.managed);
+}
+
+#[tokio::test]
+async fn apply_stops_on_a_grant_holding_a_removed_scope_created_after_it_locked_the_grants() {
+    let f = Fixture::new().await;
+    apply(&f, ORDERS).await.unwrap();
+    // The file drops `Orders.Write`; the late admin grant holds it.
+    let yaml = ledger_described("{ value: Orders.Read }, { value: Orders.Manage }", "");
+    let err = apply_around_late_grant(&f, &yaml, &["Orders.Write"]).await;
+    assert!(err.contains("created while apply ran"), "{err}");
+    assert_nothing_written(&f, &["Orders.Write"]).await;
+}
+
+#[tokio::test]
+async fn apply_stops_on_a_declared_admin_consent_created_after_it_locked_the_grants() {
+    let f = Fixture::new().await;
+    apply(&f, ORDERS).await.unwrap();
+    // The file declares the admin consent the late grant is (it would adopt
+    // and narrow it to `Orders.Read`).
+    let scopes = "{ value: Orders.Read }, { value: Orders.Write }, { value: Orders.Manage }";
+    let tail = "admin_consents:\n  - { client: web-app, resource: orders }\n";
+    let yaml = ledger_described(scopes, tail);
+    let late = ["Orders.Read", "Orders.Manage"];
+    let err = apply_around_late_grant(&f, &yaml, &late).await;
+    assert!(err.contains("created while apply ran"), "{err}");
+    assert_nothing_written(&f, &late).await;
 }

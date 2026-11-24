@@ -144,10 +144,13 @@ resource pair) `FOR SHARE` in id order, then its refresh token. Apply writes
 consent rows in several statements (one per removed scope, then the admin
 consents), so right after the app locks it locks every grant it may write
 `FOR UPDATE` in one statement, in id order (`provision::grant_locks`): every
-grant of an app it locked and every admin grant of the tenant. Its later
-consent writes only take locks it already holds; a grant the management API
-or a sign-in creates while apply runs (after that lock) that apply would
-write stops the apply with an error: run it again. Apply drops
+grant of a declared app the file removes a managed scope of, every grant of
+an app it deletes, and every admin grant that is managed or of a declared
+`admin_consents` pair. Token requests that need one of these grants wait
+until apply commits or rolls back, dry runs included; other grants stay
+free. Its later consent writes only take locks it already holds; a grant the
+management API or a sign-in creates while apply runs (after that lock) that
+apply would write stops the apply with an error: run it again. Apply drops
 removed scopes from consent grants (as `DELETE …/scopes/{id}` does, which
 rewrites the grants before it revokes) and deletes narrowed or undeclared
 admin consents in place, but revokes the tokens of those scopes and grants

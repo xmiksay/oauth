@@ -219,27 +219,33 @@ pub(crate) fn update_scope_fields(
 /// `FOR SHARE` before it locks its token, so a writer holding a token row
 /// while it waits for a consent row would deadlock with it (global order
 /// consent → tokens). The affected grants are locked in id order, as the
-/// refresh locks its own (`consent::granted_scopes_for_share`).
+/// refresh locks its own (`consent::granted_scopes_for_share`). Returns the
+/// ids of the grants it rewrote.
 pub(crate) async fn delete_scope(
     conn: &impl ConnectionTrait,
     app: &applications::Model,
     scope: &app_scopes::Model,
-) -> AppResult<()> {
+) -> AppResult<Vec<Uuid>> {
     app_scopes::Entity::delete_by_id(scope.id)
         .exec(conn)
         .await?;
-    conn.execute_raw(Statement::from_sql_and_values(
-        conn.get_database_backend(),
-        "UPDATE consent_grants SET scopes = array_remove(scopes, $1), updated_at = now() \
-         WHERE id IN (SELECT id FROM consent_grants \
-           WHERE tenant_id = $2 AND resource_application_id = $3 AND $1 = ANY(scopes) \
-           ORDER BY id FOR UPDATE)",
-        [
-            scope.value.clone().into(),
-            app.tenant_id.into(),
-            app.id.into(),
-        ],
-    ))
-    .await?;
-    Ok(())
+    let rows = conn
+        .query_all_raw(Statement::from_sql_and_values(
+            conn.get_database_backend(),
+            "UPDATE consent_grants SET scopes = array_remove(scopes, $1), updated_at = now() \
+             WHERE id IN (SELECT id FROM consent_grants \
+               WHERE tenant_id = $2 AND resource_application_id = $3 AND $1 = ANY(scopes) \
+               ORDER BY id FOR UPDATE) \
+             RETURNING id",
+            [
+                scope.value.clone().into(),
+                app.tenant_id.into(),
+                app.id.into(),
+            ],
+        ))
+        .await?;
+    Ok(rows
+        .iter()
+        .map(|r| r.try_get::<Uuid>("", "id"))
+        .collect::<Result<_, _>>()?)
 }
