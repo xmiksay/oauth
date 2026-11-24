@@ -112,6 +112,25 @@ pub const CLIENT_AUTH_FAILURES: Limit = Limit {
     window_secs: 300,
 };
 
+/// The clock windows are computed from (`AppState::rate_clock`). The wall
+/// clock in production; tests pin it, so a burst of attempts can never
+/// straddle a window boundary and see its count reset partway through.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Clock {
+    pinned: Option<DateTime<Utc>>,
+}
+
+impl Clock {
+    /// A clock that always reads `at`.
+    pub fn pinned(at: DateTime<Utc>) -> Self {
+        Self { pinned: Some(at) }
+    }
+
+    pub fn now(self) -> DateTime<Utc> {
+        self.pinned.unwrap_or_else(Utc::now)
+    }
+}
+
 /// Start of the window containing `now` (unix seconds).
 pub fn window_start(now: i64, window_secs: i64) -> i64 {
     now.div_euclid(window_secs) * window_secs
@@ -275,6 +294,16 @@ fn window_start_at(now: DateTime<Utc>, limit: Limit) -> anyhow::Result<DateTime<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pinned_clock_stands_still() {
+        let at = Utc.timestamp_opt(1_000_000_299, 0).unwrap();
+        let clock = Clock::pinned(at);
+        assert_eq!(clock.now(), at);
+        assert_eq!(clock.now(), at);
+        let wall = Clock::default().now();
+        assert!((Utc::now() - wall).num_seconds().abs() < 5);
+    }
 
     #[test]
     fn window_math() {

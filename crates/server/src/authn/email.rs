@@ -40,7 +40,7 @@ pub(super) async fn limit(
     ctx: &Ctx<'_>,
     buckets: &[(String, rate_limit::Limit)],
 ) -> AuthnResult<()> {
-    let now = Utc::now();
+    let now = ctx.state.rate_clock.now();
     for (key, limit) in buckets {
         if let Err(retry_after) =
             rate_limit::hit(&ctx.state.db, ctx.tenant.id, key, *limit, now).await?

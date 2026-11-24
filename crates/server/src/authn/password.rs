@@ -46,7 +46,7 @@ async fn dummy_hash() -> anyhow::Result<&'static str> {
 /// Counts an attempt against the IP and the account (`account_key`); 429
 /// when either is over its limit.
 pub(super) async fn limit(ctx: &Ctx<'_>, account_key: &str) -> AuthnResult<()> {
-    let now = Utc::now();
+    let now = ctx.state.rate_clock.now();
     let buckets = [
         (rate_limit::ip_key(ctx.ip), rate_limit::PER_IP),
         (account_key.to_owned(), rate_limit::PER_ACCOUNT),

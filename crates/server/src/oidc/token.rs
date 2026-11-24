@@ -60,9 +60,16 @@ async fn handle(
     body: &[u8],
 ) -> OAuthResult<(TokenSet, &'static str)> {
     let params = form_params(headers, body)?;
-    let client =
-        client_auth::authenticate(&state.db, tenant.id, ip, Endpoint::Token, headers, &params)
-            .await?;
+    let client = client_auth::authenticate(
+        &state.db,
+        tenant.id,
+        ip,
+        Endpoint::Token,
+        headers,
+        &params,
+        state.rate_clock.now(),
+    )
+    .await?;
     match params.get("grant_type").map(String::as_str) {
         Some("authorization_code") => Ok((
             authorization_code(state, tenant, ip, &client, &params).await?,

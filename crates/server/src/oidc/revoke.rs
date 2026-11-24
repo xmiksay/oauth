@@ -49,8 +49,16 @@ async fn handle(
 ) -> OAuthResult<()> {
     let conn = &state.db;
     let params = form_params(headers, body)?;
-    let client =
-        client_auth::authenticate(conn, tenant.id, ip, Endpoint::Revoke, headers, &params).await?;
+    let client = client_auth::authenticate(
+        conn,
+        tenant.id,
+        ip,
+        Endpoint::Revoke,
+        headers,
+        &params,
+        state.rate_clock.now(),
+    )
+    .await?;
     let token = params
         .get("token")
         .ok_or_else(|| OAuthError::invalid_request("token is required"))?;

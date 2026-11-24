@@ -14,7 +14,6 @@ use axum::{
     http::HeaderMap,
     response::{IntoResponse, Response},
 };
-use chrono::Utc;
 use entity::enums::{FederationPurpose, LoginStage, Outcome as AuditOutcome};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -43,7 +42,8 @@ pub async fn start(
     // Each start may cost a discovery fetch and creates a row.
     let key = format!("federation:{}", rate_limit::ip_key(ctx.ip));
     let limit = rate_limit::FEDERATION_PER_IP;
-    if let Err(retry_after) = rate_limit::hit(&state.db, tenant.id, &key, limit, Utc::now()).await?
+    if let Err(retry_after) =
+        rate_limit::hit(&state.db, tenant.id, &key, limit, state.rate_clock.now()).await?
     {
         return Err(AuthnError::RateLimited { retry_after });
     }
@@ -94,7 +94,8 @@ pub async fn discover(
     tx::load_at(&ctx, &tx_id, LoginStage::Password).await?;
     let key = format!("discover:{}", rate_limit::ip_key(ctx.ip));
     let limit = rate_limit::DISCOVER_PER_IP;
-    if let Err(retry_after) = rate_limit::hit(&state.db, tenant.id, &key, limit, Utc::now()).await?
+    if let Err(retry_after) =
+        rate_limit::hit(&state.db, tenant.id, &key, limit, state.rate_clock.now()).await?
     {
         return Err(AuthnError::RateLimited { retry_after });
     }

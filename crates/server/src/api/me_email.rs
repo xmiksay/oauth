@@ -23,7 +23,7 @@ use crate::{
 /// Bounds the mail one account can make the server send.
 async fn limit_mail(state: &AppState, caller: &Caller) -> AppResult<()> {
     let key = format!("mail-acct:{}", caller.user_id()?);
-    let now = chrono::Utc::now();
+    let now = state.rate_clock.now();
     match rate_limit::hit(
         &state.db,
         caller.tenant_id(),

@@ -129,7 +129,7 @@ async fn wrong_codes_are_capped_per_tenant_across_addresses() {
     let (key, misses) = (rate_limit::USER_CODE_MISS_KEY, rate_limit::USER_CODE_MISSES);
     // Wrong guesses from many other addresses, one short of the cap.
     for _ in 1..misses.max {
-        let hit = rate_limit::hit(&f.db, f.tenant.id, key, misses, chrono::Utc::now()).await;
+        let hit = rate_limit::hit(&f.db, f.tenant.id, key, misses, f.rate_clock.now()).await;
         assert!(hit.unwrap().is_ok());
     }
     // Right codes don't count towards it.

@@ -128,6 +128,10 @@ Request logs record method + route template only — never the query string
 | self-service mails per account | 5 / 15 min |
 | failed client authentications per client_id + IP (token, revoke, introspect, devicecode; failures only) | 10 / 5 min |
 
+Windows are aligned to the epoch and read their time from `AppState::rate_clock`
+(`rate_limit::Clock`): the wall clock in production; the integration-test
+fixture pins it, so a test's burst can't straddle a window boundary.
+
 ## Last sign-in method
 
 A user keeps at least one way in: a password, a passkey or a linked

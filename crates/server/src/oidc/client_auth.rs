@@ -8,6 +8,7 @@ use std::{collections::HashMap, net::IpAddr};
 use anyhow::Context;
 use axum::http::{HeaderMap, header};
 use base64::{Engine, engine::general_purpose::STANDARD};
+use chrono::{DateTime, Utc};
 use entity::{applications, client_secrets, enums::ClientType};
 use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter};
 use uuid::Uuid;
@@ -108,6 +109,7 @@ pub async fn authenticate(
     endpoint: Endpoint,
     headers: &HeaderMap,
     params: &HashMap<String, String>,
+    now: DateTime<Utc>,
 ) -> OAuthResult<applications::Model> {
     let basic =
         parse_basic(headers).map_err(|()| invalid_client(true, "malformed Basic credentials"))?;
@@ -133,6 +135,7 @@ pub async fn authenticate(
         ip,
         endpoint,
         client_id: &client_id,
+        now,
     };
     // Before the lookup: known and unknown clients are limited alike.
     client_limit::guard(conn, &attempt).await?;
