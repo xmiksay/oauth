@@ -106,20 +106,30 @@ management API) just the same, for as long as the run takes: hashing
 `password_env` passwords with argon2 makes that noticeable. An IdP the file
 declares that the management API creates while apply runs (after these locks)
 stops the apply with an error, rather than being locked after users: run it
-again. Applications rank after users in that order (IdP → user → consent /
-session → application → tokens: a token request locks its user, then
-inserts rows whose FKs take the app `FOR KEY SHARE`). Apply locks each
-declared existing app only `FOR NO KEY UPDATE`, which serializes it with
-other writers of the app but not with token requests: code redemptions and
-refreshes for declared apps keep working while apply (or a dry run) runs,
-unless they need a user apply has locked. And it takes every user lock
-(directory roles, disabling, and the undeclared users it deletes last)
-before its first write to an application or a consent grant — the
-application, required permission, consent and role assignment steps run
-after the user steps —
-so it never holds one of those while waiting for a user a token request
-holds (deleting an app, or changing its `identifier_uri`, does conflict
-with the token request's FK check). Output lines:
+again.
+
+**Applications.** The global lock order is IdP → user → application →
+consent / session → tokens: a token request locks its user, then its client
+and resource apps `FOR KEY SHARE`, then consent, session, code and token
+rows ([backchannel_logout.md](backchannel_logout.md)).
+
+Apply locks each declared existing app only `FOR NO KEY UPDATE`, which
+serializes it with other writers of the app but not with token requests:
+code redemptions and refreshes for declared apps keep working while apply
+(or a dry run) runs, unless they need a user apply has locked. Apps it
+deletes, and apps whose `identifier_uri` it changes (a key column), are
+locked `FOR UPDATE`: token requests for those wait for the apply to finish
+and then fail with `invalid_grant` if the app is gone.
+
+Apply takes these locks in the same order. It first runs its user steps
+(directory roles, disabling) and locks the undeclared users it deletes last.
+Then it locks every existing app it writes or deletes, in id order
+(`provision::apps::lock`). Only after that does it write any application,
+required permission, consent, role assignment or token. So it never holds
+an app, consent or token row while waiting for a user or an app a token
+request holds, and never deadlocks with one.
+
+Output lines:
 `+` created, `~` updated, `-` deleted. A `~` line lists each changed field
 with its stored and its new value, as SQL literals
 (`~ application web: redirect_uris: ARRAY ['https://a/cb'] -> ARRAY ['https://b/cb']`),

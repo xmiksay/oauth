@@ -93,10 +93,11 @@ pub async fn grant(
     }
 }
 
-/// Begins the grant's transaction holding the request's row lock — and,
-/// for a request someone approved, first their user row and then the
-/// approving session (lock order user → session → request,
-/// `backchannel::lock_user`: redemption inserts a session for the user,
+/// Begins the grant's transaction holding the request's row lock — first
+/// the approving user's row (if someone approved it), then its client and
+/// resource apps, then the approving session (lock order user →
+/// application → session → request, `backchannel::lock_user` /
+/// `backchannel::lock_apps`: redemption inserts a session for the user,
 /// deleting a user locks it before cascading here, and ending the approving
 /// session locks it before its FK clears the request's
 /// `approved_session_id`). The flag says whether that session is still live.
@@ -116,11 +117,21 @@ async fn lock_request(
     for _ in 0..2 {
         let peeked = device_flow::by_device_code(&state.db, tenant_id, device_code, false).await?;
         let user_id = peeked.as_ref().and_then(|r| r.user_id);
+        // Client and resource never change; deleting either cascades to the
+        // request, so they come before it (a gone one shows as a gone row).
+        let apps: Vec<Uuid> = peeked
+            .as_ref()
+            .map(|r| [Some(r.application_id), r.resource_application_id])
+            .into_iter()
+            .flatten()
+            .flatten()
+            .collect();
         let session_id = peeked.and_then(|r| r.approved_session_id);
         let txn = state.db.begin().await?;
         if let Some(user_id) = user_id {
             backchannel::lock_user(&txn, tenant_id, user_id).await?;
         }
+        backchannel::lock_apps(&txn, tenant_id, &apps).await?;
         let mut live = false;
         if let Some(session_id) = session_id {
             live = device_flow::lock_approving_session(&txn, tenant_id, session_id).await?;

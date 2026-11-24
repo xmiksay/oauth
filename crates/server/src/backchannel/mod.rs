@@ -55,7 +55,8 @@ pub enum Ended {
 /// too late): the user row `FOR KEY SHARE`. Admin revocation / disabling /
 /// deletion / password resets hold it `FOR UPDATE` while they lock the
 /// sessions, so taking a session first deadlocks against them. Global order:
-/// IdP → user → session → tokens. Its own statement: the order of row locks
+/// IdP → user → application → consent / session → tokens ([`lock_apps`]).
+/// Its own statement: the order of row locks
 /// within one statement isn't guaranteed.
 ///
 /// Returns the user's state as read under the lock: a disable or deletion
@@ -82,6 +83,45 @@ pub async fn lock_user(
         .try_get("", "disabled")
         .context("reading whether the user is disabled")?;
     Ok(UserLock::from_disabled(disabled))
+}
+
+/// The applications a token request issues for — its client and resource
+/// — locked `FOR KEY SHARE` right after [`lock_user`] and before any
+/// consent, session-client, code, device request or token row. Those rows
+/// reference the app: deleting it (`FOR UPDATE`, then cascading to them)
+/// would otherwise meet the request's later FK check in the opposite
+/// order, and an insert that conflicts with an existing `session_clients`
+/// row (`ON CONFLICT DO NOTHING`, a refresh's normal case) runs no FK
+/// check at all, so only an explicit lock puts the app before them. Global
+/// order: IdP → user → application → consent / session → tokens. In id
+/// order, one statement each (the order of row locks within one statement
+/// isn't guaranteed). Returns whether every app still exists.
+pub async fn lock_apps(
+    conn: &impl ConnectionTrait,
+    tenant_id: Uuid,
+    ids: &[Uuid],
+) -> anyhow::Result<bool> {
+    for id in lock_order(ids) {
+        let row = conn
+            .query_one_raw(Statement::from_sql_and_values(
+                conn.get_database_backend(),
+                "SELECT 1 AS one FROM applications WHERE tenant_id = $1 AND id = $2 FOR KEY SHARE",
+                [tenant_id.into(), id.into()],
+            ))
+            .await
+            .context("locking the application")?;
+        if row.is_none() {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn lock_order(ids: &[Uuid]) -> Vec<Uuid> {
+    let mut ids = ids.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
 }
 
 /// What [`lock_user`] found.
@@ -244,5 +284,12 @@ mod tests {
         assert!(UserLock::Active.is_active());
         assert!(!UserLock::Disabled.is_active());
         assert!(!UserLock::Gone.is_active());
+    }
+
+    #[test]
+    fn apps_are_locked_once_each_in_id_order() {
+        let (a, b) = (Uuid::now_v7(), Uuid::now_v7());
+        assert_eq!(lock_order(&[b, a, b]), vec![a, b]);
+        assert!(lock_order(&[]).is_empty());
     }
 }
