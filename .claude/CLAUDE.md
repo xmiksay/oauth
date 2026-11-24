@@ -205,7 +205,13 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   with `backchannel::lock_user` (`record_client` does) before locking a
   session or a row that inserts referencing the user — never after — and
   issue nothing unless it returns `UserLock::Active` (a `disabled` read
-  before the lock is stale). Each outbox channel has its own leader lock (`jobs::outbox::policy`).
+  before the lock is stale). Applications come after users: issuance's
+  inserts take the app row `FOR KEY SHARE` (FK), so a writer locks an app
+  only `FOR NO KEY UPDATE` (`app_rules::lock_app`), and anything that also
+  locks users takes them before its first app write (deleting an app or
+  changing its `client_id` / `identifier_uri` takes `FOR UPDATE`;
+  `oauth apply` runs its user steps, and locks the users it deletes last,
+  before its app steps). Each outbox channel has its own leader lock (`jobs::outbox::policy`).
   Delivery is an
   outbox `Courier` (`channel = backchannel`) through `http::client` +
   `federation::urls` / `resolve::PublicOnly`; never log a logout token or an

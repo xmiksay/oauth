@@ -97,21 +97,28 @@ pub async fn run(
         locked_idps,
     };
     refs::check(&txn, &cx, spec).await?;
-    // Creates and updates in dependency order, then deletions in reverse.
+    // Creates and updates in dependency order, then deletions in reverse —
+    // except that every user lock (`FOR UPDATE`: directory roles, disabling,
+    // the users deleted at the end) comes before the first write to an app
+    // or a consent grant. A token request locks its user first, then
+    // consent rows (`FOR SHARE`) and, through its inserts' FKs, the app
+    // (`FOR KEY SHARE`, which an app delete or a key column change conflicts
+    // with): taking those here before a user would deadlock with it.
     let disabled = users::apply(&txn, &mut cx, &spec.users, env).await?;
     groups::apply(&txn, &mut cx, &spec.groups).await?;
     idps::apply(&txn, &mut cx, config, &spec.identity_providers, env).await?;
-    apps::apply(&txn, &mut cx, config, &spec.applications).await?;
-    consents::required(&txn, &mut cx, &spec.applications).await?;
     access::directory_roles(&txn, &mut cx, &spec.directory_roles).await?;
     users::finish_disabling(&txn, &cx, &config.master_key, disabled).await?;
+    let stale_users = users::lock_stale(&txn, &cx).await?;
+    apps::apply(&txn, &mut cx, config, &spec.applications).await?;
+    consents::required(&txn, &mut cx, &spec.applications).await?;
     let consented = consents::admin(&txn, &mut cx, &spec.admin_consents).await?;
     access::role_assignments(&txn, &mut cx, &spec.role_assignments, consented).await?;
     consents::prune(&txn, &mut cx).await?;
     apps::prune(&txn, &mut cx).await?;
     idps::prune(&txn, &mut cx).await?;
     groups::prune(&txn, &mut cx).await?;
-    users::prune(&txn, &mut cx, &config.master_key).await?;
+    users::prune(&txn, &mut cx, &config.master_key, stale_users).await?;
 
     if opts.dry_run {
         txn.rollback().await.context("rolling back dry run")?;
