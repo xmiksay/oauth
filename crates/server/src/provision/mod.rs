@@ -87,6 +87,8 @@ pub async fn run(
     ))
     .await
     .context("acquiring apply lock")?;
+    // Before any user lock (IdP → user, like a federated sign-in).
+    idps::lock_all(&txn, tenant.id).await?;
 
     let mut cx = ctx::Ctx {
         tenant_id: tenant.id,

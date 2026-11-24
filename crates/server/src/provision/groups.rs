@@ -101,8 +101,7 @@ async fn upsert(
 }
 
 /// Members the file lists become manual, managed members; managed members
-/// it no longer lists leave (a membership an IdP mapping also keeps stays
-/// as the mapping's).
+/// it no longer lists leave ([`release`]).
 async fn members(
     conn: &impl ConnectionTrait,
     cx: &mut Ctx,
@@ -125,7 +124,7 @@ async fn members(
         match existing.iter().find(|m| m.user_id == user.id) {
             Some(m) if m.manual && m.managed => {}
             Some(m) if m.manual => {
-                set_member(conn, m, true, true).await?;
+                adopt(conn, m).await?;
                 cx.note(format!("~ {line}: adopted"));
             }
             // New, or over a mapped-only row (not a manual member yet).
@@ -147,14 +146,10 @@ async fn members(
         .iter()
         .filter(|m| m.managed && !wanted.iter().any(|u| u.id == m.user_id))
     {
-        if m.idp_id.is_some() {
-            set_member(conn, m, false, false).await?;
-        } else {
-            group_members::Entity::delete_many()
-                .filter(group_members::Column::GroupId.eq(m.group_id))
-                .filter(group_members::Column::UserId.eq(m.user_id))
-                .exec(conn)
-                .await?;
+        // Someone else (the management API) removed it meanwhile: nothing
+        // to report or audit.
+        if !release(conn, m).await? {
+            continue;
         }
         let email = users::Entity::find_by_id(m.user_id)
             .one(conn)
@@ -168,21 +163,46 @@ async fn members(
     Ok(())
 }
 
-async fn set_member(
-    conn: &impl ConnectionTrait,
-    m: &group_members::Model,
-    manual: bool,
-    managed: bool,
-) -> anyhow::Result<()> {
+async fn adopt(conn: &impl ConnectionTrait, m: &group_members::Model) -> anyhow::Result<()> {
     group_members::Entity::update_many()
-        .col_expr(group_members::Column::Manual, manual.into())
-        .col_expr(group_members::Column::Managed, managed.into())
+        .col_expr(group_members::Column::Manual, true.into())
+        .col_expr(group_members::Column::Managed, true.into())
         .filter(group_members::Column::GroupId.eq(m.group_id))
         .filter(group_members::Column::UserId.eq(m.user_id))
         .exec(conn)
         .await
-        .context("updating group membership")?;
+        .context("adopting group membership")?;
     Ok(())
+}
+
+/// Ends apply's hold on a membership the file no longer lists: a row only
+/// apply keeps is deleted, one an IdP mapping also keeps stays as the
+/// mapping's. Neither write trusts the `idp_id` read earlier: each re-checks
+/// it, and READ COMMITTED re-evaluates that on a row a concurrent sign-in
+/// changed, so a mapped membership is never deleted and no row is left
+/// without a source (`group_members_source_check`). Returns whether a row
+/// changed (`false`: it is gone, removed concurrently).
+async fn release(conn: &impl ConnectionTrait, m: &group_members::Model) -> anyhow::Result<bool> {
+    let deleted = group_members::Entity::delete_many()
+        .filter(group_members::Column::GroupId.eq(m.group_id))
+        .filter(group_members::Column::UserId.eq(m.user_id))
+        .filter(group_members::Column::IdpId.is_null())
+        .exec(conn)
+        .await
+        .context("removing group membership")?;
+    if deleted.rows_affected > 0 {
+        return Ok(true);
+    }
+    let handed = group_members::Entity::update_many()
+        .col_expr(group_members::Column::Manual, false.into())
+        .col_expr(group_members::Column::Managed, false.into())
+        .filter(group_members::Column::GroupId.eq(m.group_id))
+        .filter(group_members::Column::UserId.eq(m.user_id))
+        .filter(group_members::Column::IdpId.is_not_null())
+        .exec(conn)
+        .await
+        .context("handing group membership to its mapping")?;
+    Ok(handed.rows_affected > 0)
 }
 
 /// Deletes managed groups the file no longer declares.
