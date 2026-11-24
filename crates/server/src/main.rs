@@ -56,7 +56,8 @@ enum Command {
         #[arg(long, requires = "provisioning_app")]
         rotate_secret: bool,
         /// Make an existing app that holds no provisioning role the
-        /// provisioning app (refused without this flag).
+        /// provisioning app, or upgrade one holding Directory.Read.All to
+        /// read-write (both refused without this flag).
         #[arg(long, requires = "provisioning_app")]
         adopt_app: bool,
     },

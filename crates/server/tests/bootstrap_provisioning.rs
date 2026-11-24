@@ -231,7 +231,7 @@ async fn re_running_with_read_downgrades_the_app() {
     assert!(p.role_assigned);
     assert_eq!(p.role_removed, Some(builtin_apps::ROLE_READ_WRITE_ALL));
     assert!(
-        text.contains("Removed management API role Directory.ReadWrite.All from `ci`"),
+        text.contains("WARNING: Removed management API role Directory.ReadWrite.All from `ci`"),
         "{text}"
     );
     let removed = audit_events::Entity::find()
@@ -251,7 +251,14 @@ async fn re_running_with_read_downgrades_the_app() {
         StatusCode::FORBIDDEN
     );
 
-    // And back up: read-write again, the read role goes.
+    // Back up to read-write widens the app: only with --adopt-app (#97);
+    // then the read role goes.
+    let err = bootstrap::run(&f.db, &f.config, &rw).await.unwrap_err();
+    assert!(format!("{err:#}").contains("--adopt-app"), "{err:#}");
+    let mut rw = rw;
+    if let Some(p) = rw.provisioning.as_mut() {
+        p.adopt = true;
+    }
     let p = bootstrap::run(&f.db, &f.config, &rw)
         .await
         .unwrap()
