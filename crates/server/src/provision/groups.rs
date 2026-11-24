@@ -121,25 +121,26 @@ async fn members(
     let target = Some(Target::Group(group.id));
     for user in &wanted {
         let line = format!("member {} of {}", user.email, group.display_name);
-        match existing.iter().find(|m| m.user_id == user.id) {
-            Some(m) if m.manual && m.managed => {}
-            Some(m) if m.manual => {
-                adopt(conn, m).await?;
-                cx.note(format!("~ {line}: adopted"));
-            }
-            // New, or over a mapped-only row (not a manual member yet).
-            _ => {
-                insert_member(conn, tenant_id, group.id, user.id, true).await?;
-                let details = json!({ "user_id": user.id });
-                cx.record(
-                    conn,
-                    format!("+ {line}"),
-                    EventType::GroupMemberAdd,
-                    target,
-                    details,
-                )
-                .await?;
-            }
+        let read = existing.iter().find(|m| m.user_id == user.id);
+        if let Some(m) = read.filter(|m| m.manual && !m.managed)
+            && adopt(conn, m).await?
+        {
+            cx.note(format!("~ {line}: adopted"));
+            continue;
+        }
+        // New, over a mapped-only row, or (`false` when nothing changed) an
+        // up-to-date member. Not trusting the read: a row deleted since is
+        // inserted again, and a present one stays locked until commit.
+        if insert_member(conn, tenant_id, group.id, user.id, true).await? {
+            let details = json!({ "user_id": user.id });
+            cx.record(
+                conn,
+                format!("+ {line}"),
+                EventType::GroupMemberAdd,
+                target,
+                details,
+            )
+            .await?;
         }
     }
     for m in existing
@@ -163,16 +164,19 @@ async fn members(
     Ok(())
 }
 
-async fn adopt(conn: &impl ConnectionTrait, m: &group_members::Model) -> anyhow::Result<()> {
-    group_members::Entity::update_many()
-        .col_expr(group_members::Column::Manual, true.into())
+/// Takes over a manual member apply doesn't manage yet. Returns whether it
+/// did: `false` when the row lost its manual side or was deleted since it
+/// was read (the management API doesn't take apply's lock).
+async fn adopt(conn: &impl ConnectionTrait, m: &group_members::Model) -> anyhow::Result<bool> {
+    let adopted = group_members::Entity::update_many()
         .col_expr(group_members::Column::Managed, true.into())
         .filter(group_members::Column::GroupId.eq(m.group_id))
         .filter(group_members::Column::UserId.eq(m.user_id))
+        .filter(group_members::Column::Manual.eq(true))
         .exec(conn)
         .await
         .context("adopting group membership")?;
-    Ok(())
+    Ok(adopted.rows_affected > 0)
 }
 
 /// Ends apply's hold on a membership the file no longer lists: a row only

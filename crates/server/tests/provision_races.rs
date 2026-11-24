@@ -17,7 +17,9 @@
 //! therefore race a writer `lock_all` doesn't hold back — one through an IdP
 //! created after it ran, or the management API deleting the row — and hold
 //! the `group_members` row so apply's write blocks between its read and the
-//! re-check.
+//! re-check. The adopt / keep tests race an admin deleting a declared
+//! membership, and the last one an IdP the file declares created after
+//! `lock_all` ran.
 
 mod common;
 
@@ -30,7 +32,7 @@ use oauth_server::{
 };
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, DatabaseTransaction,
-    EntityTrait, PaginatorTrait, QueryFilter, Statement, TransactionTrait,
+    EntityTrait, PaginatorTrait, QueryFilter, QuerySelect, Statement, TransactionTrait,
 };
 use uuid::Uuid;
 
@@ -249,4 +251,115 @@ async fn release_neither_reports_nor_audits_a_membership_removed_meanwhile() {
         "{report:#?}"
     );
     assert_eq!(member_removals(&f).await, removals);
+}
+
+async fn member_adds(f: &Fixture) -> u64 {
+    audit_events::Entity::find()
+        .filter(audit_events::Column::TenantId.eq(f.tenant.id))
+        .filter(audit_events::Column::EventType.eq("group.member_add"))
+        .count(&f.db)
+        .await
+        .unwrap()
+}
+
+const KEEP_ANN: &str = "tenant: contoso\nusers:\n  - { email: ann@example.com, display_name: Ann }\n\
+     groups:\n  - { display_name: Staff, members: [ann@example.com] }\n";
+
+/// Runs the apply keeping Ann in Staff while an admin's uncommitted
+/// transaction has deleted her membership, then asserts apply added it back.
+async fn apply_keeping_ann_against_removal(f: &Fixture, ann: &users::Model, staff: &groups::Model) {
+    let adds = member_adds(f).await;
+    let admin = f.db.begin().await.unwrap();
+    group_members::Entity::delete_many()
+        .filter(group_members::Column::GroupId.eq(staff.id))
+        .filter(group_members::Column::UserId.eq(ann.id))
+        .exec(&admin)
+        .await
+        .unwrap();
+    let commit = async {
+        wait_for_lock_waiter(&f.db).await;
+        admin.commit().await.unwrap();
+    };
+    let (report, ()) = tokio::join!(apply(f, KEEP_ANN), commit);
+    let report = report.unwrap();
+    assert!(
+        report
+            .changes
+            .iter()
+            .any(|c| c == "+ member ann@example.com of Staff"),
+        "{report:#?}"
+    );
+    let member = group_members::Entity::find()
+        .filter(group_members::Column::GroupId.eq(staff.id))
+        .filter(group_members::Column::UserId.eq(ann.id))
+        .one(&f.db)
+        .await
+        .unwrap()
+        .expect("declared membership present");
+    assert!(member.manual && member.managed);
+    assert_eq!(member_adds(f).await, adds + 1);
+}
+
+#[tokio::test]
+async fn adopt_adds_a_manual_membership_removed_after_apply_read_it() {
+    let f = Fixture::new().await;
+    let (ann, staff) = staffed(&f).await;
+    // Ann is a manual member apply doesn't manage yet.
+    group_members::Entity::update_many()
+        .col_expr(group_members::Column::Managed, false.into())
+        .filter(group_members::Column::GroupId.eq(staff.id))
+        .exec(&f.db)
+        .await
+        .unwrap();
+    apply_keeping_ann_against_removal(&f, &ann, &staff).await;
+}
+
+#[tokio::test]
+async fn an_up_to_date_member_removed_after_apply_read_it_is_added_back() {
+    let f = Fixture::new().await;
+    let (ann, staff) = staffed(&f).await;
+    apply_keeping_ann_against_removal(&f, &ann, &staff).await;
+}
+
+#[tokio::test]
+async fn apply_stops_on_a_declared_idp_created_after_it_locked_the_tenants_idps() {
+    let f = Fixture::new().await;
+    let (ann, _) = staffed(&f).await;
+
+    // An admin holds Ann's row and creates the provider the file declares;
+    // apply locks the (still invisible) IdPs, then waits on Ann.
+    let admin = f.db.begin().await.unwrap();
+    users::Entity::find_by_id(ann.id)
+        .lock_exclusive()
+        .one(&admin)
+        .await
+        .unwrap();
+    identity_providers::ActiveModel {
+        id: Set(Uuid::now_v7()),
+        tenant_id: Set(f.tenant.id),
+        name: Set("Upstream".into()),
+        issuer: Set("https://login.upstream.example".into()),
+        client_id: Set("oauth-upstream".into()),
+        ..Default::default()
+    }
+    .insert(&admin)
+    .await
+    .unwrap();
+    let rename = format!(
+        "tenant: contoso\nusers:\n  - {{ email: ann@example.com, display_name: Ann B }}\n\
+         groups:\n  - {{ display_name: Staff, members: [ann@example.com] }}\n{IDP}"
+    );
+    let commit = async {
+        wait_for_lock_waiter(&f.db).await;
+        admin.commit().await.unwrap();
+    };
+    let (report, ()) = tokio::join!(apply(&f, &rename), commit);
+    let err = format!("{:#}", report.unwrap_err());
+    assert!(err.contains("created while apply ran"), "{err}");
+    let ann = users::Entity::find_by_id(ann.id)
+        .one(&f.db)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(ann.display_name, "Ann");
 }
