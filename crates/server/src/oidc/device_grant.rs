@@ -118,7 +118,7 @@ async fn lock_request(
         let peeked = device_flow::by_device_code(&state.db, tenant_id, device_code, false).await?;
         let user_id = peeked.as_ref().and_then(|r| r.user_id);
         // Client and resource never change; deleting either cascades to the
-        // request, so they come before it (a gone one shows as a gone row).
+        // request, so they come before it.
         let apps: Vec<Uuid> = peeked
             .as_ref()
             .map(|r| [Some(r.application_id), r.resource_application_id])
@@ -131,7 +131,9 @@ async fn lock_request(
         if let Some(user_id) = user_id {
             backchannel::lock_user(&txn, tenant_id, user_id).await?;
         }
-        backchannel::lock_apps(&txn, tenant_id, &apps).await?;
+        if !backchannel::lock_apps(&txn, tenant_id, &apps).await? {
+            return Err(super::token::app_gone());
+        }
         let mut live = false;
         if let Some(session_id) = session_id {
             live = device_flow::lock_approving_session(&txn, tenant_id, session_id).await?;

@@ -124,6 +124,12 @@ pub async fn grant(
     caller.require(Area::Applications, Access::Write)?;
     let tenant_id = caller.tenant_id();
     let txn = state.db.begin().await?;
+    // Both apps before the grant row the upsert may lock: the role
+    // assignment inserts below reach them through FK checks, and deleting an
+    // app locks it before cascading to its grants (`backchannel::lock_apps`).
+    // A missing one is reported by `referenced`.
+    let ids = [body.client_application_id, body.resource_application_id];
+    crate::backchannel::lock_apps(&txn, tenant_id, &ids).await?;
     let client = referenced(
         find_app(&txn, tenant_id, body.client_application_id).await,
         "client application",

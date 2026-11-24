@@ -60,15 +60,19 @@ pub async fn apply(
 /// the end state, not the order of the steps.
 /// Locks each user `FOR UPDATE` first, like the API: a sign-in that read
 /// the user as enabled finishes before the revocation, which then ends its
-/// session too (and queues its Back-Channel Logouts).
+/// session too (and queues its Back-Channel Logouts). All of them before the
+/// first revocation, so apply never holds a session or token row while it
+/// still waits for a user (`provision::run`).
 pub async fn finish_disabling(
     conn: &impl ConnectionTrait,
     cx: &Ctx,
     master_key: &[u8; 32],
     disabled: Disabled,
 ) -> anyhow::Result<()> {
-    for user in disabled.0 {
+    for user in &disabled.0 {
         lock_user(conn, cx.tenant_id, user.id).await?;
+    }
+    for user in disabled.0 {
         ensure_not_last_global_admin(conn, cx.tenant_id, user.id)
             .await
             .with_context(|| format!("disabling user `{}`", user.email))?;
@@ -167,9 +171,10 @@ async fn upsert(
 }
 
 /// Locks the managed users the file no longer declares (`FOR UPDATE`, in id
-/// order) and returns them for [`prune`]. Apply runs it before its first app
-/// or consent write: the deletes come last, but their user locks must not
-/// follow locks a token request takes after its user (`provision::run`).
+/// order) and returns them for [`prune`]. Apply runs it before its first
+/// session, token, app or consent write: the deletes come last, but their
+/// user locks must not follow locks a token request takes after its user
+/// (`provision::run`).
 pub async fn lock_stale(
     conn: &impl ConnectionTrait,
     cx: &Ctx,
