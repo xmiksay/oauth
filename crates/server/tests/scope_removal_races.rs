@@ -18,6 +18,15 @@
 //! refresh stops between its consent lock and its token lock. The removal
 //! starts, and once it waits too (for the consent row), the holder lets the
 //! refresh go on: both must succeed, and the refresh's new token is revoked.
+//!
+//! Issue #109: apply writes consent rows in several statements, so it must
+//! lock every grant it may write up front, in id order
+//! (`provision::grant_locks`), or it holds a user's grant (its scope
+//! removal) while waiting for the older admin grant (its admin consent
+//! narrowing) a refresh holds while it waits for the user's grant. That
+//! test holds a required-permission row apply deletes between the two, so
+//! apply stops after its scope removal; the refresh starts once apply
+//! waits, and the holder lets both go once the refresh waits too.
 
 mod common;
 

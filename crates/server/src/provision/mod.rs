@@ -121,7 +121,8 @@ pub async fn run(
     let stale_users = users::lock_stale(&txn, &cx).await?;
     users::finish_disabling(&txn, &cx, &config.master_key, disabled).await?;
     let stale_apps = apps::lock(&txn, &mut cx, &spec.applications).await?;
-    grant_locks::lock(&txn, &mut cx).await?;
+    let (apps, consents) = (&spec.applications, &spec.admin_consents);
+    grant_locks::lock(&txn, &mut cx, apps, consents, &stale_apps).await?;
     apps::apply(&txn, &mut cx, config, &spec.applications).await?;
     consents::required(&txn, &mut cx, &spec.applications).await?;
     let consented = consents::admin(&txn, &mut cx, &spec.admin_consents).await?;

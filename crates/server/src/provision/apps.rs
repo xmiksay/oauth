@@ -205,8 +205,8 @@ async fn scopes(
         .iter()
         .filter(|s| s.managed && !specs.iter().any(|w| w.value == s.value))
     {
-        grant_locks::ensure_scope_grants_locked(conn, cx, app.id, &scope.value).await?;
-        delete_scope(conn, app, scope).await?;
+        let rewritten = delete_scope(conn, app, scope).await?;
+        grant_locks::ensure_locked(&cx.locked_grants, &rewritten)?;
         cx.revocations.push(Revocation::Scope {
             resource: app.id,
             value: scope.value.clone(),
