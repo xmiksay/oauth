@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use anyhow::Context;
 use entity::{app_scopes, consent_grants};
 use sea_orm::{
-    ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QuerySelect, Statement,
+    ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Statement,
     sea_query::Condition,
 };
 use uuid::Uuid;
@@ -117,7 +117,11 @@ async fn load_granted(
                 .add(consent_grants::Column::UserId.eq(user_id)),
         );
     if lock {
-        select = select.lock_shared();
+        // In id order, as a scope deletion locks the grants it rewrites
+        // (`api::apps_scopes::delete_scope`).
+        select = select
+            .order_by_asc(consent_grants::Column::Id)
+            .lock_shared();
     }
     let grants = select.all(conn).await.context("loading consent grants")?;
     Ok(grants.into_iter().flat_map(|g| g.scopes).collect())

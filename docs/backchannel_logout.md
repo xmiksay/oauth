@@ -98,6 +98,11 @@ lock it only `FOR NO KEY UPDATE` (`api::app_rules::lock_app`), which
 conflicts with other writers but not with these key-share locks, and
 `oauth apply` takes every user lock, then every app lock, before its first
 app, consent or token write ([provisioning.md](provisioning.md#oauth-apply)).
+Below the apps, consent comes before tokens: a multi-resource refresh locks
+its consent rows `FOR SHARE` (in id order), then the presented token. So
+deleting a scope rewrites the grants holding it (locked in id order) before
+it revokes the tokens carrying it, withdrawing a grant deletes it before
+revoking, and apply revokes only after its last consent write.
 
 `lock_user` returns the user's state as read under the lock
 (`UserLock::{Active, Disabled, Gone}`): a disable or deletion that committed

@@ -96,6 +96,7 @@ pub async fn run(
         kept: Default::default(),
         locked_idps,
         locked_apps: Default::default(),
+        revocations: Vec::new(),
     };
     refs::check(&txn, &cx, spec).await?;
     // Creates and updates in dependency order, then deletions in reverse —
@@ -105,9 +106,10 @@ pub async fn run(
     // disabling), then every existing app it writes (`apps::lock`, the apps
     // deleted at the end included), before its first app, consent, session or
     // token write (disabling revokes sessions and tokens only after locking
-    // every user it disables). A token request takes them in that order too;
-    // the other way round, apply would hold one while waiting for a row the
-    // request holds.
+    // every user it disables), and every consent write before the token
+    // revocations of scope and admin consent removals (`ctx::Revocation`).
+    // A token request takes them in that order too; the other way round,
+    // apply would hold one while waiting for a row the request holds.
     let disabled = users::apply(&txn, &mut cx, &spec.users, env).await?;
     groups::apply(&txn, &mut cx, &spec.groups).await?;
     idps::apply(&txn, &mut cx, config, &spec.identity_providers, env).await?;
@@ -120,6 +122,8 @@ pub async fn run(
     let consented = consents::admin(&txn, &mut cx, &spec.admin_consents).await?;
     access::role_assignments(&txn, &mut cx, &spec.role_assignments, consented).await?;
     consents::prune(&txn, &mut cx).await?;
+    // Only now, after the last consent write (consent → tokens).
+    consents::revoke_tokens(&txn, &mut cx).await?;
     apps::prune(&txn, &mut cx, stale_apps).await?;
     idps::prune(&txn, &mut cx).await?;
     groups::prune(&txn, &mut cx).await?;

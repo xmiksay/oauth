@@ -152,6 +152,7 @@ pub async fn remove_scope(
     let app = writable_app(&txn, &caller, app_id).await?;
     let scope = find_scope(&txn, app.id, scope_id).await?;
     delete_scope(&txn, &app, &scope).await?;
+    refresh::revoke_by_scope(&txn, app.tenant_id, app.id, &scope.value).await?;
     let details = json!({ "scope_id": scope.id, "value": scope.value });
     let target = Some(Target::Application(app.id));
     caller
@@ -212,8 +213,13 @@ pub(crate) fn update_scope_fields(
     fields
 }
 
-/// Deletes the scope, drops it from consent grants and revokes the refresh
-/// tokens carrying it.
+/// Deletes the scope and drops it from consent grants. The caller then
+/// revokes the tokens carrying it (`refresh::revoke_by_scope`), after its
+/// last consent write: a multi-resource refresh holds a consent row
+/// `FOR SHARE` before it locks its token, so a writer holding a token row
+/// while it waits for a consent row would deadlock with it (global order
+/// consent → tokens). The affected grants are locked in id order, as the
+/// refresh locks its own (`consent::granted_scopes_for_share`).
 pub(crate) async fn delete_scope(
     conn: &impl ConnectionTrait,
     app: &applications::Model,
@@ -225,7 +231,9 @@ pub(crate) async fn delete_scope(
     conn.execute_raw(Statement::from_sql_and_values(
         conn.get_database_backend(),
         "UPDATE consent_grants SET scopes = array_remove(scopes, $1), updated_at = now() \
-         WHERE tenant_id = $2 AND resource_application_id = $3 AND $1 = ANY(scopes)",
+         WHERE id IN (SELECT id FROM consent_grants \
+           WHERE tenant_id = $2 AND resource_application_id = $3 AND $1 = ANY(scopes) \
+           ORDER BY id FOR UPDATE)",
         [
             scope.value.clone().into(),
             app.tenant_id.into(),
@@ -233,6 +241,5 @@ pub(crate) async fn delete_scope(
         ],
     ))
     .await?;
-    refresh::revoke_by_scope(conn, app.tenant_id, app.id, &scope.value).await?;
     Ok(())
 }

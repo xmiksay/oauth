@@ -138,13 +138,17 @@ management API creates while apply runs (after `provision::apps::lock`)
 stops the apply with an error, rather than being locked out of order: run it
 again.
 
-Below applications the order is not complete yet: removing a managed scope
-(as `DELETE …/scopes/{id}`) drops it from consent grants and then revokes the
-refresh tokens carrying it, while a multi-resource refresh can hold its
-refresh token and then need such a consent grant. That pair can still
-deadlock; Postgres then aborts one side (the apply fails and can be run
-again, or the refresh fails with a server error). This predates the
-application locks and applies to the management API's scope delete too.
+Below applications, consents come before tokens: a multi-resource refresh
+locks its consent rows `FOR SHARE`, then its refresh token. Apply drops
+removed scopes from consent grants (as `DELETE …/scopes/{id}` does, which
+rewrites the grants before it revokes) and deletes narrowed or undeclared
+admin consents in place, but revokes the tokens of those scopes and grants
+only after its last consent write (`provision::consents::revoke_tokens`).
+Before that it touches only the tokens of users it holds (disabling); after
+it, deleting apps and users cascades only to consents of apps it holds
+`FOR UPDATE` and users it holds, which a refresh locks before any consent.
+So it never holds a token row while it waits for a consent row a refresh
+holds.
 
 Output lines:
 `+` created, `~` updated, `-` deleted. A `~` line lists each changed field
