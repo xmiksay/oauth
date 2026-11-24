@@ -4,11 +4,19 @@
 //! printed once: when the app is created or with `--rotate-secret`.
 
 use anyhow::{Context, bail};
-use entity::{app_role_assignments as ara, app_roles, applications, enums::ClientType, tenants};
-use sea_orm::{ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter};
+use entity::{
+    app_role_assignments as ara, app_roles, applications, client_secrets, enums::ClientType,
+    tenants,
+};
+use sea_orm::{
+    ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, PaginatorTrait, QueryFilter,
+};
 use serde_json::{Value, json};
 
-use super::OneTimePassword;
+use super::{
+    OneTimePassword,
+    takeover::{Held, Takeover, takeover},
+};
 use crate::{
     api::{
         app_rules::lock_app,
@@ -22,6 +30,9 @@ use crate::{
 };
 
 const DISPLAY_NAME: &str = "Provisioning";
+/// Description of every secret bootstrap issues; also how it recognises an
+/// app it made or adopted (`takeover::Held::bootstrap_marker`).
+pub const SECRET_DESCRIPTION: &str = "oauth bootstrap";
 
 /// The management API app role the provisioning app gets.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
@@ -57,8 +68,7 @@ pub struct Options {
     pub role: Role,
     /// Issue a new secret for an existing app (older ones stay valid).
     pub rotate_secret: bool,
-    /// Take over an existing app that holds no provisioning role yet, or
-    /// upgrade one holding `Directory.Read.All` to read-write.
+    /// Allow a [`Takeover`] of an existing app.
     pub adopt: bool,
 }
 
@@ -66,9 +76,8 @@ pub struct Options {
 pub struct Outcome {
     pub client_id: String,
     pub created: bool,
-    /// An existing app was taken over or upgraded to read-write
-    /// (`--adopt-app`).
-    pub adopted: bool,
+    /// Why `--adopt-app` was needed, when it was.
+    pub adopted: Option<Takeover>,
     pub role: &'static str,
     pub role_assigned: bool,
     /// The other provisioning role, when the app held it until now.
@@ -120,24 +129,23 @@ pub async fn ensure(
     let api = find_app(conn, tenant.id, MANAGEMENT_API)
         .await?
         .context("the tenant has no management API app")?;
-    let mut adopted = false;
+    let mut adopted = None;
     let (app, created) = match find_app(conn, tenant.id, &opts.client_id).await? {
         Some(app) if app.builtin => bail!("`{}` is a built-in application", opts.client_id),
         Some(app) => {
             let app = lock_app(conn, tenant.id, app.id).await?;
-            let holds_requested = holds(conn, &api, &app, opts.role).await?;
-            let holds_other = holds(conn, &api, &app, opts.role.other()).await?;
-            // Holding a provisioning role doesn't mean bootstrap made the
-            // app: an admin (API) or `oauth apply` may have given a
-            // read-only export app `Directory.Read.All`. So anything that
-            // widens what an existing app may do is a takeover — a typo
-            // must not hand someone's app the management API (nor a
-            // secret). Keeping or narrowing the role needs no flag.
-            if let Some(refusal) = takeover(opts.role, holds_requested, holds_other) {
+            let held = Held {
+                requested: holds(conn, &api, &app, opts.role).await?,
+                other: holds(conn, &api, &app, opts.role.other()).await?,
+                bootstrap_marker: has_marker(conn, &app).await?,
+            };
+            // A typo must not hand someone's app the management API, change
+            // its access, or give the operator a secret acting as it.
+            if let Some(t) = takeover(opts.role, held, opts.rotate_secret) {
                 if !opts.adopt {
-                    bail!("application `{}` {refusal}", app.client_id);
+                    bail!("application `{}` {}", app.client_id, refusal(t));
                 }
-                adopted = true;
+                adopted = Some(t);
             }
             (app, false)
         }
@@ -172,7 +180,7 @@ pub async fn ensure(
             conn,
             &app,
             Some(DEFAULT_DAYS),
-            Some("oauth bootstrap".into()),
+            Some(SECRET_DESCRIPTION.into()),
             None,
         )
         .await?;
@@ -223,25 +231,38 @@ async fn find_role(
         .with_context(|| format!("the management API has no role `{}`", role.value()))
 }
 
-/// Why bootstrapping an existing app with `requested` is a takeover that
-/// needs `--adopt-app` (`None`: it keeps or narrows what the app may do).
-fn takeover(requested: Role, holds_requested: bool, holds_other: bool) -> Option<String> {
-    if holds_requested {
-        return None;
-    }
-    match (requested, holds_other) {
-        (_, false) => Some(
-            "exists and holds no management API provisioning role; \
+fn refusal(t: Takeover) -> String {
+    let unmarked = format!("was not made by bootstrap (no `{SECRET_DESCRIPTION}` secret)");
+    match t {
+        Takeover::NoRole => "exists and holds no management API provisioning role; \
              pass --adopt-app to make it the provisioning app"
-                .into(),
+            .into(),
+        Takeover::Upgrade => format!(
+            "holds {ROLE_READ_ALL}, which an admin may have given any app; \
+             pass --adopt-app to upgrade it to {ROLE_READ_WRITE_ALL}"
         ),
-        (Role::ReadWrite, true) => Some(format!(
-            "holds {}, which an admin may have given any app; \
-             pass --adopt-app to upgrade it to {}",
-            ROLE_READ_ALL, ROLE_READ_WRITE_ALL
-        )),
-        (Role::Read, true) => None,
+        Takeover::Downgrade => format!(
+            "holds {ROLE_READ_WRITE_ALL} and {unmarked}; \
+             pass --adopt-app to downgrade it to {ROLE_READ_ALL}"
+        ),
+        Takeover::RotateSecret => {
+            format!("{unmarked}; pass --adopt-app to issue it a new secret")
+        }
     }
+}
+
+async fn has_marker(
+    conn: &impl ConnectionTrait,
+    app: &applications::Model,
+) -> anyhow::Result<bool> {
+    let n = client_secrets::Entity::find()
+        .filter(client_secrets::Column::TenantId.eq(app.tenant_id))
+        .filter(client_secrets::Column::ApplicationId.eq(app.id))
+        .filter(client_secrets::Column::Description.eq(SECRET_DESCRIPTION))
+        .count(conn)
+        .await
+        .context("looking up bootstrap secrets")?;
+    Ok(n > 0)
 }
 
 async fn holds(
@@ -323,24 +344,4 @@ async fn unassign_role(
     )
     .await?;
     Ok(true)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{Role, takeover};
-
-    #[test]
-    fn only_widening_an_existing_app_is_a_takeover() {
-        // No role yet: always a takeover.
-        assert!(takeover(Role::Read, false, false).is_some());
-        assert!(takeover(Role::ReadWrite, false, false).is_some());
-        // Read -> ReadWrite widens it (#97).
-        let upgrade = takeover(Role::ReadWrite, false, true).unwrap_or_default();
-        assert!(upgrade.contains("--adopt-app"), "{upgrade}");
-        // Keeping or narrowing does not.
-        assert!(takeover(Role::Read, false, true).is_none());
-        assert!(takeover(Role::ReadWrite, true, false).is_none());
-        assert!(takeover(Role::ReadWrite, true, true).is_none());
-        assert!(takeover(Role::Read, true, true).is_none());
-    }
 }

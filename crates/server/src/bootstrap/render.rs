@@ -1,6 +1,7 @@
 //! Human-readable lines of a bootstrap [`super::Report`].
 
-use super::{Admin, AdminOutcome, provisioning};
+use super::{Admin, AdminOutcome, provisioning, takeover::Takeover};
+use crate::directory::builtin_apps::{ROLE_READ_ALL, ROLE_READ_WRITE_ALL};
 
 pub(super) fn admin(out: &mut Vec<String>, admin: &Admin) {
     let email = &admin.email;
@@ -25,12 +26,24 @@ pub(super) fn admin(out: &mut Vec<String>, admin: &Admin) {
 
 pub(super) fn provisioning(out: &mut Vec<String>, p: &provisioning::Outcome) {
     let id = &p.client_id;
-    out.push(if p.created {
-        format!("Created provisioning app `{id}`.")
-    } else if p.adopted {
-        format!("WARNING: adopted existing app `{id}` as the provisioning app.")
-    } else {
-        format!("Provisioning app `{id}` already exists.")
+    out.push(match (p.created, p.adopted) {
+        (true, _) => format!("Created provisioning app `{id}`."),
+        (false, None) => format!("Provisioning app `{id}` already exists."),
+        (false, Some(Takeover::NoRole)) => {
+            format!("WARNING: adopted existing app `{id}` as the provisioning app.")
+        }
+        (false, Some(Takeover::Upgrade)) => format!(
+            "WARNING: upgraded existing app `{id}` from {ROLE_READ_ALL} \
+             to {ROLE_READ_WRITE_ALL} (--adopt-app)."
+        ),
+        (false, Some(Takeover::Downgrade)) => format!(
+            "WARNING: downgraded existing app `{id}`, which bootstrap did not make, \
+             from {ROLE_READ_WRITE_ALL} to {ROLE_READ_ALL} (--adopt-app)."
+        ),
+        (false, Some(Takeover::RotateSecret)) => format!(
+            "WARNING: issuing a secret for existing app `{id}`, which bootstrap \
+             did not make (--adopt-app)."
+        ),
     });
     // An existing app changing its management API role is never routine:
     // an admin may have given the role to a third-party app.

@@ -4,6 +4,7 @@
 
 pub mod provisioning;
 mod render;
+pub mod takeover;
 
 use anyhow::Context;
 use entity::{enums::DirectoryRole, tenants, users};
@@ -247,7 +248,7 @@ async fn ensure_admin(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{takeover::Takeover, *};
 
     fn otp(value: &str) -> OneTimePassword {
         OneTimePassword(Zeroizing::new(value.to_owned()))
@@ -312,7 +313,7 @@ mod tests {
         let outcome = |secret: Option<&str>| provisioning::Outcome {
             client_id: "ci".into(),
             created: secret.is_some(),
-            adopted: false,
+            adopted: None,
             role: "Directory.ReadWrite.All",
             role_assigned: secret.is_some(),
             role_removed: None,
@@ -332,11 +333,26 @@ mod tests {
         assert!(text.contains("--rotate-secret"));
         assert!(!text.contains("sec-"));
         assert!(!text.contains("Removed"));
-        r.provisioning = Some(provisioning::Outcome {
-            adopted: true,
+        let adopted = |t| provisioning::Outcome {
+            adopted: Some(t),
             ..outcome(None)
-        });
-        assert!(r.render().contains("WARNING: adopted existing app `ci`"));
+        };
+        for (t, line) in [
+            (Takeover::NoRole, "WARNING: adopted existing app `ci`"),
+            (
+                Takeover::Upgrade,
+                "WARNING: upgraded existing app `ci` from Directory.Read.All \
+                 to Directory.ReadWrite.All (--adopt-app).",
+            ),
+            (Takeover::Downgrade, "WARNING: downgraded existing app `ci`"),
+            (
+                Takeover::RotateSecret,
+                "WARNING: issuing a secret for existing app `ci`",
+            ),
+        ] {
+            r.provisioning = Some(adopted(t));
+            assert!(r.render().contains(line), "{t:?}");
+        }
         let mut downgraded = outcome(None);
         downgraded.role_removed = Some("Directory.ReadWrite.All");
         r.provisioning = Some(downgraded);
