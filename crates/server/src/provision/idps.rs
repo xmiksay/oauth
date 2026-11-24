@@ -2,6 +2,8 @@
 //! client_id, discovery_url: that unlinks every identity and must drop the
 //! server's caches) and sets the client secret only while there is none.
 
+use std::collections::HashSet;
+
 use anyhow::{Context, bail};
 use entity::identity_providers as idp;
 use sea_orm::{
@@ -37,9 +39,13 @@ const NAME_TAKEN: &str = "an identity provider with this name exists";
 /// writes mapped memberships, so apply (which locks users, changes and
 /// prunes IdPs, and releases memberships mappings may share) takes the IdPs
 /// first. All of them, not just declared or managed ones: a mapping of any
-/// provider may write the memberships `groups` releases.
-pub async fn lock_all(conn: &impl ConnectionTrait, tenant_id: Uuid) -> anyhow::Result<()> {
-    idp::Entity::find()
+/// provider may write the memberships `groups` releases. Returns the ids it
+/// locked.
+pub async fn lock_all(
+    conn: &impl ConnectionTrait,
+    tenant_id: Uuid,
+) -> anyhow::Result<HashSet<Uuid>> {
+    let ids = idp::Entity::find()
         .select_only()
         .column(idp::Column::Id)
         .filter(idp::Column::TenantId.eq(tenant_id))
@@ -49,7 +55,18 @@ pub async fn lock_all(conn: &impl ConnectionTrait, tenant_id: Uuid) -> anyhow::R
         .all(conn)
         .await
         .context("locking identity providers")?;
-    Ok(())
+    Ok(ids.into_iter().collect())
+}
+
+/// Locks a provider again (to read its current row). One created after
+/// [`lock_all`] ran (through the management API) would be locked only now,
+/// after apply locked users: the reverse of the IdP → user order, which
+/// could deadlock with a sign-in through it. Apply stops instead.
+async fn relock(conn: &impl ConnectionTrait, cx: &Ctx, id: Uuid) -> anyhow::Result<idp::Model> {
+    if !cx.locked_idps.contains(&id) {
+        bail!("the identity provider was created while apply ran; run apply again");
+    }
+    Ok(lock(conn, cx.tenant_id, id).await?)
 }
 
 pub async fn apply(
@@ -126,7 +143,7 @@ async fn upsert(
             )
             .await;
     };
-    let current = lock(conn, tenant_id, found.id).await?;
+    let current = relock(conn, cx, found.id).await?;
     cx.kept.insert(current.id);
     let new_secret = match current.client_secret_sealed {
         None => secret(spec, env)?,
@@ -179,7 +196,7 @@ pub async fn prune(conn: &impl ConnectionTrait, cx: &mut Ctx) -> anyhow::Result<
         .filter(|i| !cx.kept.contains(&i.id))
         .collect();
     for found in stale {
-        let current = lock(conn, cx.tenant_id, found.id).await?;
+        let current = relock(conn, cx, found.id).await?;
         let details = delete_locked(conn, &current, Actor::Apply, None).await?;
         let line = format!("- identity provider {}", current.name);
         let target = Some(Target::IdentityProvider(current.id));

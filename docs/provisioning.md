@@ -81,7 +81,13 @@ order), before it touches any user: the global lock order is IdP → user, and
 a federated sign-in holds its provider `FOR SHARE` while it locks the user
 and writes mapped memberships. Sign-ins through the tenant's providers wait
 for the apply to finish (they never deadlock with it), and no group mapping
-changes a membership while apply reads and releases it. Output lines:
+changes a membership while apply reads and releases it. A `--dry-run` takes
+the same locks, so it blocks those sign-ins (and IdP edits through the
+management API) just the same, for as long as the run takes: hashing
+`password_env` passwords with argon2 makes that noticeable. An IdP the file
+declares that the management API creates while apply runs (after these locks)
+stops the apply with an error, rather than being locked after users: run it
+again. Output lines:
 `+` created, `~` updated, `-` deleted. A `~` line lists each changed field
 with its stored and its new value, as SQL literals
 (`~ application web: redirect_uris: ARRAY ['https://a/cb'] -> ARRAY ['https://b/cb']`),
@@ -210,7 +216,10 @@ alone (no longer manual or managed). Each write re-checks the row's
 NULL`, else `UPDATE … WHERE idp_id IS NOT NULL`), so a membership a mapping
 took over meanwhile is never deleted, and one someone removed meanwhile
 (the management API doesn't take apply's lock) is neither reported nor
-audited. Deleting a managed identity provider
+audited. Likewise a listed member is never taken as present from that
+read: adopting one updates only a still-manual row, and anything else goes
+through an insert, so a declared membership someone deleted meanwhile is
+added back (`+ member`, audited). Deleting a managed identity provider
 deletes its linked identities and the memberships only its mappings kept,
 like `DELETE /api/v1/identity-providers/{id}`.
 

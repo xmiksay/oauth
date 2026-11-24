@@ -23,6 +23,9 @@ pub struct Ctx {
     /// Ids of the rows the file declares: pruning deletes the managed rows
     /// not in here (ids, not names, so case folding can't mismatch).
     pub kept: HashSet<Uuid>,
+    /// The identity providers [`super::idps::lock_all`] locked before any
+    /// user: only these may be locked again later.
+    pub locked_idps: HashSet<Uuid>,
 }
 
 impl Ctx {

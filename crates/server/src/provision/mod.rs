@@ -88,12 +88,13 @@ pub async fn run(
     .await
     .context("acquiring apply lock")?;
     // Before any user lock (IdP → user, like a federated sign-in).
-    idps::lock_all(&txn, tenant.id).await?;
+    let locked_idps = idps::lock_all(&txn, tenant.id).await?;
 
     let mut cx = ctx::Ctx {
         tenant_id: tenant.id,
         changes: Vec::new(),
         kept: Default::default(),
+        locked_idps,
     };
     refs::check(&txn, &cx, spec).await?;
     // Creates and updates in dependency order, then deletions in reverse.
