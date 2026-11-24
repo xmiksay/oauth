@@ -121,13 +121,18 @@ deletes, and apps whose `identifier_uri` it changes (a key column), are
 locked `FOR UPDATE`: token requests for those wait for the apply to finish
 and then fail with `invalid_grant` if the app is gone.
 
-Apply takes these locks in the same order. It first runs its user steps
-(directory roles, disabling) and locks the undeclared users it deletes last.
-Then it locks every existing app it writes or deletes, in id order
-(`provision::apps::lock`). Only after that does it write any application,
-required permission, consent, role assignment or token. So it never holds
-an app, consent or token row while waiting for a user or an app a token
-request holds, and never deadlocks with one.
+Apply takes these locks in the same order. It first locks every user it
+writes `FOR UPDATE`: directory role changes, the undeclared users it deletes
+at the end, then the users it disables (all of them before it revokes the
+first one's sessions and tokens). Then it locks every existing app it writes
+or deletes, in id order (`provision::apps::lock`). Only after that does it
+write any application, required permission, consent or role assignment; the
+only session and token rows it touches before are those of users it already
+holds. So it never holds an app, consent, session or token row while waiting
+for a user or an app a token request holds, and never deadlocks with one.
+Login completion (issuing the authorization code or approving a device
+request) and the management API's admin consent grant lock their apps the
+same way, so deleting an app never deadlocks with them either.
 
 Output lines:
 `+` created, `~` updated, `-` deleted. A `~` line lists each changed field

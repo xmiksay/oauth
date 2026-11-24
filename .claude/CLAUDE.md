@@ -206,14 +206,15 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   before locking a session or a row that inserts referencing the user —
   never after — and issue nothing unless it returns `UserLock::Active` (a
   `disabled` read before the lock is stale). Then the client and resource
-  apps with `backchannel::lock_apps` (`FOR KEY SHARE`, id order) before any
-  consent, code, device request, `session_clients` or token row: deleting
+  apps with `backchannel::lock_apps` (`FOR KEY SHARE`, id order; every
+  grant, login completion, the admin consent grant) before any login
+  transaction, consent, code, device request, `session_clients` or token row: deleting
   an app cascades to those, and an `ON CONFLICT DO NOTHING` insert runs no
   FK check. App writers lock it `FOR NO KEY UPDATE` (`app_rules::lock_app`;
   no conflict with key-share), deleting it or changing `client_id` /
   `identifier_uri` takes `FOR UPDATE`; `oauth apply` takes every user lock,
   then every app lock (`provision::apps::lock`), before its first app,
-  consent or token write. Each outbox channel has its own leader lock (`jobs::outbox::policy`).
+  consent, session or token write. Each outbox channel has its own leader lock (`jobs::outbox::policy`).
   Delivery is an
   outbox `Courier` (`channel = backchannel`) through `http::client` +
   `federation::urls` / `resolve::PublicOnly`; never log a logout token or an

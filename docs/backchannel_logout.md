@@ -84,9 +84,11 @@ callers that also claim a login transaction lock the user before it). A
 refresh that loses this race gets a plain `invalid_grant` — a token
 revoked (not rotated) meanwhile is no replay, so no reuse alarm.
 The global lock order is IdP → user → application → consent / session →
-tokens. Right after the user, the code, refresh and device code grants lock
-their client and resource apps `FOR KEY SHARE`, in id order
-(`backchannel::lock_apps`), before any consent, code, device request,
+tokens. Right after the user, the code, refresh and device code grants and
+login completion (`authn::complete::finish`, which issues the code or
+approves the device request) lock their client and resource apps `FOR KEY
+SHARE`, in id order (`backchannel::lock_apps`), before any login
+transaction, consent, code, device request,
 `session_clients` or token row: deleting an app takes it `FOR UPDATE` and
 then cascades to exactly those rows, and the FK check of a later insert
 would come too late — a refresh's `session_clients` insert usually

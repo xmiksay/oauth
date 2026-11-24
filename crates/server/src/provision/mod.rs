@@ -100,17 +100,19 @@ pub async fn run(
     // Creates and updates in dependency order, then deletions in reverse —
     // except for locks, which follow the global order IdP → user →
     // application → consent / session → tokens (`backchannel::lock_apps`):
-    // every user lock (directory roles, disabling, the users deleted at the
-    // end), then every existing app it writes (`apps::lock`, the apps deleted
-    // at the end included), before its first app, consent or token write. A
-    // token request takes them in that order too; the other way round, apply
-    // would hold one while waiting for a row the request holds.
+    // every user lock (directory roles, the users deleted at the end, then
+    // disabling), then every existing app it writes (`apps::lock`, the apps
+    // deleted at the end included), before its first app, consent, session or
+    // token write (disabling revokes sessions and tokens only after locking
+    // every user it disables). A token request takes them in that order too;
+    // the other way round, apply would hold one while waiting for a row the
+    // request holds.
     let disabled = users::apply(&txn, &mut cx, &spec.users, env).await?;
     groups::apply(&txn, &mut cx, &spec.groups).await?;
     idps::apply(&txn, &mut cx, config, &spec.identity_providers, env).await?;
     access::directory_roles(&txn, &mut cx, &spec.directory_roles).await?;
-    users::finish_disabling(&txn, &cx, &config.master_key, disabled).await?;
     let stale_users = users::lock_stale(&txn, &cx).await?;
+    users::finish_disabling(&txn, &cx, &config.master_key, disabled).await?;
     let stale_apps = apps::lock(&txn, &cx, &spec.applications).await?;
     apps::apply(&txn, &mut cx, config, &spec.applications).await?;
     consents::required(&txn, &mut cx, &spec.applications).await?;

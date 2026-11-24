@@ -85,8 +85,9 @@ user tricked into approving an attacker's code can still cut it off:
   NULL (approved_session_id)`: signing out of the approving browser
   (`/oauth2/logout`), revoking that session in My Account or a new sign-in
   replacing it clears it. Redemption locks the approving session `FOR KEY
-  SHARE` (lock order user → session → request, the order a session's deletion
-  and its FK action take) and answers `access_denied` when the column is
+  SHARE` (lock order user → application (`backchannel::lock_apps`) → session
+  → request; session → request is the order a session's deletion and its FK
+  action take) and answers `access_denied` when the column is
   empty or the session has expired; the row stays `approved` and unconsumed,
   every later poll gets the same answer. A single-session sign-out racing a
   redemption that already holds the session waits for it; the redemption

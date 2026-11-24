@@ -142,16 +142,29 @@ async fn finish(
         return Err(AuthnError::Upstream);
     }
     // Then the user, before the transaction row and any session (lock order
-    // IdP → user → session, see `backchannel::lock_user`): the sessions
-    // locked below and the session / device / code rows inserted for the
-    // user would otherwise deadlock against an admin revocation. A disable
-    // that committed while this waited is only visible from here on.
+    // IdP → user → application → session, see `backchannel::lock_user`):
+    // the sessions locked below and the session / device / code rows
+    // inserted for the user would otherwise deadlock against an admin
+    // revocation. A disable that committed while this waited is only
+    // visible from here on.
     if !crate::backchannel::lock_user(&txn, ctx.tenant.id, user.id)
         .await?
         .is_active()
     {
         drop(txn);
         return refuse_disabled(ctx, &tx, from, user.id).await;
+    }
+    // Then the client and resource apps, before the transaction row (which
+    // cascades from the client) and the code / device row (FK to both):
+    // deleting an app locks it first and then cascades to those rows, so
+    // reaching the app only through the code insert's FK check deadlocks.
+    let apps: Vec<_> = std::iter::once(tx.row.application_id)
+        .chain(tx.req.resource_id)
+        .collect();
+    if !crate::backchannel::lock_apps(&txn, ctx.tenant.id, &apps).await? {
+        drop(txn);
+        close(ctx, &tx, from, user.id, "application_gone").await?;
+        return Err(AuthnError::NotFound);
     }
     // Claim the transaction first: a concurrent duplicate gets no second code.
     if !tx::take(&txn, tx.row.id, from).await? {
