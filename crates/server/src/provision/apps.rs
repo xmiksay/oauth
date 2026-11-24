@@ -2,6 +2,8 @@
 //! validated by the management API's own rules (`api::app_body`, …).
 //! Built-in apps can't be declared; secrets are never in the file.
 
+use std::collections::HashSet;
+
 use anyhow::{Context, bail};
 use entity::{app_roles, app_scopes, applications, enums::ClientType};
 use sea_orm::{
@@ -9,6 +11,7 @@ use sea_orm::{
     QueryOrder, QuerySelect, sea_query::LockType,
 };
 use serde_json::json;
+use uuid::Uuid;
 
 use super::{
     ctx::{Ctx, diff, update_line},
@@ -37,10 +40,10 @@ use crate::{
 /// `FOR KEY SHARE` in id order, then consent and token rows
 /// (`backchannel::lock_apps`); taking these here one at a time, between
 /// writes, would let a request hold one app while apply holds another or
-/// a token row it needs.
+/// a token row it needs. Records the ids it locked in `cx.locked_apps`.
 pub async fn lock(
     conn: &impl ConnectionTrait,
-    cx: &Ctx,
+    cx: &mut Ctx,
     specs: &[AppSpec],
 ) -> anyhow::Result<Vec<applications::Model>> {
     let mut apps = applications::Entity::find()
@@ -59,8 +62,10 @@ pub async fn lock(
             .lock(lock)
             .one(conn)
             .await?;
-        if let (None, Some(app)) = (spec, found) {
-            stale.push(app);
+        let Some(found) = found else { continue };
+        cx.locked_apps.insert(found.id);
+        if spec.is_none() {
+            stale.push(found);
         }
     }
     Ok(stale)
@@ -74,6 +79,26 @@ fn lock_type(stored: &Option<String>, declared: Option<&Option<Option<String>>>)
         Some(Some(uri)) if uri != stored => LockType::Update,
         Some(_) => LockType::NoKeyUpdate,
     }
+}
+
+/// Locks a declared app again (to read its current row). One the management
+/// API created after [`lock`] ran would be locked only now, between apply's
+/// app writes: out of id order, so it could deadlock with a token request
+/// holding it while it waits for an app apply holds. Apply stops instead.
+async fn relock(
+    conn: &impl ConnectionTrait,
+    cx: &Ctx,
+    id: Uuid,
+) -> anyhow::Result<applications::Model> {
+    ensure_locked(&cx.locked_apps, id)?;
+    Ok(lock_app(conn, cx.tenant_id, id).await?)
+}
+
+fn ensure_locked(locked: &HashSet<Uuid>, id: Uuid) -> anyhow::Result<()> {
+    if !locked.contains(&id) {
+        bail!("the application was created while apply ran; run apply again");
+    }
+    Ok(())
 }
 
 pub async fn apply(
@@ -132,7 +157,7 @@ async fn upsert(
     if found.builtin {
         bail!("built-in applications can't be declared");
     }
-    let app = lock_app(conn, cx.tenant_id, found.id).await?;
+    let app = relock(conn, cx, found.id).await?;
     if spec.client_type.is_some() && client_type != app.client_type {
         bail!("client_type can't be changed");
     }
@@ -356,5 +381,14 @@ mod tests {
         assert_eq!(lock_type(&uri(), Some(&Some(uri()))), LockType::NoKeyUpdate);
         assert_eq!(lock_type(&uri(), Some(&None)), LockType::NoKeyUpdate);
         assert_eq!(lock_type(&None, Some(&Some(None))), LockType::NoKeyUpdate);
+    }
+
+    #[test]
+    fn only_apps_locked_up_front_may_be_locked_again() {
+        let locked = Uuid::now_v7();
+        let set = HashSet::from([locked]);
+        assert!(ensure_locked(&set, locked).is_ok());
+        let err = ensure_locked(&set, Uuid::now_v7()).unwrap_err();
+        assert!(err.to_string().contains("run apply again"), "{err}");
     }
 }
