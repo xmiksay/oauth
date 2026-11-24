@@ -32,15 +32,18 @@ pub(super) fn provisioning(out: &mut Vec<String>, p: &provisioning::Outcome) {
     } else {
         format!("Provisioning app `{id}` already exists.")
     });
+    // An existing app changing its management API role is never routine:
+    // an admin may have given the role to a third-party app.
+    let warn = if p.created { "" } else { "WARNING: " };
     if p.role_assigned {
         out.push(format!(
-            "Assigned management API role {} to `{id}`.",
+            "{warn}Assigned management API role {} to `{id}`.",
             p.role
         ));
     }
     if let Some(removed) = p.role_removed {
         out.push(format!(
-            "Removed management API role {removed} from `{id}`."
+            "{warn}Removed management API role {removed} from `{id}`."
         ));
     }
     match &p.secret {

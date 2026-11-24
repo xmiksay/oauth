@@ -57,7 +57,8 @@ pub struct Options {
     pub role: Role,
     /// Issue a new secret for an existing app (older ones stay valid).
     pub rotate_secret: bool,
-    /// Take over an existing app that holds no provisioning role yet.
+    /// Take over an existing app that holds no provisioning role yet, or
+    /// upgrade one holding `Directory.Read.All` to read-write.
     pub adopt: bool,
 }
 
@@ -65,7 +66,7 @@ pub struct Options {
 pub struct Outcome {
     pub client_id: String,
     pub created: bool,
-    /// An existing app without a provisioning role was taken over
+    /// An existing app was taken over or upgraded to read-write
     /// (`--adopt-app`).
     pub adopted: bool,
     pub role: &'static str,
@@ -124,16 +125,17 @@ pub async fn ensure(
         Some(app) if app.builtin => bail!("`{}` is a built-in application", opts.client_id),
         Some(app) => {
             let app = lock_app(conn, tenant.id, app.id).await?;
-            // An app this command made holds one of the roles; anything
-            // else is someone's app, and a typo must not hand it the
-            // management API (nor issue it a secret).
-            if !holds_any_role(conn, &api, &app).await? {
+            let holds_requested = holds(conn, &api, &app, opts.role).await?;
+            let holds_other = holds(conn, &api, &app, opts.role.other()).await?;
+            // Holding a provisioning role doesn't mean bootstrap made the
+            // app: an admin (API) or `oauth apply` may have given a
+            // read-only export app `Directory.Read.All`. So anything that
+            // widens what an existing app may do is a takeover — a typo
+            // must not hand someone's app the management API (nor a
+            // secret). Keeping or narrowing the role needs no flag.
+            if let Some(refusal) = takeover(opts.role, holds_requested, holds_other) {
                 if !opts.adopt {
-                    bail!(
-                        "application `{}` exists and holds no management API provisioning role; \
-                         pass --adopt-app to make it the provisioning app",
-                        app.client_id
-                    );
+                    bail!("application `{}` {refusal}", app.client_id);
                 }
                 adopted = true;
             }
@@ -221,18 +223,35 @@ async fn find_role(
         .with_context(|| format!("the management API has no role `{}`", role.value()))
 }
 
-async fn holds_any_role(
+/// Why bootstrapping an existing app with `requested` is a takeover that
+/// needs `--adopt-app` (`None`: it keeps or narrows what the app may do).
+fn takeover(requested: Role, holds_requested: bool, holds_other: bool) -> Option<String> {
+    if holds_requested {
+        return None;
+    }
+    match (requested, holds_other) {
+        (_, false) => Some(
+            "exists and holds no management API provisioning role; \
+             pass --adopt-app to make it the provisioning app"
+                .into(),
+        ),
+        (Role::ReadWrite, true) => Some(format!(
+            "holds {}, which an admin may have given any app; \
+             pass --adopt-app to upgrade it to {}",
+            ROLE_READ_ALL, ROLE_READ_WRITE_ALL
+        )),
+        (Role::Read, true) => None,
+    }
+}
+
+async fn holds(
     conn: &impl ConnectionTrait,
     api: &applications::Model,
     app: &applications::Model,
+    role: Role,
 ) -> anyhow::Result<bool> {
-    for role in [Role::Read, Role::ReadWrite] {
-        let role = find_role(conn, api, role).await?;
-        if find_assignment(conn, &role, app).await?.is_some() {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    let role = find_role(conn, api, role).await?;
+    Ok(find_assignment(conn, &role, app).await?.is_some())
 }
 
 async fn find_assignment(
@@ -304,4 +323,24 @@ async fn unassign_role(
     )
     .await?;
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Role, takeover};
+
+    #[test]
+    fn only_widening_an_existing_app_is_a_takeover() {
+        // No role yet: always a takeover.
+        assert!(takeover(Role::Read, false, false).is_some());
+        assert!(takeover(Role::ReadWrite, false, false).is_some());
+        // Read -> ReadWrite widens it (#97).
+        let upgrade = takeover(Role::ReadWrite, false, true).unwrap_or_default();
+        assert!(upgrade.contains("--adopt-app"), "{upgrade}");
+        // Keeping or narrowing does not.
+        assert!(takeover(Role::Read, false, true).is_none());
+        assert!(takeover(Role::ReadWrite, true, false).is_none());
+        assert!(takeover(Role::ReadWrite, true, true).is_none());
+        assert!(takeover(Role::Read, true, true).is_none());
+    }
 }
