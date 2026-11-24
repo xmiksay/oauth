@@ -85,6 +85,17 @@ describe('GroupDetail', () => {
     )
   })
 
+  it('warns that apply manages the group only when it does', async () => {
+    const plain = await mountDetail()
+    expect(plain.find('[data-testid=managed-note]').exists()).toBe(false)
+
+    groups.get.mockResolvedValue({ ...group, managed: true })
+    const managed = await mountDetail()
+    const note = managed.find('[data-testid=managed-note]')
+    expect(note.text()).toContain('Managed by oauth apply')
+    expect(note.text()).toContain('members')
+  })
+
   it('shows a taken name (409) in the properties form', async () => {
     const w = await mountDetail()
     groups.update.mockRejectedValue(
