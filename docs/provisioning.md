@@ -75,7 +75,13 @@ is pending it stops before any write and says to run `oauth serve` or
 **One transaction.** Everything runs in one database transaction holding a
 per-tenant advisory lock (concurrent applies of a tenant serialize): the file
 applies completely or not at all. `--dry-run` runs exactly the same steps and
-rolls back, so its output is exactly what an apply would change. Output lines:
+rolls back, so its output is exactly what an apply would change. Right after
+that lock it takes every identity provider of the tenant `FOR UPDATE` (in id
+order), before it touches any user: the global lock order is IdP → user, and
+a federated sign-in holds its provider `FOR SHARE` while it locks the user
+and writes mapped memberships. Sign-ins through the tenant's providers wait
+for the apply to finish (they never deadlock with it), and no group mapping
+changes a membership while apply reads and releases it. Output lines:
 `+` created, `~` updated, `-` deleted. A `~` line lists each changed field
 with its stored and its new value, as SQL literals
 (`~ application web: redirect_uris: ARRAY ['https://a/cb'] -> ARRAY ['https://b/cb']`),
@@ -199,7 +205,12 @@ refresh tokens carrying it (as `DELETE …/scopes/{id}`).
 Group members listed in the file become manual, managed members. Removing
 one from the file removes the membership — unless an identity provider's
 group mapping also keeps it, in which case the row stays as the mapping's
-alone (no longer manual or managed). Deleting a managed identity provider
+alone (no longer manual or managed). Each write re-checks the row's
+`idp_id` rather than trusting what apply read (`DELETE … WHERE idp_id IS
+NULL`, else `UPDATE … WHERE idp_id IS NOT NULL`), so a membership a mapping
+took over meanwhile is never deleted, and one someone removed meanwhile
+(the management API doesn't take apply's lock) is neither reported nor
+audited. Deleting a managed identity provider
 deletes its linked identities and the memberships only its mappings kept,
 like `DELETE /api/v1/identity-providers/{id}`.
 

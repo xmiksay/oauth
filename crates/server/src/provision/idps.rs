@@ -6,7 +6,7 @@ use anyhow::{Context, bail};
 use entity::identity_providers as idp;
 use sea_orm::{
     ActiveEnum, ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait,
-    QueryFilter,
+    QueryFilter, QueryOrder, QuerySelect,
 };
 use serde_json::json;
 use uuid::Uuid;
@@ -30,6 +30,27 @@ use crate::{
 };
 
 const NAME_TAKEN: &str = "an identity provider with this name exists";
+
+/// Locks every identity provider of the tenant `FOR UPDATE`, in id order,
+/// before apply touches anything else. The global lock order is IdP → user:
+/// a federated sign-in holds its IdP `FOR SHARE` while it locks the user and
+/// writes mapped memberships, so apply (which locks users, changes and
+/// prunes IdPs, and releases memberships mappings may share) takes the IdPs
+/// first. All of them, not just declared or managed ones: a mapping of any
+/// provider may write the memberships `groups` releases.
+pub async fn lock_all(conn: &impl ConnectionTrait, tenant_id: Uuid) -> anyhow::Result<()> {
+    idp::Entity::find()
+        .select_only()
+        .column(idp::Column::Id)
+        .filter(idp::Column::TenantId.eq(tenant_id))
+        .order_by_asc(idp::Column::Id)
+        .lock_exclusive()
+        .into_tuple::<Uuid>()
+        .all(conn)
+        .await
+        .context("locking identity providers")?;
+    Ok(())
+}
 
 pub async fn apply(
     conn: &impl ConnectionTrait,

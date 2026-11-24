@@ -306,7 +306,9 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   longer declares; it audits as `Actor::Apply`. Secrets never come from the
   file (`*_env` references, read only on create, names restricted to
   `provision::spec::ENV_PREFIX` = `OAUTH_APPLY_`; never give a server env
-  var that prefix).
+  var that prefix). It locks all the tenant's IdPs (`provision::idps::lock_all`)
+  right after its advisory lock, before any user (IdP → user); a new step
+  must not lock an IdP later.
 - Never log request query strings (they carry codes / hints / tx ids);
   `app::request_span` logs the route template.
 - Each file ≤ 400 lines. Backend changes ship with unit tests (`#[cfg(test)]`)
