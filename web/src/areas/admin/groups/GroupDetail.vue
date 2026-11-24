@@ -11,6 +11,7 @@ import PageHeader from '@/components/PageHeader.vue'
 import ErrorAlert from '@/components/ErrorAlert.vue'
 import ConfirmButton from '@/components/ConfirmButton.vue'
 import ListShell from '@/components/ListShell.vue'
+import ManagedNote from '@/components/ManagedNote.vue'
 import PrincipalPicker, { type Picked } from '@/components/PrincipalPicker.vue'
 
 const route = useRoute()
@@ -81,16 +82,12 @@ function removeMember(userId: string) {
       </template>
     </PageHeader>
     <ErrorAlert :error="loader.error.value" />
-    <p
-      v-if="group?.managed"
-      role="note"
-      class="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
-      data-testid="managed-note"
-    >
-      Managed by <code>oauth apply</code>: the next apply restores the description and the members
-      declared in the tenant file (members added here and not declared stay). Renamed here, the group
-      no longer matches the file, so the next apply deletes it and creates the declared one anew.
-    </p>
+    <ManagedNote v-if="group?.managed">
+      the next apply restores what the tenant file declares: the description (when the file sets
+      one) and the declared members (members added here and not declared stay). Given a different
+      name here (beyond letter case), the group no longer matches the file, so the next apply deletes
+      it and creates the declared one anew.
+    </ManagedNote>
     <div
       v-if="group"
       class="grid gap-4 xl:grid-cols-2"

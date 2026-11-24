@@ -6,6 +6,7 @@ import { useApplicationStore } from '@/stores/application'
 import PageHeader from '@/components/PageHeader.vue'
 import ErrorAlert from '@/components/ErrorAlert.vue'
 import TabNav from '@/components/TabNav.vue'
+import ManagedNote from '@/components/ManagedNote.vue'
 
 const route = useRoute()
 const store = useApplicationStore()
@@ -62,13 +63,9 @@ const tabs = computed(() => {
       >
         Built-in application: only a Global Administrator can change its name and token lifetimes.
       </p>
-      <p
-        v-if="app.managed"
-        class="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200"
-      >
-        Managed by <code>oauth apply</code>: settings, scopes and roles declared in the tenant file
-        are overwritten by the next apply.
-      </p>
+      <ManagedNote v-if="app.managed">
+        settings, scopes and roles declared in the tenant file are overwritten by the next apply.
+      </ManagedNote>
       <TabNav
         label="Application sections"
         :items="tabs"
