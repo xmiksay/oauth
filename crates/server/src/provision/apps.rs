@@ -14,7 +14,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::{
-    ctx::{Ctx, diff, update_line},
+    ctx::{Ctx, Revocation, diff, update_line},
     spec::{AppSpec, RoleSpec, ScopeSpec},
 };
 use crate::{
@@ -205,6 +205,10 @@ async fn scopes(
         .filter(|s| s.managed && !specs.iter().any(|w| w.value == s.value))
     {
         delete_scope(conn, app, scope).await?;
+        cx.revocations.push(Revocation::Scope {
+            resource: app.id,
+            value: scope.value.clone(),
+        });
         let line = format!("- scope {}/{}", app.client_id, scope.value);
         let details = json!({ "scope_id": scope.id, "value": scope.value });
         cx.record(

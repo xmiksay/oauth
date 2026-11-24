@@ -12,18 +12,19 @@ use serde_json::json;
 use uuid::Uuid;
 
 use super::{
-    ctx::{Ctx, diff, update_line},
+    ctx::{Ctx, Revocation, diff, update_line},
     spec::{AppSpec, ConsentSpec, PermissionSpec},
 };
 use crate::{
     api::{
         app_rules::{MAX_REQUIRED_PERMISSIONS, ensure_below},
         apps_permissions::{APPLICATION, DELEGATED, lookup, resolved},
-        consents::{delete_and_revoke, pick},
+        consents::{pick, revoke_tokens_of},
         guard::conflict_on_unique,
     },
     audit::{EventType, Target},
     consent,
+    tokens::refresh,
 };
 
 pub async fn required(
@@ -242,8 +243,9 @@ async fn grant(
         cx.record(conn, line, EventType::ConsentGrant, target, details)
             .await?;
     } else {
-        // Narrowing: revoke like the API does, then grant the new set.
-        delete_and_revoke(conn, &found).await?;
+        // Narrowing: revoke like the API does (the tokens after the last
+        // consent write), then grant the new set.
+        delete_grant(conn, cx, &found).await?;
         let revoked = json!({ "scopes": found.scopes, "user_id": null });
         let target = Some(Target::ConsentGrant(found.id));
         cx.record(
@@ -305,7 +307,7 @@ pub async fn prune(conn: &impl ConnectionTrait, cx: &mut Ctx) -> anyhow::Result<
         .filter(|g| !cx.kept.contains(&g.id))
         .collect();
     for grant in stale {
-        delete_and_revoke(conn, &grant).await?;
+        delete_grant(conn, cx, &grant).await?;
         let name = |id: Uuid| async move {
             applications::Entity::find_by_id(id)
                 .one(conn)
@@ -321,6 +323,35 @@ pub async fn prune(conn: &impl ConnectionTrait, cx: &mut Ctx) -> anyhow::Result<
         let target = Some(Target::ConsentGrant(grant.id));
         cx.record(conn, line, EventType::ConsentRevoke, target, details)
             .await?;
+    }
+    Ok(())
+}
+
+/// Deletes `grant`, leaving its tokens to [`revoke_tokens`].
+async fn delete_grant(
+    conn: &impl ConnectionTrait,
+    cx: &mut Ctx,
+    grant: &consent_grants::Model,
+) -> anyhow::Result<()> {
+    consent_grants::Entity::delete_by_id(grant.id)
+        .exec(conn)
+        .await
+        .context("deleting consent grant")?;
+    cx.revocations.push(Revocation::Grant(grant.clone()));
+    Ok(())
+}
+
+/// Revokes the tokens of the scopes and admin consents apply removed. Runs
+/// after its last consent write, so it never holds a token row while it
+/// waits for a consent row a multi-resource refresh holds.
+pub async fn revoke_tokens(conn: &impl ConnectionTrait, cx: &mut Ctx) -> anyhow::Result<()> {
+    for revocation in std::mem::take(&mut cx.revocations) {
+        match revocation {
+            Revocation::Scope { resource, value } => {
+                refresh::revoke_by_scope(conn, cx.tenant_id, resource, &value).await?;
+            }
+            Revocation::Grant(grant) => revoke_tokens_of(conn, &grant).await?,
+        }
     }
     Ok(())
 }

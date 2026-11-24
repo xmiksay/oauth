@@ -4,7 +4,7 @@
 use std::{collections::HashSet, str::FromStr};
 
 use anyhow::Context;
-use entity::{applications, enums::Outcome, groups, users};
+use entity::{applications, consent_grants, enums::Outcome, groups, users};
 use sea_orm::{
     ColumnTrait, ConnectionTrait, EntityTrait, ModelTrait, QueryFilter,
     sea_query::{Expr, ExprTrait, Func, PostgresQueryBuilder, QueryBuilder},
@@ -29,6 +29,20 @@ pub struct Ctx {
     /// The existing applications [`super::apps::lock`] locked before any
     /// app write: only these may be locked again later.
     pub locked_apps: HashSet<Uuid>,
+    /// Token revocations the consent writes call for, held back until the
+    /// last of them ([`super::consents::revoke_tokens`]).
+    pub revocations: Vec<Revocation>,
+}
+
+/// Tokens to revoke once apply has written every consent: a multi-resource
+/// refresh holds a consent row `FOR SHARE` before it locks its token, so
+/// apply must never hold a token row while it waits for a consent row
+/// (global order consent → tokens).
+pub enum Revocation {
+    /// A deleted scope `value` of the app `resource` (`refresh::revoke_by_scope`).
+    Scope { resource: Uuid, value: String },
+    /// A deleted (narrowed or pruned) admin consent grant.
+    Grant(consent_grants::Model),
 }
 
 impl Ctx {

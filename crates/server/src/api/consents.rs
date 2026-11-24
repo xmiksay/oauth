@@ -266,6 +266,18 @@ pub async fn delete_and_revoke(
     consent_grants::Entity::delete_by_id(grant.id)
         .exec(conn)
         .await?;
+    revoke_tokens_of(conn, grant).await?;
+    Ok(())
+}
+
+/// The token half of [`delete_and_revoke`], for a caller that deletes the
+/// grant itself and must revoke only after its last consent write (global
+/// lock order consent → tokens: a multi-resource refresh holds a consent row
+/// `FOR SHARE`, then locks its token).
+pub(crate) async fn revoke_tokens_of(
+    conn: &impl ConnectionTrait,
+    grant: &consent_grants::Model,
+) -> anyhow::Result<()> {
     refresh::revoke_grant(
         conn,
         grant.tenant_id,
@@ -273,8 +285,7 @@ pub async fn delete_and_revoke(
         grant.resource_application_id,
         grant.user_id,
     )
-    .await?;
-    Ok(())
+    .await
 }
 
 #[cfg(test)]
