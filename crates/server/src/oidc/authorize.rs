@@ -174,7 +174,7 @@ async fn to_login(
 ) -> OAuthResult<Response> {
     let (state, tenant) = (env.state, env.tenant);
     let key = format!("authorize:{}", rate_limit::ip_key(env.ip.0));
-    let now = chrono::Utc::now();
+    let now = state.rate_clock.now();
     if let Err(retry_after) = rate_limit::hit(
         &state.db,
         tenant.id,

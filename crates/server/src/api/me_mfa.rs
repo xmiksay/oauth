@@ -254,8 +254,14 @@ pub async fn confirm_totp(
     let pending = pending_enrollment(&state.db, &user).await?;
     let key = rate_limit::user_key(user.id);
     let limit = rate_limit::PER_ACCOUNT;
-    if let Err(retry_after) =
-        rate_limit::hit(&state.db, user.tenant_id, &key, limit, chrono::Utc::now()).await?
+    if let Err(retry_after) = rate_limit::hit(
+        &state.db,
+        user.tenant_id,
+        &key,
+        limit,
+        state.rate_clock.now(),
+    )
+    .await?
     {
         return Err(AppError::RateLimited { retry_after });
     }

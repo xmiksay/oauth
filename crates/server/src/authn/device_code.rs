@@ -51,7 +51,7 @@ pub async fn enter(
 ) -> AuthnResult<Outcome> {
     let ctx = Ctx::new(&state, &tenant, ip, &headers);
     let conn = &state.db;
-    let now = chrono::Utc::now();
+    let now = state.rate_clock.now();
     // Counted before the lookup, so parallel guesses can't slip past it.
     let key = format!("usercode:{}", rate_limit::ip_key(ctx.ip));
     let limit = rate_limit::USER_CODE_PER_IP;

@@ -17,7 +17,7 @@
 
 use std::net::IpAddr;
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use entity::enums::Outcome;
 use sea_orm::ConnectionTrait;
 use serde_json::json;
@@ -56,6 +56,8 @@ pub struct Attempt<'a> {
     pub ip: Option<IpAddr>,
     pub endpoint: Endpoint,
     pub client_id: &'a str,
+    /// Read from `AppState::rate_clock`.
+    pub now: DateTime<Utc>,
 }
 
 impl Attempt<'_> {
@@ -72,7 +74,7 @@ pub async fn guard(conn: &impl ConnectionTrait, attempt: &Attempt<'_>) -> OAuthR
         attempt.tenant_id,
         &key,
         CLIENT_AUTH_FAILURES,
-        Utc::now(),
+        attempt.now,
     )
     .await?;
     checked.map_err(|retry_after| {
@@ -94,7 +96,7 @@ pub async fn failed(
         attempt.tenant_id,
         &key,
         CLIENT_AUTH_FAILURES,
-        Utc::now(),
+        attempt.now,
     )
     .await?;
     if let Some(app_id) = app_id
@@ -155,6 +157,7 @@ mod tests {
             ip: Some(ip.parse().unwrap()),
             endpoint: Endpoint::Token,
             client_id: "web-app",
+            now: Utc::now(),
         };
         assert_ne!(attempt("10.0.0.1").key(), attempt("10.0.0.2").key());
         assert_eq!(attempt("10.0.0.1").key(), attempt("10.0.0.1").key());

@@ -15,7 +15,7 @@ use entity::{
 use jsonwebtoken::{DecodingKey, Validation, jwk::JwkSet};
 use oauth_server::{
     app::{self, AppState},
-    authn::totp,
+    authn::{rate_limit, totp},
     config::Config,
     directory::{self, NewTenant},
 };
@@ -58,6 +58,8 @@ pub struct Fixture {
     pub tasks: tokio_util::task::TaskTracker,
     /// Its cap on detached work (`AppState::detached`).
     pub detached: std::sync::Arc<tokio::sync::Semaphore>,
+    /// The app's pinned rate-limit clock (`AppState::rate_clock`).
+    pub rate_clock: rate_limit::Clock,
     /// The fake Bot API, for Telegram-enabled fixtures.
     pub bot: Option<super::telegram::FakeBot>,
     /// Last: fields drop in order, so the pool and app state go before the
@@ -181,9 +183,13 @@ impl Fixture {
         .await;
         assign_role(&db, &orders, approver, Some(group), None).await;
 
-        let state = AppState::new(db.clone(), config.clone(), true);
+        let mut state = AppState::new(db.clone(), config.clone(), true);
+        // A stopped clock: a test's burst of attempts can't straddle a
+        // rate-limit window boundary and see its count reset (#105).
+        state.rate_clock = rate_limit::Clock::pinned(chrono::Utc::now());
         let tasks = state.tasks.clone();
         let detached = state.detached.clone();
+        let rate_clock = state.rate_clock;
         let app = app::router(state, super::no_web_dist());
         Self {
             _pg: pg,
@@ -201,6 +207,7 @@ impl Fixture {
             spa,
             tasks,
             detached,
+            rate_clock,
             bot,
         }
     }

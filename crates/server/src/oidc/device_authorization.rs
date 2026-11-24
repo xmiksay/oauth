@@ -39,7 +39,7 @@ pub async fn device_authorization(
     // Rows are created unauthenticated (public clients), so bound them per IP.
     let key = format!("devicecode:{}", rate_limit::ip_key(ip));
     let limit = rate_limit::DEVICE_AUTHORIZE_PER_IP;
-    match rate_limit::hit(&state.db, tenant.id, &key, limit, chrono::Utc::now()).await {
+    match rate_limit::hit(&state.db, tenant.id, &key, limit, state.rate_clock.now()).await {
         Ok(Ok(())) => {}
         Ok(Err(retry_after)) => return AuthnError::RateLimited { retry_after }.into_response(),
         Err(err) => return OAuthError::from(err).into_response(),
@@ -66,6 +66,7 @@ async fn handle(
         Endpoint::DeviceAuthorization,
         headers,
         &params,
+        state.rate_clock.now(),
     )
     .await?;
     if !client.device_code_enabled {

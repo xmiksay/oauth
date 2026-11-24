@@ -9,7 +9,6 @@ use axum::{
     http::HeaderMap,
     response::{IntoResponse, Response},
 };
-use chrono::Utc;
 use entity::enums::LoginStage;
 use serde_json::json;
 use uuid::Uuid;
@@ -48,8 +47,14 @@ pub async fn send(
         .await?
         .ok_or_else(|| AuthnError::Invalid("no Telegram account is linked".into()))?;
     let key = format!("tg-otp:{}", user.id);
-    if let Err(retry_after) =
-        rate_limit::hit(conn, tenant.id, &key, otp::SEND_LIMIT, Utc::now()).await?
+    if let Err(retry_after) = rate_limit::hit(
+        conn,
+        tenant.id,
+        &key,
+        otp::SEND_LIMIT,
+        state.rate_clock.now(),
+    )
+    .await?
     {
         metrics::login("rate_limited");
         return Err(AuthnError::RateLimited { retry_after });

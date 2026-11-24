@@ -64,6 +64,7 @@ async fn handle(
         Endpoint::Introspect,
         headers,
         &params,
+        state.rate_clock.now(),
     )
     .await?;
     if caller.client_type != ClientType::Confidential {

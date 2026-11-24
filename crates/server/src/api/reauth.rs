@@ -70,7 +70,7 @@ pub async fn verify(
 /// (shared with the login API); 429 when over the limit.
 async fn count_attempt(state: &AppState, user: &users::Model) -> AppResult<()> {
     let key = rate_limit::user_key(user.id);
-    let now = chrono::Utc::now();
+    let now = state.rate_clock.now();
     match rate_limit::hit(
         &state.db,
         user.tenant_id,
