@@ -40,21 +40,30 @@ advisory lock. At least one of `--admin-email` / `--provisioning-app`.
   `client_credentials` and `scope=api://management-api/.default` on the
   tenant's host. Because the app holds management API access only a Global
   Admin can change its credentials or redirect URIs.
-- An **existing** app is a takeover whenever bootstrap would widen what it
-  may do: it holds neither role, or it holds only `Directory.Read.All` and
-  `read-write` (the default) is requested. Holding a role doesn't mean an
-  earlier bootstrap made the app — a Global Admin (`POST
+- An **existing** app is a takeover when bootstrap would hand it more than
+  it has or act on behalf of someone else's app. Holding a role doesn't mean
+  an earlier bootstrap made the app — a Global Admin (`POST
   /api/v1/role-assignments`) or `oauth apply` can give either role to any
-  confidential app, e.g. a read-only audit-export app. A takeover is refused,
-  before anything is written, unless `--adopt-app` is given — a mistyped
-  client_id must not hand someone's app the management API (or write access
-  to it) and a new secret; with the flag the report starts with a `WARNING:`
-  line naming the adopted app. An app already holding the requested role
-  (or `read` requested of a `read-write` app, a downgrade) needs no flag.
-  Every change of an existing app's role — assigned or removed — is printed
-  as a `WARNING:` line. So upgrading a bootstrap-made `read` app back to
-  `read-write` needs `--adopt-app` too: bootstrap keeps no marker of the
-  apps it made, and role possession can't tell them apart.
+  confidential app, e.g. a read-only audit-export app. Bootstrap recognises
+  an app it made (or adopted) by a client secret described `oauth bootstrap`
+  (every secret it issues carries it; secrets aren't swept on expiry). That
+  marker guards against typos, not against admins: whoever can add a secret
+  to an app already controls it. Takeovers:
+  - the app holds neither role;
+  - it holds only `Directory.Read.All` and `read-write` (the default) is
+    requested — an upgrade, even of a bootstrap-made app;
+  - without the marker: `read` is requested of a `read-write` app (a
+    downgrade would break a third party's app), or `--rotate-secret` is given
+    (the new secret would let the operator act as someone else's app).
+
+  A takeover is refused, before anything is written, unless `--adopt-app` is
+  given — a mistyped client_id must not hand someone's app the management
+  API (or write access to it), change its access, or give out a secret for
+  it. With the flag the report starts with a `WARNING:` line saying which
+  takeover it was (adopted / upgraded / downgraded / issuing a secret). An
+  app already holding the requested role needs no flag (nor, with the
+  marker, a downgrade or `--rotate-secret`). Every change of an existing
+  app's role — assigned or removed — is printed as a `WARNING:` line.
 - **What the provisioning app may do.** Its "scoped directory role" is the
   management API app role, not a directory role (directory roles are held
   by users only), and `authz` scopes it as follows. `read-write` writes

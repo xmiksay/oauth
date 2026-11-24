@@ -20,7 +20,7 @@ use entity::{
     tenants,
 };
 use oauth_server::{
-    bootstrap::{self, Options, TenantOptions, provisioning},
+    bootstrap::{self, Options, TenantOptions, provisioning, takeover::Takeover},
     db,
     directory::{self, builtin_apps},
 };
@@ -186,7 +186,8 @@ async fn an_existing_app_is_adopted_only_on_request() {
             .contains("WARNING: adopted existing app `ci`")
     );
     let p = report.provisioning.unwrap();
-    assert!(p.adopted && p.role_assigned && p.secret.is_some());
+    assert_eq!(p.adopted, Some(Takeover::NoRole));
+    assert!(p.role_assigned && p.secret.is_some());
     // Now it holds a provisioning role: re-runs need no flag.
     if let Some(p) = opts.provisioning.as_mut() {
         p.adopt = false;
@@ -196,7 +197,7 @@ async fn an_existing_app_is_adopted_only_on_request() {
         .unwrap()
         .provisioning
         .unwrap();
-    assert!(!p.adopted && !p.role_assigned);
+    assert!(p.adopted.is_none() && !p.role_assigned);
 }
 
 async fn create_user(f: &Fixture, token: &str, email: &str) -> StatusCode {
@@ -259,11 +260,18 @@ async fn re_running_with_read_downgrades_the_app() {
     if let Some(p) = rw.provisioning.as_mut() {
         p.adopt = true;
     }
-    let p = bootstrap::run(&f.db, &f.config, &rw)
-        .await
-        .unwrap()
-        .provisioning
-        .unwrap();
+    let report = bootstrap::run(&f.db, &f.config, &rw).await.unwrap();
+    let text = report.render();
+    assert!(
+        text.contains(
+            "WARNING: upgraded existing app `ci` from Directory.Read.All \
+             to Directory.ReadWrite.All (--adopt-app)."
+        ),
+        "{text}"
+    );
+    assert!(!text.contains("adopted existing app"), "{text}");
+    let p = report.provisioning.unwrap();
+    assert_eq!(p.adopted, Some(Takeover::Upgrade));
     assert_eq!(p.role_removed, Some(builtin_apps::ROLE_READ_ALL));
     let bearer = token(&f, &secret).await.1.unwrap();
     assert_eq!(

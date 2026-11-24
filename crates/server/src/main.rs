@@ -55,9 +55,10 @@ enum Command {
         /// Issue a new secret for an existing provisioning app.
         #[arg(long, requires = "provisioning_app")]
         rotate_secret: bool,
-        /// Make an existing app that holds no provisioning role the
-        /// provisioning app, or upgrade one holding Directory.Read.All to
-        /// read-write (both refused without this flag).
+        /// Allow a takeover of an existing app: making one that holds no
+        /// provisioning role the provisioning app, upgrading one holding
+        /// Directory.Read.All to read-write, or (for an app bootstrap did
+        /// not make) downgrading it or issuing it a secret.
         #[arg(long, requires = "provisioning_app")]
         adopt_app: bool,
     },
