@@ -29,6 +29,9 @@ pub struct Ctx {
     /// The existing applications [`super::apps::lock`] locked before any
     /// app write: only these may be locked again later.
     pub locked_apps: HashSet<Uuid>,
+    /// The consent grants [`super::grant_locks::lock`] locked before any
+    /// consent write: only these may be written later.
+    pub locked_grants: HashSet<Uuid>,
     /// Token revocations the consent writes call for, held back until the
     /// last of them ([`super::consents::revoke_tokens`]).
     pub revocations: Vec<Revocation>,

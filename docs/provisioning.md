@@ -139,7 +139,15 @@ stops the apply with an error, rather than being locked out of order: run it
 again.
 
 Below applications, consents come before tokens: a multi-resource refresh
-locks its consent rows `FOR SHARE`, then its refresh token. Apply drops
+locks its consent rows (the user's grant and the admin grant of a client /
+resource pair) `FOR SHARE` in id order, then its refresh token. Apply writes
+consent rows in several statements (one per removed scope, then the admin
+consents), so right after the app locks it locks every grant it may write
+`FOR UPDATE` in one statement, in id order (`provision::grant_locks`): every
+grant of an app it locked and every admin grant of the tenant. Its later
+consent writes only take locks it already holds; a grant the management API
+or a sign-in creates while apply runs (after that lock) that apply would
+write stops the apply with an error: run it again. Apply drops
 removed scopes from consent grants (as `DELETE …/scopes/{id}` does, which
 rewrites the grants before it revokes) and deletes narrowed or undeclared
 admin consents in place, but revokes the tokens of those scopes and grants

@@ -15,6 +15,7 @@ mod access;
 mod apps;
 mod consents;
 mod ctx;
+mod grant_locks;
 mod groups;
 mod idps;
 mod refs;
@@ -96,6 +97,7 @@ pub async fn run(
         kept: Default::default(),
         locked_idps,
         locked_apps: Default::default(),
+        locked_grants: Default::default(),
         revocations: Vec::new(),
     };
     refs::check(&txn, &cx, spec).await?;
@@ -106,7 +108,9 @@ pub async fn run(
     // disabling), then every existing app it writes (`apps::lock`, the apps
     // deleted at the end included), before its first app, consent, session or
     // token write (disabling revokes sessions and tokens only after locking
-    // every user it disables), and every consent write before the token
+    // every user it disables), then every consent grant it may write, in
+    // one statement in id order (`grant_locks::lock`: a multi-resource
+    // refresh locks its grants in id order), and every consent write before the token
     // revocations of scope and admin consent removals (`ctx::Revocation`).
     // A token request takes them in that order too; the other way round,
     // apply would hold one while waiting for a row the request holds.
@@ -117,6 +121,7 @@ pub async fn run(
     let stale_users = users::lock_stale(&txn, &cx).await?;
     users::finish_disabling(&txn, &cx, &config.master_key, disabled).await?;
     let stale_apps = apps::lock(&txn, &mut cx, &spec.applications).await?;
+    grant_locks::lock(&txn, &mut cx).await?;
     apps::apply(&txn, &mut cx, config, &spec.applications).await?;
     consents::required(&txn, &mut cx, &spec.applications).await?;
     let consented = consents::admin(&txn, &mut cx, &spec.admin_consents).await?;
