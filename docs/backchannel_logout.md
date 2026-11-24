@@ -83,6 +83,12 @@ approving user before the request row), and denying a device request
 callers that also claim a login transaction lock the user before it). A
 refresh that loses this race gets a plain `invalid_grant` — a token
 revoked (not rotated) meanwhile is no replay, so no reuse alarm.
+Applications rank after the user: `session_clients`, refresh tokens and
+opaque access tokens reference the app, so their inserts take its row
+`FOR KEY SHARE` after the user lock. A writer therefore locks an app only
+`FOR NO KEY UPDATE` (`api::app_rules::lock_app`, which conflicts with other
+writers but not with those FK checks), and `oauth apply` takes every user
+lock before its first app write ([provisioning.md](provisioning.md#oauth-apply)).
 
 `lock_user` returns the user's state as read under the lock
 (`UserLock::{Active, Disabled, Gone}`): a disable or deletion that committed

@@ -4,7 +4,10 @@
 
 use anyhow::Context;
 use entity::{applications, enums::ClientType};
-use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QuerySelect, Statement};
+use sea_orm::{
+    ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QuerySelect, Select, Statement,
+    sea_query::LockType,
+};
 use uuid::Uuid;
 
 use super::Caller;
@@ -68,17 +71,30 @@ pub async fn find_app(
 /// [`find_app`] holding the row lock until the transaction ends: creates of
 /// child objects serialize per app, so the per-app caps can't be overshot
 /// by concurrent requests.
+///
+/// `FOR NO KEY UPDATE`, not `FOR UPDATE`: it still excludes every other
+/// writer of the row, but not the `FOR KEY SHARE` that an insert referencing
+/// the app (a code redemption's `session_clients`, refresh and access tokens)
+/// takes for its FK check, so token requests for the app don't wait for the
+/// locking transaction. Those requests lock their user before the app; a
+/// `FOR UPDATE` held while locking a user would invert that order and
+/// deadlock. (An UPDATE that changes a key column, `client_id` or
+/// `identifier_uri`, still takes `FOR UPDATE` itself.)
 pub async fn lock_app(
     conn: &impl ConnectionTrait,
     tenant_id: Uuid,
     id: Uuid,
 ) -> AppResult<applications::Model> {
-    applications::Entity::find_by_id(id)
-        .filter(applications::Column::TenantId.eq(tenant_id))
-        .lock_exclusive()
+    locked(tenant_id, id)
         .one(conn)
         .await?
         .ok_or(AppError::NotFound)
+}
+
+fn locked(tenant_id: Uuid, id: Uuid) -> Select<applications::Entity> {
+    applications::Entity::find_by_id(id)
+        .filter(applications::Column::TenantId.eq(tenant_id))
+        .lock(LockType::NoKeyUpdate)
 }
 
 /// Built-in registrations are provisioned by the server; their secrets,
@@ -152,6 +168,15 @@ pub async fn ensure_may_manage_credentials(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sea_orm::{DbBackend, QueryTrait};
+
+    #[test]
+    fn apps_are_locked_without_blocking_fk_checks() {
+        let sql = locked(Uuid::nil(), Uuid::nil())
+            .build(DbBackend::Postgres)
+            .to_string();
+        assert!(sql.ends_with("FOR NO KEY UPDATE"), "{sql}");
+    }
 
     #[test]
     fn refresh_lifetimes_are_capped_per_client_type() {

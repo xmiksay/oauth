@@ -5,6 +5,7 @@ use anyhow::Context;
 use entity::users;
 use sea_orm::{
     ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
+    QueryOrder,
 };
 use serde_json::json;
 use zeroize::Zeroizing;
@@ -165,23 +166,35 @@ async fn upsert(
     Ok(disabling.then_some(updated))
 }
 
-/// Deletes managed users the file no longer declares.
+/// Locks the managed users the file no longer declares (`FOR UPDATE`, in id
+/// order) and returns them for [`prune`]. Apply runs it before its first app
+/// or consent write: the deletes come last, but their user locks must not
+/// follow locks a token request takes after its user (`provision::run`).
+pub async fn lock_stale(
+    conn: &impl ConnectionTrait,
+    cx: &Ctx,
+) -> anyhow::Result<Vec<users::Model>> {
+    let managed = users::Entity::find()
+        .filter(users::Column::TenantId.eq(cx.tenant_id))
+        .filter(users::Column::Managed.eq(true))
+        .order_by_asc(users::Column::Id)
+        .all(conn)
+        .await?;
+    let mut stale = Vec::new();
+    for user in managed.into_iter().filter(|u| !cx.kept.contains(&u.id)) {
+        stale.push(lock_user(conn, cx.tenant_id, user.id).await?);
+    }
+    Ok(stale)
+}
+
+/// Deletes the users [`lock_stale`] locked.
 pub async fn prune(
     conn: &impl ConnectionTrait,
     cx: &mut Ctx,
     master_key: &[u8; 32],
+    stale: Vec<users::Model>,
 ) -> anyhow::Result<()> {
-    let managed = users::Entity::find()
-        .filter(users::Column::TenantId.eq(cx.tenant_id))
-        .filter(users::Column::Managed.eq(true))
-        .all(conn)
-        .await?;
-    let stale: Vec<_> = managed
-        .into_iter()
-        .filter(|u| !cx.kept.contains(&u.id))
-        .collect();
     for user in stale {
-        lock_user(conn, cx.tenant_id, user.id).await?;
         ensure_not_last_global_admin(conn, cx.tenant_id, user.id)
             .await
             .with_context(|| format!("deleting user `{}`", user.email))?;
