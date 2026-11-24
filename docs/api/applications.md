@@ -118,8 +118,9 @@ Public clients can't have secrets (400).
   returns them once, as before. Secrets supplied before this rule (#81)
   are not re-validated — only their hash is stored — so rotate any
   caller-supplied secret registered earlier. Failed client authentication
-  is not rate-limited yet (#84). Clients using `client_secret_basic` must
-  form-urlencode a value with reserved characters (RFC 6749 §2.3.1).
+  is rate limited per client_id + IP ([authn.md](authn.md#rate-limits)).
+  Clients using `client_secret_basic` must form-urlencode a value with
+  reserved characters (RFC 6749 §2.3.1).
 - **Non-expiring** (`never_expires: true`, exclusive with
   `expires_in_days`): only where the tenant's `allow_non_expiring_secrets`
   is on (else 400; read again, `FOR SHARE`, in the creating transaction, so
