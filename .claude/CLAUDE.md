@@ -39,7 +39,7 @@ same-origin. Repo: `github.com:xmiksay/oauth`.
 | `make test-unit` | `cargo test --workspace --lib --bins` |
 | `make test-integration` | `cargo test --workspace --test '*'`: one fresh database per test on `TEST_DATABASE_URL` (default the local `postgres://postgres@localhost:5432/postgres`: a TCP superuser URL, Postgres ≥ 17; dropped after the test); `TEST_DATABASE_URL=` (empty) → testcontainers Postgres 17 (Docker; what CI runs) |
 | `make test-db-clean` | drop `oauth_it_*` databases and roles that killed test runs left on `TEST_DATABASE_URL` — only while no tests run (it drops live ones too) |
-| `make docker` | build image (`IMAGE=` to override tag) |
+| `make docker` | build image (`IMAGE=` to override tag), `GIT_SHA` build arg = the checkout's HEAD |
 | `make bootstrap ADMIN_EMAIL=… [DISPLAY_NAME=name] [RESET=1] [TENANT=slug [TENANT_NAME=name]] [PROVISIONING_APP=id [PROVISIONING_ROLE=read\|read-write] [ROTATE=1] [ADOPT=1]]` | migrate, then create the system tenant (`SYSTEM_TENANT_SLUG`, or `TENANT`, named `TENANT_NAME` when created) + Global Admin (named `DISPLAY_NAME` when created) and / or a client-credentials app holding a management API role (idempotent; `RESET=1` issues a new one-time password, `ROTATE=1` a new client secret; either is printed once; `ADOPT=1` takes over an existing app that holds no provisioning role) |
 | `make apply FILE=tenant.yaml [DRY_RUN=1]` | `oauth apply`: declarative tenant state in one transaction ([docs/provisioning.md](../docs/provisioning.md)); `DRY_RUN=1` prints the diff and rolls back |
 | `make telegram-webhook` | `oauth telegram set-webhook`: register `{PUBLIC_URL}/telegram/webhook` + secret with the bot (loads `.env`) |
@@ -83,6 +83,12 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   transaction-safe (no `CREATE INDEX CONCURRENTLY`).
 - Metric labels must stay bounded (route templates, fixed enums) — never raw
   paths, tenant slugs, methods or user input.
+- Build identity (`build_info`): `crates/server/build.rs` bakes the commit from
+  `GIT_SHA` (CI's docker build arg; the image context has no `.git`), else
+  `git rev-parse`, else `unknown` — only 12 hex digits or `unknown` get through.
+  It surfaces in `oauth --version`, the `serve` startup log, the
+  `oauth_build_info{version,commit}` metric and the SPA footer via the
+  `oauth-build` `<meta>` `spa` writes ([docs/deploy.md](../docs/deploy.md#build-version-and-commit)).
 - Every table except `tenants` carries `tenant_id`; children reference parents
   via composite `(tenant_id, id)` FKs so cross-tenant links are impossible.
   Secrets/tokens/codes are stored as SHA-256 hashes and compared in constant

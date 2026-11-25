@@ -21,7 +21,7 @@ onMounted(async () => {
 
 <template>
   <main
-    class="flex min-h-screen flex-col items-center justify-center gap-3 p-4 text-center"
+    class="flex flex-1 flex-col items-center justify-center gap-3 p-4 text-center"
     aria-live="polite"
   >
     <template v-if="failed">

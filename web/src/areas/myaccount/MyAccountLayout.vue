@@ -19,7 +19,7 @@ const tabs = [
 </script>
 
 <template>
-  <div class="flex min-h-screen flex-col">
+  <div class="flex flex-1 flex-col">
     <AppHeader
       title="My Account"
       :tenant="slug"

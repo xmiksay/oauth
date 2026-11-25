@@ -71,8 +71,8 @@ web-test: ## Frontend unit tests (vitest)
 web-build: ## Build the SPA into web/dist
 	$(NVM) $(NPM) run build
 
-docker: ## Build the container image ($(IMAGE))
-	docker build -t $(IMAGE) .
+docker: ## Build the container image ($(IMAGE)), stamped with the checkout's commit
+	docker build --build-arg GIT_SHA="$$(git rev-parse HEAD 2>/dev/null)" -t $(IMAGE) .
 
 bootstrap: ## Tenant + Global Admin / provisioning app (idempotent): make bootstrap ADMIN_EMAIL=… [DISPLAY_NAME=name] [RESET=1] [TENANT=slug [TENANT_NAME=name]] [PROVISIONING_APP=id [PROVISIONING_ROLE=read] [ROTATE=1] [ADOPT=1]]
 	@[ -n "$(ADMIN_EMAIL)$(PROVISIONING_APP)" ] || { echo "usage: make bootstrap ADMIN_EMAIL=you@example.com [DISPLAY_NAME=name] [RESET=1] [TENANT=slug [TENANT_NAME=name]] [PROVISIONING_APP=client-id [PROVISIONING_ROLE=read|read-write] [ROTATE=1] [ADOPT=1]]" >&2; exit 1; }

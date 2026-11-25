@@ -9,6 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     app::{self, AppState},
+    build_info,
     config::{Config, LogFormat},
     db, jobs, metrics,
 };
@@ -25,7 +26,12 @@ pub fn init_tracing(format: LogFormat) -> anyhow::Result<()> {
 }
 
 pub async fn run(config: Config) -> anyhow::Result<()> {
-    tracing::info!(?config, "starting oauth server");
+    tracing::info!(
+        version = build_info::VERSION,
+        commit = build_info::COMMIT,
+        ?config,
+        "starting oauth server"
+    );
     // rustls is built with both AWS-LC (ours, lettre) and ring (sqlx); make
     // AWS-LC the explicit default rather than leave it to each user. `Err`
     // only means a default is already in place.
