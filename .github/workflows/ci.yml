@@ -9,7 +9,7 @@ on:
 permissions:
   contents: read
 
-# One run per ref at a time, so publishes and deploys keep push order. A PR's
+# One run per ref at a time, so publishes keep push order. A PR's
 # new push cancels its running run; on main / tags at most one run waits, and
 # a newer push supersedes that pending one, so not every push gets a run or a
 # `:sha-` image.
@@ -97,8 +97,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-    outputs:
-      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -144,6 +142,22 @@ jobs:
             *) echo "::error::registry lookup of $IMAGE:$version returned HTTP $status"; exit 1 ;;
           esac
 
+      # Argo CD Image Updater rolls test.oauth.cz to the newest main-<YYYYMMDDHHmmss>,
+      # compared as strings. The commit time (UTC), not the run time: a re-run of an
+      # older commit republishes its own, older tag instead of rolling test back.
+      - name: Main build timestamp
+        id: ts
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          ts() { TZ=UTC git show -s --format=%cd --date=format-local:%Y%m%d%H%M%S "$1"; }
+          now=$(ts HEAD)
+          if git rev-parse -q --verify 'HEAD^' > /dev/null && [[ "$(ts 'HEAD^')" > "$now" ]]; then
+            echo "::error::commit time $now is older than its parent's ($(ts 'HEAD^')): main-$now would sort before the previous build"
+            exit 1
+          fi
+          echo "ts=$now" >> "$GITHUB_OUTPUT"
+
       - name: Image metadata
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
@@ -152,6 +166,7 @@ jobs:
           flavor: latest=false
           tags: |
             type=raw,value=main,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=main-${{ steps.ts.outputs.ts }},enable=${{ github.ref == 'refs/heads/main' }}
             type=sha,prefix=sha-,format=short,enable=${{ github.ref == 'refs/heads/main' }}
             type=semver,pattern={{version}}
 
@@ -164,7 +179,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
-        id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
@@ -177,87 +191,3 @@ jobs:
           # layers written by other runs, main's included, which a compromised
           # action or dependency could have poisoned.
           no-cache: ${{ github.ref_type == 'tag' }}
-
-  deploy-test:
-    needs: publish
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    permissions: {}
-    environment:
-      name: test
-      url: https://test.oauth.cz
-    concurrency:
-      group: deploy-test
-      cancel-in-progress: false
-    env:
-      KUBECTL_VERSION: v1.37.1
-      KUBECTL_SHA256: 65691ff77eb6fa44c908b77a1082c9f092c3b9733b5cefabec0d1104890e21a8
-    steps:
-      # `secrets` is not available in a job-level `if`, so without the deploy
-      # secrets (a fork, a fresh setup) every step is skipped instead. A
-      # re-run of an older commit skips too: it would roll test back.
-      - name: Decide whether to deploy
-        id: decide
-        shell: bash
-        env:
-          HAS_SECRETS: ${{ secrets.WG_CONFIG != '' && secrets.KUBE_CONFIG != '' }}
-        run: |
-          go=false
-          if [ "$HAS_SECRETS" != true ]; then
-            echo "::notice::WG_CONFIG / KUBE_CONFIG not set; skipping deploy to test"
-          else
-            head=$(git ls-remote https://github.com/xmiksay/oauth refs/heads/main | cut -f1)
-            if [ "$head" = "$GITHUB_SHA" ]; then
-              go=true
-            else
-              echo "::notice::$GITHUB_SHA is no longer the tip of main ($head); skipping deploy to test"
-            fi
-          fi
-          echo "go=$go" >> "$GITHUB_OUTPUT"
-
-      - name: Install wireguard-tools and kubectl
-        if: steps.decide.outputs.go == 'true'
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends wireguard-tools
-          curl -fsSLo "$RUNNER_TEMP/kubectl" "https://dl.k8s.io/release/$KUBECTL_VERSION/bin/linux/amd64/kubectl"
-          echo "$KUBECTL_SHA256  $RUNNER_TEMP/kubectl" | sha256sum --check --strict
-          sudo install -m 755 "$RUNNER_TEMP/kubectl" /usr/local/bin/kubectl
-          rm -f "$RUNNER_TEMP/kubectl"
-
-      # The cluster API is reachable only over the WireGuard hub.
-      - name: Bring up WireGuard
-        if: steps.decide.outputs.go == 'true'
-        env:
-          WG_CONFIG: ${{ secrets.WG_CONFIG }}
-        run: |
-          sudo install -d -m 700 /etc/wireguard
-          printf '%s\n' "$WG_CONFIG" | sudo sh -c 'umask 077 && cat > /etc/wireguard/wg0.conf'
-          sudo wg-quick up wg0
-
-      - name: Write kubeconfig
-        if: steps.decide.outputs.go == 'true'
-        env:
-          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
-        run: |
-          (umask 077 && printf '%s' "$KUBE_CONFIG" | base64 -d > "$RUNNER_TEMP/kubeconfig")
-          echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
-
-      # Deploy by digest so test runs exactly what was just published, not
-      # whatever `:main` points at by the time it pulls. CI's Role covers only
-      # deployment/oauth-test in `services` (no pods / replicasets), so keep
-      # every kubectl call on that one object.
-      - name: Roll out
-        if: steps.decide.outputs.go == 'true'
-        env:
-          DIGEST: ${{ needs.publish.outputs.digest }}
-        run: |
-          kubectl -n services set image deployment/oauth-test "oauth=$IMAGE@$DIGEST"
-          kubectl -n services rollout status deployment/oauth-test --timeout=10m
-
-      - name: Tear down
-        if: always()
-        run: |
-          sudo wg-quick down wg0 2>/dev/null || true
-          sudo rm -f /etc/wireguard/wg0.conf
-          rm -f "$RUNNER_TEMP/kubeconfig"
