@@ -11,9 +11,11 @@
 //! the file refers to (issue #113). Apply locks the consent grants it may
 //! write (`provision::grant_locks`) before it inserts rows pointing at those
 //! referenced parents; the delete locks the parent, then cascades into the
-//! grants (a group's delete: into a membership apply adopted). Unless apply locks the referenced parents `FOR KEY SHARE` before
-//! the grants, its FK check waits for the delete while the delete's cascade
-//! waits for apply (40P01).
+//! grants (a group's delete: into a membership apply adopted). Unless apply
+//! locks the referenced parents `FOR KEY SHARE` before the grants, its FK
+//! check waits for the delete while the delete's cascade waits for apply
+//! (40P01). These tests live apart from `provision_grant_races.rs` only to
+//! keep both files under the 400-line cap.
 //!
 //! A test transaction holds the `Ledger.Read` scope row, which apply updates
 //! right after it locked the grants. Once apply waits for it, the delete
@@ -32,7 +34,7 @@ use oauth_server::{
     consent,
     provision::{self, Options, Report},
 };
-use sea_orm::{ConnectionTrait, EntityTrait, TransactionTrait};
+use sea_orm::{ActiveModelTrait, ConnectionTrait, EntityTrait, TransactionTrait};
 use serde_json::Value;
 
 async fn apply(f: &Fixture, yaml: &str) -> anyhow::Result<Report> {
@@ -188,36 +190,43 @@ async fn apply_racing_the_deletion_of_a_declared_unchanged_user_does_not_deadloc
     race_user_delete("users: [{ email: ann@example.com, display_name: Test User }]\n").await;
 }
 
-/// The fixture's group `Approvers` holds Ann as a manual member. A first
-/// run adopts the group, so the racing one leaves its row unchanged; it
-/// adopts the membership (a write to a row the group's delete cascades
+/// The fixture's group, renamed to `name`, holds Ann as a manual member. A
+/// first run adopts the group, so the racing one leaves its row unchanged;
+/// it adopts the membership (a write to a row the group's delete cascades
 /// into), then, after the grant locks, assigns the group a role (a FK
 /// reference to it).
-#[tokio::test]
-async fn apply_racing_the_deletion_of_a_declared_unchanged_group_does_not_deadlock() {
+async fn race_group_delete(name: &str) {
     let f = Fixture::new().await;
-    let adopt = "tenant: contoso\ngroups: [{ display_name: Approvers }]\n";
-    apply(&f, adopt).await.unwrap();
-    let yaml = "tenant: contoso
+    let mut group: groups::ActiveModel = groups::Entity::find_by_id(f.group)
+        .one(&f.db)
+        .await
+        .unwrap()
+        .unwrap()
+        .into();
+    group.display_name = sea_orm::Set(name.to_owned());
+    group.update(&f.db).await.unwrap();
+    let adopt = format!("tenant: contoso\ngroups: [{{ display_name: {name} }}]\n");
+    apply(&f, &adopt).await.unwrap();
+    let yaml = format!(
+        "tenant: contoso
 applications:
   - client_id: ledger
     display_name: Ledger
-    scopes: [{ value: Ledger.Read, description: Reads the ledger }]
+    scopes: [{{ value: Ledger.Read, description: Reads the ledger }}]
     roles:
-      - { value: Ledger.Auditor, display_name: Auditor, allowed_member_types: [user] }
+      - {{ value: Ledger.Auditor, display_name: Auditor, allowed_member_types: [user] }}
 groups:
-  - { display_name: Approvers, members: [ann@example.com] }
+  - {{ display_name: {name}, members: [ann@example.com] }}
 role_assignments:
-  - { resource: ledger, role: Ledger.Auditor, group: Approvers }
-";
+  - {{ resource: ledger, role: Ledger.Auditor, group: {name} }}
+"
+    );
     let token = user_admin_token(&f).await;
     let path = format!("/api/v1/groups/{}", f.group);
-    let (report, status, body) = race(&f, yaml, &token, &path).await;
+    let (report, status, body) = race(&f, &yaml, &token, &path).await;
+    let assigned = format!("Ledger.Auditor -> group {name}");
     assert!(
-        report
-            .changes
-            .iter()
-            .any(|c| c.contains("Ledger.Auditor -> group Approvers")),
+        report.changes.iter().any(|c| c.contains(&assigned)),
         "{report:#?}"
     );
     assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
@@ -226,4 +235,16 @@ role_assignments:
         .await
         .unwrap();
     assert!(group.is_none());
+}
+
+#[tokio::test]
+async fn apply_racing_the_deletion_of_a_declared_unchanged_group_does_not_deadlock() {
+    race_group_delete("Approvers").await;
+}
+
+/// Rust's `to_lowercase` turns the final `Σ` into `ς`, Postgres' `lower()`
+/// into `σ`: the up-front lock must match names the way the lookup does.
+#[tokio::test]
+async fn apply_racing_the_deletion_of_a_non_ascii_group_does_not_deadlock() {
+    race_group_delete("ΟΜΑΣ").await;
 }

@@ -281,8 +281,8 @@ async fn roles(
     Ok(())
 }
 
-/// Deletes the undeclared managed apps [`super::app_locks::lock`] locked (everything hanging
-/// off them cascades).
+/// Deletes the undeclared managed apps [`super::app_locks::lock`] locked
+/// (everything hanging off them cascades).
 pub async fn prune(
     conn: &impl ConnectionTrait,
     cx: &mut Ctx,
