@@ -121,11 +121,22 @@ deletes, and apps whose `identifier_uri` it changes (a key column), are
 locked `FOR UPDATE`: token requests for those wait for the apply to finish
 and then fail with `invalid_grant` if the app is gone.
 
-Apply takes these locks in the same order. It first locks every user it
-writes `FOR UPDATE`: directory role changes, the undeclared users it deletes
-at the end, then the users it disables (all of them before it revokes the
-first one's sessions and tokens). Then it locks every existing app it writes
-or deletes, in id order (`provision::apps::lock`). Only after that does it
+Apply takes these locks in the same order. It first locks the existing
+users the file only references (group members, directory roles and role
+assignments of users it doesn't declare) `FOR KEY SHARE`, in id order, then
+every user it writes `FOR UPDATE`: directory role changes, the undeclared
+users it deletes at the end, then the users it disables (all of them before
+it revokes the first one's sessions and tokens). Then it locks, in one
+id-ordered pass, every existing app it writes or deletes, and `FOR KEY
+SHARE` every existing non-built-in app the file only references (in
+`required_permissions`, `admin_consents` and `role_assignments`)
+(`provision::app_locks`). The referenced users and apps are locked up front
+because the rows apply later inserts pointing at them take their FK
+`KEY SHARE` lock only at the insert, after the consent grant locks below,
+while a management API delete of the user or app locks it first and then
+cascades into those grants: locking them only then could deadlock with the
+delete. A delete of one of them now waits for apply to finish. Only after
+that does it
 write any application, required permission, consent or role assignment; the
 only session and token rows it touches before are those of users it already
 holds. So it never holds an app, consent, session or token row while waiting
@@ -134,7 +145,7 @@ never deadlocks with one. Login completion (issuing the authorization code or
 approving a device request), the device code grant and the management API's
 admin consent grant lock their apps the same way, so deleting an app never
 deadlocks with them either. An existing app the file declares that the
-management API creates while apply runs (after `provision::apps::lock`)
+management API creates while apply runs (after `provision::app_locks::lock`)
 stops the apply with an error, rather than being locked out of order: run it
 again.
 

@@ -76,7 +76,7 @@ pub async fn lock(
 }
 
 /// The locked, declared apps the file removes a managed scope of. Their
-/// scopes can't change under apply: it holds the apps (`apps::lock`).
+/// scopes can't change under apply: it holds the apps (`app_locks::lock`).
 async fn losing_scopes(
     conn: &impl ConnectionTrait,
     cx: &Ctx,
