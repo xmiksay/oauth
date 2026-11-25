@@ -122,21 +122,25 @@ locked `FOR UPDATE`: token requests for those wait for the apply to finish
 and then fail with `invalid_grant` if the app is gone.
 
 Apply takes these locks in the same order. It first locks the existing
-users the file only references (group members, directory roles and role
-assignments of users it doesn't declare) `FOR KEY SHARE`, in id order, then
-every user it writes `FOR UPDATE`: directory role changes, the undeclared
-users it deletes at the end, then the users it disables (all of them before
-it revokes the first one's sessions and tokens). Then it locks, in one
+users and groups the file refers to, declared or not (group members,
+directory roles and role assignments of users; declared groups and groups
+it assigns roles to) `FOR KEY SHARE`, in id order, then every user it
+writes `FOR UPDATE`: directory role changes, the undeclared users it
+deletes at the end, then the users it disables (all of them before it
+revokes the first one's sessions and tokens). Then it locks, in one
 id-ordered pass, every existing app it writes or deletes, and `FOR KEY
-SHARE` every existing non-built-in app the file only references (in
-`required_permissions`, `admin_consents` and `role_assignments`)
-(`provision::app_locks`). The referenced users and apps are locked up front
-because the rows apply later inserts pointing at them take their FK
-`KEY SHARE` lock only at the insert, after the consent grant locks below,
-while a management API delete of the user or app locks it first and then
-cascades into those grants: locking them only then could deadlock with the
-delete. A delete of one of them now waits for apply to finish. Only after
-that does it
+SHARE` every existing app the file only references (in
+`required_permissions`, `admin_consents` and `role_assignments`; built-in
+apps, which can't be deleted, stay unlocked) (`provision::app_locks`). The
+referenced users, groups and apps are locked up front because the rows
+apply later inserts pointing at them take their FK `KEY SHARE` lock only at
+the insert, after the consent grant locks below (and, for a group, possibly
+after apply adopted one of its memberships or role assignments), while a
+management API delete of the user, group or app locks it first and then
+cascades into those rows: locking them only then could deadlock with the
+delete. A user or group the file declares but leaves unchanged is never
+written before those inserts, so it is locked just the same. A delete of
+one of them now waits for apply to finish. Only after that does it
 write any application, required permission, consent or role assignment; the
 only session and token rows it touches before are those of users it already
 holds. So it never holds an app, consent, session or token row while waiting

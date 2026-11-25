@@ -2,6 +2,14 @@
 //! validated by the management API's own rules (`api::app_body`, …).
 //! Built-in apps can't be declared; secrets are never in the file.
 
+use anyhow::{Context, bail};
+use entity::{app_roles, app_scopes, applications, enums::ClientType};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
+    QueryOrder,
+};
+use serde_json::json;
+
 use super::{
     app_locks::relock,
     ctx::{Ctx, Revocation, diff, update_line},
@@ -20,13 +28,6 @@ use crate::{
     config::Config,
     directory::display_name,
 };
-use anyhow::{Context, bail};
-use entity::{app_roles, app_scopes, applications, enums::ClientType};
-use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
-    QueryOrder,
-};
-use serde_json::json;
 
 pub async fn apply(
     conn: &impl ConnectionTrait,

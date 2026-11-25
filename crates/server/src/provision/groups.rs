@@ -1,15 +1,21 @@
 //! Groups (by name, ignoring letter case) and their managed memberships.
 
+use std::collections::BTreeSet;
+
 use anyhow::Context;
 use entity::{group_members, groups, users};
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
+    ActiveModelTrait,
+    ActiveValue::Set,
+    ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
+    sea_query::{Expr, ExprTrait, Func, LockType},
 };
 use serde_json::json;
 use uuid::Uuid;
 
 use super::{
     ctx::{Ctx, diff, update_line},
+    refs,
     spec::GroupSpec,
 };
 use crate::{
@@ -34,6 +40,34 @@ pub async fn apply(
             .await
             .with_context(what)?;
     }
+    Ok(())
+}
+
+/// Locks `FOR KEY SHARE`, in id order, the existing groups the file
+/// declares or assigns roles to (`refs::principals`). Apply may first write
+/// one of a group's memberships or role assignments (adopting it), and only
+/// after its grant locks insert another row pointing at the group (a role
+/// assignment); a management API delete locks the group, then cascades into
+/// those rows, so a FK check taken only at the insert could wait for the
+/// delete while the delete waits for apply. Runs with the user locks,
+/// before any app lock.
+pub async fn lock_referenced(
+    conn: &impl ConnectionTrait,
+    cx: &Ctx,
+    names: &BTreeSet<&str>,
+) -> anyhow::Result<()> {
+    let folded = refs::folded(names);
+    if folded.is_empty() {
+        return Ok(());
+    }
+    groups::Entity::find()
+        .filter(groups::Column::TenantId.eq(cx.tenant_id))
+        .filter(Expr::expr(Func::lower(Expr::col(groups::Column::DisplayName))).is_in(folded))
+        .order_by_asc(groups::Column::Id)
+        .lock(LockType::KeyShare)
+        .all(conn)
+        .await
+        .context("locking referenced groups")?;
     Ok(())
 }
 

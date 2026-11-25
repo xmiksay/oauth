@@ -17,6 +17,7 @@ use zeroize::Zeroizing;
 use super::{
     Env,
     ctx::{Ctx, diff, update_line},
+    refs,
     spec::UserSpec,
 };
 use crate::{
@@ -174,9 +175,10 @@ async fn upsert(
     Ok(disabling.then_some(updated))
 }
 
-/// Locks `FOR KEY SHARE`, in id order, the existing users the file only
-/// references (`refs::undeclared`: group members, directory roles, role
-/// assignments). Apply inserts rows pointing at them after it locked
+/// Locks `FOR KEY SHARE`, in id order, the existing users the file refers
+/// to (`refs::principals`: group members, directory roles, role
+/// assignments), declared or not: one it declares and leaves unchanged is
+/// never written. Apply inserts rows pointing at them after it locked
 /// consent grants (`grant_locks::lock`); a management API delete locks the
 /// user, then cascades into those grants, so a FK check taken only at the
 /// insert could wait for the delete while the delete waits for apply. Runs
@@ -186,7 +188,7 @@ pub async fn lock_referenced(
     cx: &Ctx,
     emails: &BTreeSet<&str>,
 ) -> anyhow::Result<()> {
-    let folded = folded(emails);
+    let folded = refs::folded(emails);
     if folded.is_empty() {
         return Ok(());
     }
@@ -199,16 +201,6 @@ pub async fn lock_referenced(
         .await
         .context("locking referenced users")?;
     Ok(())
-}
-
-/// The addresses as `find_user_by_email` matches them (trimmed, lowercase),
-/// minus those that can't be stored (Postgres rejects NUL in a parameter).
-fn folded(emails: &BTreeSet<&str>) -> BTreeSet<String> {
-    emails
-        .iter()
-        .filter(|e| !e.chars().any(char::is_control))
-        .map(|e| e.trim().to_lowercase())
-        .collect()
 }
 
 /// Locks the managed users the file no longer declares (`FOR UPDATE`, in id
@@ -257,16 +249,4 @@ pub async fn prune(
         .await?;
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn referenced_addresses_are_folded_like_lookups() {
-        let emails = BTreeSet::from([" Ann@Example.com", "ann@example.com", "bad\0@x", "b@x"]);
-        let folded: Vec<String> = folded(&emails).into_iter().collect();
-        assert_eq!(folded, ["ann@example.com", "b@x"]);
-    }
 }
