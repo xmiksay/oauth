@@ -14,12 +14,15 @@ use axum::{
 };
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 
+use crate::build_info;
+
 pub const HTTP_REQUESTS_TOTAL: &str = "http_requests_total";
 pub const HTTP_REQUEST_DURATION: &str = "http_request_duration_seconds";
 pub const LOGINS_TOTAL: &str = "oauth_logins_total";
 pub const TOKENS_ISSUED_TOTAL: &str = "oauth_tokens_issued_total";
 pub const TOKEN_ERRORS_TOTAL: &str = "oauth_token_errors_total";
 pub const CLIENT_AUTH_LIMITED_TOTAL: &str = "oauth_client_auth_rate_limited_total";
+pub const BUILD_INFO: &str = "oauth_build_info";
 
 // Label values below are `&'static str` from closed sets on purpose: callers
 // cannot pass request data, so cardinality stays bounded.
@@ -54,6 +57,13 @@ pub fn install() -> anyhow::Result<PrometheusHandle> {
     let handle = PrometheusBuilder::new()
         .install_recorder()
         .context("installing Prometheus recorder")?;
+    // Always 1; the labels are build constants (`build_info`), so one series.
+    metrics::gauge!(
+        BUILD_INFO,
+        "version" => build_info::VERSION,
+        "commit" => build_info::COMMIT
+    )
+    .set(1.0);
     // Histograms and summaries are only drained on upkeep; without it their
     // buckets grow unbounded between scrapes.
     let upkeep = handle.clone();

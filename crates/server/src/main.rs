@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use clap::{ArgGroup, Parser, Subcommand};
 use oauth_server::{
     bootstrap::{self, TenantOptions, provisioning},
+    build_info,
     config::Config,
     db, provision, serve, telegram,
 };
@@ -10,7 +11,7 @@ use oauth_server::{
 #[derive(Parser)]
 #[command(
     name = "oauth",
-    version,
+    version = build_info::LONG_VERSION,
     about = "Entra-like multi-tenant OAuth 2.1 / OIDC provider"
 )]
 struct Cli {
@@ -166,6 +167,15 @@ mod tests {
     fn cli_is_well_formed() {
         use clap::CommandFactory;
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn version_names_the_commit() {
+        use clap::CommandFactory;
+        assert_eq!(
+            Cli::command().render_version(),
+            format!("oauth {} ({})\n", build_info::VERSION, build_info::COMMIT)
+        );
     }
 
     #[test]

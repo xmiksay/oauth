@@ -7,6 +7,7 @@ pub mod authn;
 pub mod authz;
 pub mod backchannel;
 pub mod bootstrap;
+pub mod build_info;
 pub mod config;
 pub mod consent;
 pub mod cors;

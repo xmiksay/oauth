@@ -42,7 +42,9 @@ sits in front of it). The trust model is in
 
 **Ports and probes.** `LISTEN_ADDR` (default `0.0.0.0:8080`) serves the app;
 `METRICS_ADDR` (default `0.0.0.0:9090`) serves only `GET /metrics`
-(Prometheus) and must not be exposed publicly. Probes on the app port, any
+(Prometheus; includes `oauth_build_info{version,commit}`, see
+[Build version and commit](#build-version-and-commit)) and must not be
+exposed publicly. Probes on the app port, any
 host: liveness `GET /healthz` (process alive, no DB dependency) and readiness
 `GET /readyz` (503 until migrations are done, and whenever the DB is
 unreachable). No startup probe is needed: the listener opens before
@@ -189,6 +191,23 @@ Image tags:
 
 No `:latest`. Images carry the OCI labels from `docker/metadata-action`
 (`org.opencontainers.image.source`, `revision`, `version`, `created`, …).
+
+### Build version and commit
+
+`docker` and `publish` pass `--build-arg GIT_SHA=${{ github.sha }}`; the
+Dockerfile turns it into the `GIT_SHA` env of the `cargo build`, and
+`crates/server/build.rs` bakes its first 12 hex digits into the binary (the
+build context has no `.git`, so an image built without the arg reports
+`unknown`; `make docker` passes the checkout's HEAD). Outside Docker,
+`build.rs` falls back to `git rev-parse --short=12 HEAD`, then `unknown`.
+The workspace version and that commit show up in:
+
+- `oauth --version` → `oauth X.Y.Z (<commit>)`;
+- the `serve` startup log (`version`, `commit` fields);
+- the metric `oauth_build_info{version="X.Y.Z",commit="<commit>"} 1` on
+  `METRICS_ADDR` — one series, both labels build constants;
+- the SPA footer (`vX.Y.Z · <commit>`), from the `oauth-build` `<meta>` the
+  server writes into `index.html`, so it always names the serving binary.
 
 ## Environments
 

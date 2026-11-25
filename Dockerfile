@@ -18,6 +18,11 @@ ENV CARGO_BUILD_JOBS=4
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+# The commit `build.rs` bakes in (`oauth --version`, `oauth_build_info`, the
+# SPA footer). The context has no `.git`, so without it the build says
+# `unknown`; CI passes `github.sha`, `make docker` the checkout's HEAD.
+ARG GIT_SHA=""
+ENV GIT_SHA=${GIT_SHA}
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
     cargo build --release --locked --bin oauth \

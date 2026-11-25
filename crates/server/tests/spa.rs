@@ -17,6 +17,7 @@ use axum::{
 use common::{PUBLIC_URL, browser::send};
 use oauth_server::{
     app::{self, AppState},
+    build_info,
     directory::{self, NewTenant},
     spa,
 };
@@ -65,6 +66,26 @@ async fn static_assets_are_served_and_unknown_paths_404() {
         common::get(&app, "/assets/missing.js").await.0,
         StatusCode::NOT_FOUND
     );
+}
+
+/// Every HTML entry point names the build serving it, tenant or not.
+#[tokio::test]
+async fn index_carries_the_build_meta() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let page = "<!doctype html><html><head><title>t</title></head><body></body></html>";
+    std::fs::write(dir.path().join("index.html"), page).expect("write index");
+    let app: Router = spa::router(dir.path());
+    let meta = format!(
+        r#"<meta name="oauth-build" content="{}+{}" />"#,
+        build_info::VERSION,
+        build_info::COMMIT
+    );
+    for uri in ["/", "/index.html", "/login", "/admin/users"] {
+        let (status, body) = common::get(&app, uri).await;
+        assert_eq!(status, StatusCode::OK, "{uri}");
+        assert!(body.contains(&meta), "{uri}: {body}");
+        assert!(body.contains(&format!("{meta}</head>")), "{uri}: {body}");
+    }
 }
 
 #[tokio::test]

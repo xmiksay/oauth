@@ -15,7 +15,7 @@ use axum::{
 };
 use oauth_server::{
     app::{self, AppState},
-    metrics,
+    build_info, metrics,
 };
 use sea_orm::DatabaseConnection;
 use tower::ServiceExt;
@@ -84,4 +84,11 @@ async fn requests_are_counted_with_bounded_labels() {
     assert!(body.contains(r#"method="other""#), "{body}");
     assert!(!body.contains("XYZZY1"), "{body}");
     assert!(body.contains("http_request_duration_seconds"), "{body}");
+    // Set once by `install`: one series of build constants.
+    let build = format!(
+        r#"oauth_build_info{{version="{}",commit="{}"}} 1"#,
+        build_info::VERSION,
+        build_info::COMMIT
+    );
+    assert!(body.contains(&build), "{body}");
 }

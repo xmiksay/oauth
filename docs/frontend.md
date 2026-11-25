@@ -28,6 +28,11 @@ runs Vite on `*.localhost:5173`, proxying backend paths with the `Host` kept
   user (`GET me`), shows tiles for My Account and — only with a directory role
   (`auth.isAdmin`) — the Admin center, plus quick links to Security info, Devices & sessions
   and App permissions. `meta.areaInTitle: false` keeps "My Account" out of its page title.
+- **Build footer** (`components/BuildFooter`, in `App.vue` under every area, signed in or not):
+  `v<version> · <commit>` from `<meta name="oauth-build" content="<version>+<commit>">`, which
+  the server writes into `index.html` (`lib/build` `buildFromMeta`, split at the last `+`), so the
+  SPA always names the binary serving it. Without the meta (Vite dev server) it renders nothing.
+  `App.vue` is a `min-h-screen` flex column, so page roots use `flex-1`, not `min-h-screen`.
 - **App launcher** (`components/AppLauncher`, in the shared `AppHeader` of the portal, My
   Account and the admin center, on every screen size): a grid button (`aria-expanded`,
   `aria-controls`) toggling a small nav of Dashboard, My Account and Admin center (only with

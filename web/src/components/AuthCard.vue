@@ -7,7 +7,7 @@ const titleId = useId()
 </script>
 
 <template>
-  <main class="flex min-h-screen items-start justify-center px-4 py-10 sm:items-center">
+  <main class="flex flex-1 items-start justify-center px-4 py-10 sm:items-center">
     <section
       :aria-labelledby="titleId"
       class="card w-full max-w-md sm:p-8"

@@ -4,7 +4,8 @@
 
 Single binary `oauth` (crate `crates/server`):
 
-- `oauth serve` — config → tracing → DB pool → bind and start the HTTP
+- `oauth --version` — `oauth <version> (<commit>)` (`build_info`).
+- `oauth serve` — config → tracing (startup log names version + commit) → DB pool → bind and start the HTTP
   listener (`LISTEN_ADDR`) + metrics listener (`METRICS_ADDR`) → run migrations and
   `builtin_apps::reconcile_all` → flip the `migrated` flag → start jobs. Until then `/healthz` is 200 and
   `/readyz` 503, so a replica waiting on the migration lock stays alive but out
@@ -53,8 +54,9 @@ Implemented:
 | `app` | `AppState { db, config, migrated, tasks, detached, telegram, upstream }` (`telegram`: the Bot API client; `upstream`: the federation client + discovery / JWKS caches; `tasks`: `TaskTracker` of work handlers leave running after answering, awaited at shutdown; `detached`: `Semaphore` capping it at 64 in flight) and router assembly (trace + metrics layers) |
 | `db` | Pool connect; `migrate()` in one transaction holding `pg_advisory_xact_lock`; `migrate_and_reconcile()` (startup) adds `builtin_apps::reconcile_all` to it |
 | `health` | `/healthz`, `/readyz` |
-| `metrics` | Global Prometheus recorder, `/metrics` router, `http_requests_total` + `http_request_duration_seconds`. Labels are bounded: `path` = route template (fallback → `unmatched`), `method` = standard verb or `other` |
-| `spa` | `ServeDir` + history fallback for the three SPA areas |
+| `metrics` | Global Prometheus recorder, `/metrics` router, `http_requests_total` + `http_request_duration_seconds`, `oauth_build_info`. Labels are bounded: `path` = route template (fallback → `unmatched`), `method` = standard verb or `other` |
+| `build_info` | `VERSION` (workspace version), `COMMIT` (12 hex digits or `unknown`, baked in by `build.rs` from `GIT_SHA`, else `git rev-parse`), `LONG_VERSION` for `oauth --version`; see [deploy.md](deploy.md#build-version-and-commit) |
+| `spa` | `ServeDir` + history fallback for `/` and the SPA areas; writes the `oauth-build` (`<version>+<commit>`) and `oauth-tenant` `<meta>`s, attribute-escaped, into `index.html` |
 | `serve` | `run` (process-global setup: recorder, binds, signals) → `run_with` (serve, then migrate, then ready; tested in `tests/serve.rs`), tracing init, graceful shutdown |
 | `keys` | Per-tenant RS256 (2048-bit) / ES256 key generation, `wrap` (AES-256-GCM seal/open, AAD = tenant id ‖ kid), public JWK with RFC 7638 thumbprint as `kid`, `active_signing_key`, `jwks` (next + active + retired-until-`expires_at`). Rotation job lands in step 3. See [Cryptography](#cryptography) |
 | `directory` | `create_tenant` (DNS-label slug rules in `slug`, keys + built-in apps in one transaction; `builtin_apps::reconcile_all`), `ensure_apex_tenant` (startup: `APEX_TENANT` exists, is enabled and isn't the system tenant), `system_tenant` (`reconcile_system_slug`, at startup and bootstrap: refuses a stored system-tenant slug other than `SYSTEM_TENANT_SLUG`, or renames it with `SYSTEM_TENANT_RENAME=1` and retires the old slug), `retired_slugs` (`ensure_slug_not_retired`, `servable_tenant`), `create_user`, `find_user_by_email`, `set_password` (argon2id in `password`), `assign_directory_role`; typed `DirectoryError` |
@@ -317,7 +319,8 @@ Cookies, browser binding, CSRF and client IPs: [authn.md](authn.md#sessions--csr
 disabled, rate_limited, upstream_failed), `oauth_tokens_issued_total{grant,format}`,
 `oauth_token_errors_total{error}`,
 `oauth_client_auth_rate_limited_total{endpoint}` (token, revoke, introspect,
-devicecode) — label values are compile-time constants.
+devicecode), `oauth_build_info{version,commit}` (gauge, always 1, set by
+`metrics::install`) — label values are compile-time constants.
 
 ### Built-ins per tenant
 
