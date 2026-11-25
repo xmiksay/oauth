@@ -50,17 +50,22 @@ fn group_refs(spec: &Spec) -> impl Iterator<Item = &str> {
         .filter_map(|a| a.group.as_deref())
 }
 
+/// User and group names `principals` returns.
+pub struct Principals<'a> {
+    pub users: BTreeSet<&'a str>,
+    pub groups: BTreeSet<&'a str>,
+}
+
 /// The users and groups apply may insert rows pointing at (memberships,
 /// directory roles, role assignments), declared or not, plus every group it
-/// declares (`apps` stays empty). An existing one that apply leaves
-/// unchanged is never written before those inserts, so their FK check would
-/// be its first lock on it (`provision::run`).
-pub fn principals(spec: &Spec) -> Refs<'_> {
+/// declares. An existing one that apply leaves unchanged is never written
+/// before those inserts, so their FK check would be its first lock on it
+/// (`provision::run`).
+pub fn principals(spec: &Spec) -> Principals<'_> {
     let declared = spec.groups.iter().map(|g| g.display_name.as_str());
-    Refs {
+    Principals {
         users: user_refs(spec).collect(),
         groups: group_refs(spec).chain(declared).collect(),
-        apps: BTreeSet::new(),
     }
 }
 
@@ -181,7 +186,6 @@ admin_consents: [{ client: web, resource: api }]
             all.groups.into_iter().collect::<Vec<_>>(),
             ["Eng", "Ops", "eng"]
         );
-        assert!(all.apps.is_empty());
     }
 
     #[test]
