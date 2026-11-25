@@ -206,10 +206,12 @@ without `GIT_SHA`) therefore take the commit from `git`. `build.rs` reruns
 when HEAD moves: it watches `HEAD`, `packed-refs`, the reflog `logs/HEAD`
 and the branch's loose ref (all via `git rev-parse --git-path`, so linked
 worktrees work). The reflog is what catches a commit or fast-forward on a
-branch whose ref `git gc` / `pack-refs` had packed; in a repository without
-a reflog (`core.logAllRefUpdates=false`) the script watches the not yet
-existing loose ref instead, which makes cargo rerun it on every build while
-the branch stays packed. `crates/server/build/git.rs` holds that logic (the
+branch whose ref `git gc` / `pack-refs` had packed; without a live reflog
+(no `logs/HEAD`, or `core.logAllRefUpdates=false`) the script watches the not
+yet existing loose ref instead, which makes cargo rerun it on every build
+while the branch stays packed. The same holds under the `reftable` ref
+backend, where none of those files but `HEAD` exist: the script reruns on
+every build (cheap, and the commit is always right). `crates/server/build/git.rs` holds that logic (the
 library's unit tests include it).
 The workspace version and that commit show up in:
 

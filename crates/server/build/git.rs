@@ -42,10 +42,11 @@ pub fn commit(dir: &Path) -> String {
 /// - the loose branch ref, when it exists.
 ///
 /// Missing files are left out (cargo reruns the script on every build for a
-/// missing one) with one exception: a packed branch in a repository without
-/// a reflog (`core.logAllRefUpdates=false`). Nothing existing would change on
-/// the next commit, so the path the loose ref will appear at is watched
-/// anyway: correct commit over a skipped rerun.
+/// missing one) with one exception: a packed branch without a live reflog —
+/// no `logs/HEAD`, or `core.logAllRefUpdates=false` (a `logs/HEAD` left from
+/// before stops changing). Nothing watched would change on the next commit,
+/// so the path the loose ref will appear at is watched anyway: correct
+/// commit over a skipped rerun.
 pub fn watched(dir: &Path) -> Vec<PathBuf> {
     let path = |name: &str| git(dir, &["rev-parse", "--git-path", name]).map(|p| dir.join(p));
     let mut out: Vec<PathBuf> = ["HEAD", "packed-refs", "logs/HEAD"]
@@ -53,19 +54,53 @@ pub fn watched(dir: &Path) -> Vec<PathBuf> {
         .filter_map(path)
         .filter(|p| p.is_file())
         .collect();
-    let has_reflog = out.iter().any(|p| p.ends_with("logs/HEAD"));
+    let has_reflog = out.iter().any(|p| p.ends_with("logs/HEAD")) && reflog_on(dir);
     let branch = git(dir, &["symbolic-ref", "-q", "HEAD"]).and_then(|b| path(&b));
     out.extend(branch.filter(|b| b.is_file() || !has_reflog));
     out
 }
 
+/// Whether HEAD moves are logged. Unset means on: `watched` only asks when
+/// `logs/HEAD` exists, i.e. in a non-bare repository. `always` is on too.
+fn reflog_on(dir: &Path) -> bool {
+    let value = git(dir, &["config", "--get", "core.logAllRefUpdates"]);
+    !matches!(
+        value.map(|v| v.to_ascii_lowercase()).as_deref(),
+        Some("false" | "no" | "off" | "0")
+    )
+}
+
+/// `git`, minus the caller's environment in tests: a `make test` run from a
+/// hook or `rebase --exec` has `GIT_DIR` & co. set, which would point the
+/// tests' commits and `pack-refs` at the real repository, and global config
+/// (`core.logAllRefUpdates`, init templates) would change what they see.
+fn git_command() -> Command {
+    #[cfg_attr(not(test), allow(unused_mut))]
+    let mut cmd = Command::new("git");
+    #[cfg(test)]
+    {
+        for var in [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+            "GIT_COMMON_DIR",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_CONFIG",
+            "GIT_CONFIG_PARAMETERS",
+            "GIT_CONFIG_COUNT",
+        ] {
+            cmd.env_remove(var);
+        }
+        cmd.env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1");
+    }
+    cmd
+}
+
 /// Trimmed stdout of a successful `git` call in `dir`.
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .ok()?;
+    let out = git_command().args(args).current_dir(dir).output().ok()?;
     let text = String::from_utf8(out.stdout).ok()?;
     let text = text.trim();
     (out.status.success() && !text.is_empty()).then(|| text.to_owned())
@@ -76,7 +111,7 @@ mod tests {
     use super::*;
 
     fn run(dir: &Path, args: &[&str]) {
-        let ok = Command::new("git")
+        let ok = git_command()
             .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
             .args([
                 "-c",
@@ -148,6 +183,21 @@ mod tests {
         run(dir, &["config", "core.logAllRefUpdates", "false"]);
         std::fs::remove_dir_all(dir.join(".git/logs")).unwrap();
         assert_eq!(names(dir), ["HEAD", "packed-refs", "refs/heads/main"]);
+    }
+
+    #[test]
+    fn stale_reflog_with_logging_off_still_watches_the_ref_path() {
+        let tmp = packed_repo();
+        let dir = tmp.path();
+        // `logs/HEAD` stays, but no commit will append to it any more.
+        run(dir, &["config", "core.logAllRefUpdates", "false"]);
+        assert_eq!(
+            names(dir),
+            ["HEAD", "packed-refs", "logs/HEAD", "refs/heads/main"]
+        );
+        // `always` logs too.
+        run(dir, &["config", "core.logAllRefUpdates", "always"]);
+        assert_eq!(names(dir), ["HEAD", "packed-refs", "logs/HEAD"]);
     }
 
     fn head(dir: &Path) -> String {
