@@ -303,6 +303,10 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   (atomic, tenant-scoped); anything wrong with one is the same `invalid_token`.
   Public flows must not reveal whether an address exists (same status, body,
   rate-limit buckets keyed by address, not account).
+- Rate limits (`authn::rate_limit`, [docs/authn.md](../docs/authn.md)): every
+  window reads its time from `AppState::rate_clock` (`rate_limit::Clock`: wall
+  clock in production, pinned in integration tests); always pass
+  `state.rate_clock.now()`, never `Utc::now()`, to `rate_limit::hit`.
 - Telegram (`telegram`, [docs/telegram.md](../docs/telegram.md)): notices go
   through the outbox like email (`channel = telegram`, recipient = user id,
   chat looked up at send time; delivery = a `jobs::outbox::Courier`); only
