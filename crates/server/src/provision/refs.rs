@@ -32,6 +32,45 @@ pub struct Refs<'a> {
     pub apps: BTreeSet<&'a str>,
 }
 
+fn user_refs(spec: &Spec) -> impl Iterator<Item = &str> {
+    spec.groups
+        .iter()
+        .flat_map(|g| g.members.iter())
+        .chain(spec.directory_roles.iter().map(|d| &d.user))
+        .chain(spec.role_assignments.iter().filter_map(|a| a.user.as_ref()))
+        .map(String::as_str)
+}
+
+fn group_refs(spec: &Spec) -> impl Iterator<Item = &str> {
+    spec.role_assignments
+        .iter()
+        .filter_map(|a| a.group.as_deref())
+}
+
+/// The users and groups apply may insert rows pointing at (memberships,
+/// directory roles, role assignments), declared or not, plus every group it
+/// declares (`apps` stays empty). An existing one that apply leaves
+/// unchanged is never written before those inserts, so their FK check would
+/// be its first lock on it (`provision::run`).
+pub fn principals(spec: &Spec) -> Refs<'_> {
+    let declared = spec.groups.iter().map(|g| g.display_name.as_str());
+    Refs {
+        users: user_refs(spec).collect(),
+        groups: group_refs(spec).chain(declared).collect(),
+        apps: BTreeSet::new(),
+    }
+}
+
+/// `names` as the lookups match them (trimmed, lowercase), minus those that
+/// can't be stored (Postgres rejects NUL in a parameter).
+pub fn folded(names: &BTreeSet<&str>) -> BTreeSet<String> {
+    names
+        .iter()
+        .filter(|n| !n.chars().any(char::is_control))
+        .map(|n| fold(n))
+        .collect()
+}
+
 /// References to users, groups and apps the file doesn't declare itself.
 pub fn undeclared(spec: &Spec) -> Refs<'_> {
     let users: HashSet<String> = spec.users.iter().map(|u| fold(&u.email)).collect();
@@ -40,23 +79,6 @@ pub fn undeclared(spec: &Spec) -> Refs<'_> {
         .applications
         .iter()
         .map(|a| a.client_id.as_str())
-        .collect();
-    let mut out = Refs::default();
-    let emails = spec
-        .groups
-        .iter()
-        .flat_map(|g| g.members.iter())
-        .chain(spec.directory_roles.iter().map(|d| &d.user))
-        .chain(spec.role_assignments.iter().filter_map(|a| a.user.as_ref()));
-    out.users = emails
-        .map(String::as_str)
-        .filter(|e| !users.contains(&fold(e)))
-        .collect();
-    out.groups = spec
-        .role_assignments
-        .iter()
-        .filter_map(|a| a.group.as_deref())
-        .filter(|g| !groups.contains(&fold(g)))
         .collect();
     let client_ids = spec
         .applications
@@ -72,8 +94,15 @@ pub fn undeclared(spec: &Spec) -> Refs<'_> {
                 .iter()
                 .flat_map(|c| [c.client.as_str(), c.resource.as_str()]),
         );
-    out.apps = client_ids.filter(|c| !apps.contains(c)).collect();
-    out
+    Refs {
+        users: user_refs(spec)
+            .filter(|e| !users.contains(&fold(e)))
+            .collect(),
+        groups: group_refs(spec)
+            .filter(|g| !groups.contains(&fold(g)))
+            .collect(),
+        apps: client_ids.filter(|c| !apps.contains(c)).collect(),
+    }
 }
 
 pub async fn check(conn: &impl ConnectionTrait, cx: &Ctx, spec: &Spec) -> anyhow::Result<()> {
@@ -134,5 +163,22 @@ admin_consents: [{ client: web, resource: api }]
         );
         assert_eq!(refs.groups.into_iter().collect::<Vec<_>>(), ["Ops"]);
         assert_eq!(refs.apps.into_iter().collect::<Vec<_>>(), ["api", "sync"]);
+        let all = principals(&spec);
+        assert_eq!(
+            all.users.into_iter().collect::<Vec<_>>(),
+            ["alice@example.com", "bob@example.com", "carol@example.com"]
+        );
+        assert_eq!(
+            all.groups.into_iter().collect::<Vec<_>>(),
+            ["Eng", "Ops", "eng"]
+        );
+        assert!(all.apps.is_empty());
+    }
+
+    #[test]
+    fn names_are_folded_like_lookups() {
+        let names = BTreeSet::from([" Ann@Example.com", "ann@example.com", "bad\0@x", "b@x"]);
+        let folded: Vec<String> = folded(&names).into_iter().collect();
+        assert_eq!(folded, ["ann@example.com", "b@x"]);
     }
 }

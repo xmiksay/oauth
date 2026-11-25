@@ -7,11 +7,11 @@
     clippy::indexing_slicing
 )]
 
-//! `oauth apply` racing a management API delete of an app or user the file
-//! only references (issue #113). Apply locks the consent grants it may
+//! `oauth apply` racing a management API delete of an app, user or group
+//! the file refers to (issue #113). Apply locks the consent grants it may
 //! write (`provision::grant_locks`) before it inserts rows pointing at those
 //! referenced parents; the delete locks the parent, then cascades into the
-//! grants. Unless apply locks the referenced parents `FOR KEY SHARE` before
+//! grants (a group's delete: into a membership apply adopted). Unless apply locks the referenced parents `FOR KEY SHARE` before
 //! the grants, its FK check waits for the delete while the delete's cascade
 //! waits for apply (40P01).
 //!
@@ -27,7 +27,7 @@ use common::{
     flow::Fixture,
     mgmt::{app_admin_token, call, mint_user_token, user_with_roles},
 };
-use entity::{applications, enums::DirectoryRole, users};
+use entity::{applications, enums::DirectoryRole, groups, users};
 use oauth_server::{
     consent,
     provision::{self, Options, Report},
@@ -123,37 +123,7 @@ admin_consents:
     assert!(orders.is_none());
 }
 
-#[tokio::test]
-async fn apply_racing_the_deletion_of_a_referenced_user_does_not_deadlock() {
-    let f = Fixture::new().await;
-    apply(
-        &f,
-        &ledger_described(
-            "  - client_id: orders
-    display_name: Orders
-    scopes: [{ value: Orders.Read }, { value: Orders.Write }]
-",
-        )
-        .replace(", description: Reads the ledger", ""),
-    )
-    .await
-    .unwrap();
-    // Ann (not declared) has consented to `orders`; the file drops its
-    // managed `Orders.Write`, so apply locks every grant of `orders`, hers
-    // included, then assigns her a role (a FK reference to her).
-    let read = vec!["Orders.Read".to_owned()];
-    let ann = Some(f.user.id);
-    consent::store_grant(&f.db, f.tenant.id, f.web.id, f.orders.id, ann, &read)
-        .await
-        .unwrap();
-    let yaml = ledger_described(
-        "  - client_id: orders
-    display_name: Orders
-    scopes: [{ value: Orders.Read }]
-role_assignments:
-  - { resource: orders, role: Orders.Approver, user: ann@example.com }
-",
-    );
+async fn user_admin_token(f: &Fixture) -> String {
     let admin = user_with_roles(
         &f.db,
         f.tenant.id,
@@ -161,7 +131,37 @@ role_assignments:
         &[DirectoryRole::UserAdmin],
     )
     .await;
-    let token = mint_user_token(&f.db, &f.config, &f.tenant, &admin).await;
+    mint_user_token(&f.db, &f.config, &f.tenant, &admin).await
+}
+
+/// Ann has consented to `orders`; the file (both runs end with `users`)
+/// drops its managed `Orders.Write`, so apply locks every grant of
+/// `orders`, hers included, then assigns her a role (a FK reference to
+/// her) while her deletion races it.
+async fn race_user_delete(users: &str) {
+    let f = Fixture::new().await;
+    let first = ledger_described(&format!(
+        "  - client_id: orders
+    display_name: Orders
+    scopes: [{{ value: Orders.Read }}, {{ value: Orders.Write }}]
+{users}"
+    ))
+    .replace(", description: Reads the ledger", "");
+    apply(&f, &first).await.unwrap();
+    let read = vec!["Orders.Read".to_owned()];
+    let ann = Some(f.user.id);
+    consent::store_grant(&f.db, f.tenant.id, f.web.id, f.orders.id, ann, &read)
+        .await
+        .unwrap();
+    let yaml = ledger_described(&format!(
+        "  - client_id: orders
+    display_name: Orders
+    scopes: [{{ value: Orders.Read }}]
+role_assignments:
+  - {{ resource: orders, role: Orders.Approver, user: ann@example.com }}
+{users}"
+    ));
+    let token = user_admin_token(&f).await;
     let path = format!("/api/v1/users/{}", f.user.id);
     let (report, status, body) = race(&f, &yaml, &token, &path).await;
     assert!(
@@ -174,4 +174,56 @@ role_assignments:
         .await
         .unwrap();
     assert!(ann.is_none());
+}
+
+#[tokio::test]
+async fn apply_racing_the_deletion_of_a_referenced_user_does_not_deadlock() {
+    race_user_delete("").await;
+}
+
+/// Ann is declared and, after the first run, managed and unchanged: apply
+/// never writes her row before the role assignment's FK check.
+#[tokio::test]
+async fn apply_racing_the_deletion_of_a_declared_unchanged_user_does_not_deadlock() {
+    race_user_delete("users: [{ email: ann@example.com, display_name: Test User }]\n").await;
+}
+
+/// The fixture's group `Approvers` holds Ann as a manual member. A first
+/// run adopts the group, so the racing one leaves its row unchanged; it
+/// adopts the membership (a write to a row the group's delete cascades
+/// into), then, after the grant locks, assigns the group a role (a FK
+/// reference to it).
+#[tokio::test]
+async fn apply_racing_the_deletion_of_a_declared_unchanged_group_does_not_deadlock() {
+    let f = Fixture::new().await;
+    let adopt = "tenant: contoso\ngroups: [{ display_name: Approvers }]\n";
+    apply(&f, adopt).await.unwrap();
+    let yaml = "tenant: contoso
+applications:
+  - client_id: ledger
+    display_name: Ledger
+    scopes: [{ value: Ledger.Read, description: Reads the ledger }]
+    roles:
+      - { value: Ledger.Auditor, display_name: Auditor, allowed_member_types: [user] }
+groups:
+  - { display_name: Approvers, members: [ann@example.com] }
+role_assignments:
+  - { resource: ledger, role: Ledger.Auditor, group: Approvers }
+";
+    let token = user_admin_token(&f).await;
+    let path = format!("/api/v1/groups/{}", f.group);
+    let (report, status, body) = race(&f, yaml, &token, &path).await;
+    assert!(
+        report
+            .changes
+            .iter()
+            .any(|c| c.contains("Ledger.Auditor -> group Approvers")),
+        "{report:#?}"
+    );
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let group = groups::Entity::find_by_id(f.group)
+        .one(&f.db)
+        .await
+        .unwrap();
+    assert!(group.is_none());
 }
