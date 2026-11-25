@@ -12,6 +12,7 @@
 //! rules; audit events carry actor type `apply`.
 
 mod access;
+mod app_locks;
 mod apps;
 mod consents;
 mod ctx;
@@ -101,27 +102,36 @@ pub async fn run(
         revocations: Vec::new(),
     };
     refs::check(&txn, &cx, spec).await?;
+    let referenced = refs::undeclared(spec);
     // Creates and updates in dependency order, then deletions in reverse —
     // except for locks, which follow the global order IdP → user →
     // application → consent / session → tokens (`backchannel::lock_apps`):
-    // every user lock (directory roles, the users deleted at the end, then
-    // disabling), then every existing app it writes (`apps::lock`, the apps
-    // deleted at the end included), before its first app, consent, session or
-    // token write (disabling revokes sessions and tokens only after locking
-    // every user it disables), then every consent grant it may write, in
-    // one statement in id order (`grant_locks::lock`: a multi-resource
-    // refresh locks its grants in id order), and every consent write before the token
-    // revocations of scope and admin consent removals (`ctx::Revocation`).
-    // A token request takes them in that order too; the other way round,
-    // apply would hold one while waiting for a row the request holds.
+    // every user lock (the existing users the file only references, `FOR
+    // KEY SHARE`; directory roles; the users deleted at the end; then
+    // disabling), then, in one id-ordered pass, every existing app it writes
+    // (the apps deleted at the end included) or only references
+    // (`FOR KEY SHARE`: `app_locks::lock`), before its first app, consent,
+    // session or token write (disabling revokes sessions and tokens only
+    // after locking every user it disables), then every consent grant it
+    // may write, in one statement in id order (`grant_locks::lock`: a
+    // multi-resource refresh locks its grants in id order), and every
+    // consent write before the token revocations of scope and admin consent
+    // removals (`ctx::Revocation`). A token request takes them in that order
+    // too; the other way round, apply would hold one while waiting for a row
+    // the request holds. The referenced users and apps are locked up front
+    // because the later inserts pointing at them (required permissions,
+    // consents, role assignments) take their FK `KEY SHARE` only then, after
+    // the grant locks, while a management API delete locks the user or app
+    // first and then cascades into those grants.
+    users::lock_referenced(&txn, &cx, &referenced.users).await?;
     let disabled = users::apply(&txn, &mut cx, &spec.users, env).await?;
     groups::apply(&txn, &mut cx, &spec.groups).await?;
     idps::apply(&txn, &mut cx, config, &spec.identity_providers, env).await?;
     access::directory_roles(&txn, &mut cx, &spec.directory_roles).await?;
     let stale_users = users::lock_stale(&txn, &cx).await?;
     users::finish_disabling(&txn, &cx, &config.master_key, disabled).await?;
-    let stale_apps = apps::lock(&txn, &mut cx, &spec.applications).await?;
     let (apps, consents) = (&spec.applications, &spec.admin_consents);
+    let stale_apps = app_locks::lock(&txn, &mut cx, apps, &referenced.apps).await?;
     grant_locks::lock(&txn, &mut cx, apps, consents, &stale_apps).await?;
     apps::apply(&txn, &mut cx, config, &spec.applications).await?;
     consents::required(&txn, &mut cx, &spec.applications).await?;

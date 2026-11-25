@@ -2,18 +2,8 @@
 //! validated by the management API's own rules (`api::app_body`, …).
 //! Built-in apps can't be declared; secrets are never in the file.
 
-use std::collections::HashSet;
-
-use anyhow::{Context, bail};
-use entity::{app_roles, app_scopes, applications, enums::ClientType};
-use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
-    QueryOrder, QuerySelect, sea_query::LockType,
-};
-use serde_json::json;
-use uuid::Uuid;
-
 use super::{
+    app_locks::relock,
     ctx::{Ctx, Revocation, diff, update_line},
     grant_locks,
     spec::{AppSpec, RoleSpec, ScopeSpec},
@@ -21,7 +11,6 @@ use super::{
 use crate::{
     api::{
         app_body::{apply as apply_body, parse},
-        app_rules::lock_app,
         applications::{map_write_error, new_row},
         apps_roles::{NewRole, insert_role, member_types, update_role_fields},
         apps_scopes::{delete_scope, insert_scope, update_scope_fields},
@@ -31,75 +20,13 @@ use crate::{
     config::Config,
     directory::display_name,
 };
-
-/// Locks, in id order and before apply writes to any app, consent or token,
-/// every existing app the run will write: the undeclared managed apps it
-/// deletes (returned, for [`prune`]) and declared apps whose
-/// `identifier_uri` changes take `FOR UPDATE` (a delete, a key column
-/// update); the other declared apps `FOR NO KEY UPDATE` (`lock_app`). A
-/// token request locks its user, then its client and resource apps
-/// `FOR KEY SHARE` in id order, then consent and token rows
-/// (`backchannel::lock_apps`); locking them one at a time, between writes,
-/// could deadlock with it. Records the ids it locked in `cx.locked_apps`.
-pub async fn lock(
-    conn: &impl ConnectionTrait,
-    cx: &mut Ctx,
-    specs: &[AppSpec],
-) -> anyhow::Result<Vec<applications::Model>> {
-    let mut apps = applications::Entity::find()
-        .filter(applications::Column::TenantId.eq(cx.tenant_id))
-        .filter(applications::Column::Builtin.eq(false))
-        .order_by_asc(applications::Column::Id)
-        .all(conn)
-        .await?;
-    apps.retain(|a| a.managed || specs.iter().any(|s| s.client_id == a.client_id));
-    let mut stale = Vec::new();
-    for app in apps {
-        let spec = specs.iter().find(|s| s.client_id == app.client_id);
-        let lock = lock_type(&app.identifier_uri, spec.map(|s| &s.identifier_uri));
-        let found = applications::Entity::find_by_id(app.id)
-            .filter(applications::Column::TenantId.eq(cx.tenant_id))
-            .lock(lock)
-            .one(conn)
-            .await?;
-        let Some(found) = found else { continue };
-        cx.locked_apps.insert(found.id);
-        if spec.is_none() {
-            stale.push(found);
-        }
-    }
-    Ok(stale)
-}
-
-/// `declared`: the file's `identifier_uri` for the app (`None`: the app
-/// isn't declared; `Some(None)`: declared without one, so it's kept).
-fn lock_type(stored: &Option<String>, declared: Option<&Option<Option<String>>>) -> LockType {
-    match declared {
-        None => LockType::Update,
-        Some(Some(uri)) if uri != stored => LockType::Update,
-        Some(_) => LockType::NoKeyUpdate,
-    }
-}
-
-/// Locks a declared app again (to read its current row). One the management
-/// API created after [`lock`] ran would be locked only now, between apply's
-/// app writes: out of id order, so it could deadlock with a token request
-/// holding it while it waits for an app apply holds. Apply stops instead.
-async fn relock(
-    conn: &impl ConnectionTrait,
-    cx: &Ctx,
-    id: Uuid,
-) -> anyhow::Result<applications::Model> {
-    ensure_locked(&cx.locked_apps, id)?;
-    Ok(lock_app(conn, cx.tenant_id, id).await?)
-}
-
-fn ensure_locked(locked: &HashSet<Uuid>, id: Uuid) -> anyhow::Result<()> {
-    if !locked.contains(&id) {
-        bail!("the application was created while apply ran; run apply again");
-    }
-    Ok(())
-}
+use anyhow::{Context, bail};
+use entity::{app_roles, app_scopes, applications, enums::ClientType};
+use sea_orm::{
+    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
+    QueryOrder,
+};
+use serde_json::json;
 
 pub async fn apply(
     conn: &impl ConnectionTrait,
@@ -353,7 +280,7 @@ async fn roles(
     Ok(())
 }
 
-/// Deletes the undeclared managed apps [`lock`] locked (everything hanging
+/// Deletes the undeclared managed apps [`super::app_locks::lock`] locked (everything hanging
 /// off them cascades).
 pub async fn prune(
     conn: &impl ConnectionTrait,
@@ -371,30 +298,4 @@ pub async fn prune(
             .await?;
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn deleted_apps_and_key_changes_take_the_strong_lock() {
-        let uri = || Some("api://a".to_owned());
-        assert_eq!(lock_type(&uri(), None), LockType::Update);
-        assert_eq!(lock_type(&uri(), Some(&Some(None))), LockType::Update);
-        let other = Some(Some("api://b".to_owned()));
-        assert_eq!(lock_type(&uri(), Some(&other)), LockType::Update);
-        assert_eq!(lock_type(&uri(), Some(&Some(uri()))), LockType::NoKeyUpdate);
-        assert_eq!(lock_type(&uri(), Some(&None)), LockType::NoKeyUpdate);
-        assert_eq!(lock_type(&None, Some(&Some(None))), LockType::NoKeyUpdate);
-    }
-
-    #[test]
-    fn only_apps_locked_up_front_may_be_locked_again() {
-        let locked = Uuid::now_v7();
-        let set = HashSet::from([locked]);
-        assert!(ensure_locked(&set, locked).is_ok());
-        let err = ensure_locked(&set, Uuid::now_v7()).unwrap_err();
-        assert!(err.to_string().contains("run apply again"), "{err}");
-    }
 }

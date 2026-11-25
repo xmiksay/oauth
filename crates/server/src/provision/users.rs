@@ -1,11 +1,15 @@
 //! Users: created with an optional password from the environment, updated
 //! in place (display name, disabled), and deleted only when managed.
 
+use std::collections::BTreeSet;
+
 use anyhow::Context;
 use entity::users;
 use sea_orm::{
-    ActiveModelTrait, ActiveValue::Set, ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
-    QueryOrder,
+    ActiveModelTrait,
+    ActiveValue::Set,
+    ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect,
+    sea_query::{Expr, ExprTrait, Func, LockType},
 };
 use serde_json::json;
 use zeroize::Zeroizing;
@@ -170,6 +174,43 @@ async fn upsert(
     Ok(disabling.then_some(updated))
 }
 
+/// Locks `FOR KEY SHARE`, in id order, the existing users the file only
+/// references (`refs::undeclared`: group members, directory roles, role
+/// assignments). Apply inserts rows pointing at them after it locked
+/// consent grants (`grant_locks::lock`); a management API delete locks the
+/// user, then cascades into those grants, so a FK check taken only at the
+/// insert could wait for the delete while the delete waits for apply. Runs
+/// before any app lock (global order user → application → consent).
+pub async fn lock_referenced(
+    conn: &impl ConnectionTrait,
+    cx: &Ctx,
+    emails: &BTreeSet<&str>,
+) -> anyhow::Result<()> {
+    let folded = folded(emails);
+    if folded.is_empty() {
+        return Ok(());
+    }
+    users::Entity::find()
+        .filter(users::Column::TenantId.eq(cx.tenant_id))
+        .filter(Expr::expr(Func::lower(Expr::col(users::Column::Email))).is_in(folded))
+        .order_by_asc(users::Column::Id)
+        .lock(LockType::KeyShare)
+        .all(conn)
+        .await
+        .context("locking referenced users")?;
+    Ok(())
+}
+
+/// The addresses as `find_user_by_email` matches them (trimmed, lowercase),
+/// minus those that can't be stored (Postgres rejects NUL in a parameter).
+fn folded(emails: &BTreeSet<&str>) -> BTreeSet<String> {
+    emails
+        .iter()
+        .filter(|e| !e.chars().any(char::is_control))
+        .map(|e| e.trim().to_lowercase())
+        .collect()
+}
+
 /// Locks the managed users the file no longer declares (`FOR UPDATE`, in id
 /// order) and returns them for [`prune`]. Apply runs it before its first
 /// session, token, app or consent write: the deletes come last, but their
@@ -216,4 +257,16 @@ pub async fn prune(
         .await?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn referenced_addresses_are_folded_like_lookups() {
+        let emails = BTreeSet::from([" Ann@Example.com", "ann@example.com", "bad\0@x", "b@x"]);
+        let folded: Vec<String> = folded(&emails).into_iter().collect();
+        assert_eq!(folded, ["ann@example.com", "b@x"]);
+    }
 }
