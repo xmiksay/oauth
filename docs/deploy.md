@@ -1,10 +1,11 @@
 # Deployment and releases
 
 Images are built by `.github/workflows/ci.yml` and published to
-`ghcr.io/xmiksay/oauth`. This repository carries no deployment manifests:
-both environments' Kubernetes objects are owned by the ansible repo
-`Sourcelab/ansible`, role `oauth`; CI's `deploy-test` job only swaps the image
-digest of the existing `oauth-test` Deployment. [`examples/k8s.yml`](examples/k8s.yml) is a non-authoritative example
+`ghcr.io/xmiksay/oauth`. This repository carries no deployment manifests and
+CI never touches a cluster: both environments are Argo CD Applications in the
+separate deploy repo `Sourcelab/deploy` (chart `oauth`), whose Image Updater
+picks new image tags from GHCR; their Secrets, databases and certificates
+belong to the ansible repo `Sourcelab/ansible` (role `oauth`). [`examples/k8s.yml`](examples/k8s.yml) is a non-authoritative example
 (ConfigMap, Deployment, Service, PodDisruptionBudget, Ingress) used by nothing
 and not tested; the requirements below are what any deployment must meet.
 
@@ -165,19 +166,22 @@ per-run advisory lock, so only one replica does each run.
 |---|---|---|
 | `gate` | PR, push to `main`, `v*` tag | `make lint`, `make test`, `make web-build` |
 | `docker` | same | builds the `Dockerfile` (no push), writes the GHA layer cache |
-| `publish` | push to `main`, `v*` tag (this repo only, never PRs) | after `gate` + `docker`: builds and pushes; job output `digest` |
-| `deploy-test` | push to `main` | after `publish`: rolls the pushed digest out to deployment `oauth-test` in namespace `services` |
+| `publish` | push to `main`, `v*` tag (this repo only, never PRs) | after `gate` + `docker`: builds and pushes |
 
 Runs are serialised per ref (`concurrency: ci-<ref>`), so images are
-published and deployed in push order. A new push to a PR cancels its running
+published in push order. A new push to a PR cancels its running
 run. On `main` and tags at most one run waits behind the running one: a newer
 push supersedes that pending run, so not every push to `main` gets a gate run
 or a `:sha-` image.
 
 Image tags:
 
-- push to `main` → `:main` and `:sha-<7-char commit>`, built from the GHA
-  layer cache the `docker` job just wrote.
+- push to `main` → `:main`, `:sha-<7-char commit>` and
+  `:main-<YYYYMMDDHHmmss>`, built from the GHA layer cache the `docker` job
+  just wrote. The timestamp is the commit's committer time in UTC, so a re-run
+  republishes the same tag and newer `main` commits sort after older ones
+  (the job fails if `HEAD`'s committer time is earlier than its parent's).
+  Test follows the newest of these tags.
 - tag `vX.Y.Z` → `:X.Y.Z` only, built with `no-cache`. The GHA cache is
   ref-isolated (a PR's cache is visible only to that PR), so this is defence in
   depth: a release is a clean build that never reuses layers written by other
@@ -224,36 +228,21 @@ The workspace version and that commit show up in:
 
 ## Environments
 
-| Environment | URL | Image | Rolled out by |
+| Environment | URL | Argo CD Application | Image |
 |---|---|---|---|
-| test | https://test.oauth.cz (deployment `oauth-test`, namespace `services`) | `main`, by digest | CI job `deploy-test` on every push to `main` |
-| production | https://oauth.cz | `:X.Y.Z` from a `v*` tag | ansible: bump `oauth_version` in the `oauth` role, then `make services SERVICE=oauth` in `Sourcelab/ansible` |
+| test | https://test.oauth.cz (namespace `services`) | `oauth-test` | newest `:main-<YYYYMMDDHHmmss>` |
+| production | https://oauth.cz (namespace `services`) | `oauth` | newest `:X.Y.Z` (release tags only) |
 
-`deploy-test` runs in the GitHub environment `test` with
-`concurrency: deploy-test` (deploys queue, never cancel each other). It runs
-`kubectl -n services set image deployment/oauth-test oauth=ghcr.io/xmiksay/oauth@<digest>`
-and waits for `kubectl -n services rollout status deployment/oauth-test`
-(10 min timeout). Both touch only that Deployment, which is all CI's Role
-allows. Deploying by digest means test runs exactly the image that job published, even if `:main` has moved
-since. A job whose commit is no longer the tip of `main` (`git ls-remote`),
-e.g. a re-run of an old run, skips the rollout with a notice instead of
-rolling test back. Ansible must not pin the test Deployment's image, or the
-next ansible run reverts CI's rollout.
+Both are Applications of chart `oauth` in `Sourcelab/deploy` (automated sync
+with prune and self-heal). Argo CD Image Updater watches GHCR (package webhook
+of this repo, plus polling) and sets the newest allowed tag on the Application;
+Argo then rolls the Deployment. Nothing in this repository deploys, and nobody
+should `kubectl set image` either: Argo's self-heal reverts it. To pin or roll
+back, follow *Pin or roll back* in the deploy repo's README. Argo CD's own
+sign-in goes through production, so a broken production rollout is fixed with
+`kubectl` against the Application, not the Argo UI.
 
 ## Repository setup (one-time, by an admin)
-
-### `test` environment
-
-Create it and allow deployments from `main` only, so the environment secrets
-are unreachable from any other branch:
-
-```sh
-gh api -X PUT repos/xmiksay/oauth/environments/test --input - <<'EOF'
-{"deployment_branch_policy": {"protected_branches": false, "custom_branch_policies": true}}
-EOF
-gh api -X POST repos/xmiksay/oauth/environments/test/deployment-branch-policies \
-  -f name=main -f type=branch
-```
 
 ### Release tag ruleset
 
@@ -281,67 +270,24 @@ bypass them, so do not move a pushed tag: CI refuses to republish an existing
 
 ### Make the package public
 
-New GHCR packages are private, and the clusters pull without an image pull
-secret (the policy on the `oauth-test` Deployment forbids CI from adding
-`imagePullSecrets`).
-So right after the first `main` publish creates the package, and before any
-cluster can pull it, make it public: GitHub → the `oauth` package →
-*Package settings* → *Change visibility* → Public. (Also check *Manage Actions
-access* lists `xmiksay/oauth` with write access.) That first `deploy-test`
-cannot pull the private image and fails; re-run it once the package is
-public.
+New GHCR packages are private, and the cluster pulls (and Image Updater
+lists tags) without credentials. So right after the first `main` publish
+creates the package, and before any cluster can pull it, make it public:
+GitHub → the `oauth` package → *Package settings* → *Change visibility* →
+Public. (Also check *Manage Actions access* lists `xmiksay/oauth` with write
+access.)
 
 Push the first `v*` tag only after a `main` publish has created the package.
 Before that, the release tag's registry check fails closed (403); re-run it
 once `main` has published.
 
-## Deploy secrets
+### Package webhook
 
-The Kubernetes API (`https://172.16.16.1:6443`) is reachable only over the
-WireGuard hub, so `deploy-test` needs two **environment secrets of `test`**
-(not repository secrets: only jobs in that environment, on `main`, can read
-them). If either is missing (forks, a fresh setup) the job logs a notice and
-skips every step.
-
-| Secret | Content |
-|---|---|
-| `WG_CONFIG` | a complete `wg-quick` client config for the CI peer |
-| `KUBE_CONFIG` | base64 kubeconfig of service account `oauth-ci` in `services` |
-
-### `WG_CONFIG`
-
-1. Create a peer by hand in wireguard-ui on the hub. Set `AllowedIPs` to
-   `172.16.16.1/32` (only the API — the runner's other traffic must not use the
-   tunnel) and leave out `DNS =` (the runner has no `resolvconf`, and the API
-   is addressed by IP).
-2. In the ansible repo, restrict that peer's IP in the firewall to the API
-   port only (tcp 6443 on 172.16.16.1).
-3. Download the peer config and store it:
-
-   ```sh
-   gh secret set WG_CONFIG --env test -R xmiksay/oauth < peer.conf
-   rm peer.conf
-   ```
-
-### `KUBE_CONFIG`
-
-In `Sourcelab/ansible`. The service account's Role is limited by
-`resourceNames` to the `oauth-test` Deployment in `services`; `set image` and
-`rollout status` need `get`, `patch`, `list` and `watch` on it. It cannot read
-pods or replicasets, so the job must not touch anything else:
-
-```sh
-make kubeconfig-sa NS=services SA=oauth-ci | base64 -w0 | gh secret set KUBE_CONFIG --env test -R xmiksay/oauth
-```
-
-### How CI handles them
-
-Secrets reach steps only as environment variables, never on a command line
-and never echoed (no `set -x`). `WG_CONFIG` is written to
-`/etc/wireguard/wg0.conf` under `umask 077`, `KUBE_CONFIG` is decoded to a
-mode-600 file in `$RUNNER_TEMP`. A final `if: always()` step brings `wg0`
-down and deletes both files. kubectl is a pinned version whose SHA-256 is
-pinned in the workflow and checked before install.
+Image Updater learns about a pushed image from this repository's `package`
+webhook, which `make argocd-github-hooks` in `Sourcelab/ansible` creates (its
+secret never leaves that repo's vault); without it, Image Updater still finds
+new tags on its polling interval. The repository needs no Actions secrets and
+no deployment environment: CI only reads code and writes packages.
 
 ## Release procedure
 
@@ -359,8 +305,11 @@ pinned in the workflow and checked before install.
 3. Wait for `publish` to push `ghcr.io/xmiksay/oauth:X.Y.Z`. A mistake (wrong
    version, commit not on `main`, version already published) fails before
    pushing: fix it and release the next version rather than moving the tag.
-4. In `Sourcelab/ansible`, bump `oauth_version` to `X.Y.Z` in the `oauth`
-   role and run `make services SERVICE=oauth`.
+4. Nothing else: Argo CD Image Updater sees the new `X.Y.Z` (GHCR webhook or
+   its polling) and Argo rolls production out. Follow it in Argo CD
+   (Application `oauth`) or with
+   `kubectl -n services rollout status deployment/oauth`. Run any pre-check
+   from [Upgrade notes](#upgrade-notes) **before** pushing the tag.
 
 ## Upgrade notes
 
