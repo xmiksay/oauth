@@ -278,5 +278,18 @@ async fn apply_narrowing_an_admin_consent_after_a_scope_removal_does_not_deadloc
     ] {
         assert!(report.changes.iter().any(|c| c == line), "{report:#?}");
     }
-    assert_ne!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    // The refresh waited for apply's grant locks, so it reads the committed
+    // grants: the narrowed admin grant is a new row (delete + insert) outside
+    // the refresh statement's snapshot, so the resource reads as not
+    // consented. A later refresh is refused anyway: the family is revoked.
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(
+        body["error_description"],
+        "the resource has not been consented to for this client; sign in interactively",
+        "{body}"
+    );
+    // Apply revoked the family carrying the removed `Orders.Write`.
+    let (status, body) = f.refresh(&rt, None).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error_description"], "refresh token revoked", "{body}");
 }
