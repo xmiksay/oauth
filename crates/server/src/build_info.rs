@@ -18,6 +18,11 @@ pub const LONG_VERSION: &str = concat!(
     ")"
 );
 
+// `build.rs`'s git helpers, compiled here only so their tests run.
+#[cfg(test)]
+#[path = "../build/git.rs"]
+mod build_git;
+
 #[cfg(test)]
 mod tests {
     use super::*;

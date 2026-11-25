@@ -86,6 +86,8 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
 - Build identity (`build_info`): `crates/server/build.rs` bakes the commit from
   `GIT_SHA` (CI's docker build arg; the image context has no `.git`), else
   `git rev-parse`, else `unknown` — only 12 hex digits or `unknown` get through.
+  It reruns when HEAD moves (`build/git.rs::watched`: `HEAD`, `packed-refs`,
+  reflog `logs/HEAD`, loose branch ref — the reflog covers packed branches).
   It surfaces in `oauth --version`, the `serve` startup log, the
   `oauth_build_info{version,commit}` metric and the SPA footer via the
   `oauth-build` `<meta>` `spa` writes ([docs/deploy.md](../docs/deploy.md#build-version-and-commit)).

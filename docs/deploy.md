@@ -200,6 +200,17 @@ Dockerfile turns it into the `GIT_SHA` env of the `cargo build`, and
 build context has no `.git`, so an image built without the arg reports
 `unknown`; `make docker` passes the checkout's HEAD). Outside Docker,
 `build.rs` falls back to `git rev-parse --short=12 HEAD`, then `unknown`.
+
+Local builds (`make build`, `make run`, any deployment built from a checkout
+without `GIT_SHA`) therefore take the commit from `git`. `build.rs` reruns
+when HEAD moves: it watches `HEAD`, `packed-refs`, the reflog `logs/HEAD`
+and the branch's loose ref (all via `git rev-parse --git-path`, so linked
+worktrees work). The reflog is what catches a commit or fast-forward on a
+branch whose ref `git gc` / `pack-refs` had packed; in a repository without
+a reflog (`core.logAllRefUpdates=false`) the script watches the not yet
+existing loose ref instead, which makes cargo rerun it on every build while
+the branch stays packed. `crates/server/build/git.rs` holds that logic (the
+library's unit tests include it).
 The workspace version and that commit show up in:
 
 - `oauth --version` → `oauth X.Y.Z (<commit>)`;
