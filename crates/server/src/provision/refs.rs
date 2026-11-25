@@ -8,7 +8,10 @@ use std::collections::{BTreeSet, HashSet};
 
 use anyhow::bail;
 use entity::applications;
-use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter};
+use sea_orm::{
+    ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter,
+    sea_query::{Expr, Func},
+};
 
 use super::{ctx::Ctx, spec::Spec};
 use crate::directory;
@@ -61,13 +64,17 @@ pub fn principals(spec: &Spec) -> Refs<'_> {
     }
 }
 
-/// `names` as the lookups match them (trimmed, lowercase), minus those that
-/// can't be stored (Postgres rejects NUL in a parameter).
-pub fn folded(names: &BTreeSet<&str>) -> BTreeSet<String> {
+/// `names` as the lookups match them: trimmed, then lowercased by Postgres
+/// (`lower($1)`, as `find_user_by_email` / `Ctx::find_group` do; Rust's
+/// `to_lowercase` disagrees with it on e.g. `İ` or a final sigma, so a
+/// name lowercased in Rust could resolve in the lookup yet never be
+/// locked). Drops the names that can't be stored (Postgres rejects NUL in
+/// a parameter).
+pub fn lowered(names: &BTreeSet<&str>) -> Vec<Expr> {
     names
         .iter()
         .filter(|n| !n.chars().any(char::is_control))
-        .map(|n| fold(n))
+        .map(|n| Func::lower(Expr::val(n.trim())).into())
         .collect()
 }
 
@@ -133,6 +140,8 @@ pub async fn check(conn: &impl ConnectionTrait, cx: &Ctx, spec: &Spec) -> anyhow
 
 #[cfg(test)]
 mod tests {
+    use sea_orm::sea_query::{Alias, ExprTrait, PostgresQueryBuilder, Query};
+
     use super::*;
     use crate::provision::parse;
 
@@ -176,9 +185,15 @@ admin_consents: [{ client: web, resource: api }]
     }
 
     #[test]
-    fn names_are_folded_like_lookups() {
-        let names = BTreeSet::from([" Ann@Example.com", "ann@example.com", "bad\0@x", "b@x"]);
-        let folded: Vec<String> = folded(&names).into_iter().collect();
-        assert_eq!(folded, ["ann@example.com", "b@x"]);
+    fn names_are_lowered_by_postgres_like_lookups() {
+        let names = BTreeSet::from([" Ann@Example.com", "ΟΜΑΣ", "bad\0@x", "b@x"]);
+        let lowered = lowered(&names);
+        assert_eq!(lowered.len(), 3);
+        let mut sql = Query::select();
+        sql.expr(Expr::expr(Expr::col(Alias::new("c"))).is_in(lowered));
+        assert_eq!(
+            sql.to_string(PostgresQueryBuilder),
+            r#"SELECT "c" IN (LOWER('Ann@Example.com'), LOWER('b@x'), LOWER('ΟΜΑΣ'))"#
+        );
     }
 }

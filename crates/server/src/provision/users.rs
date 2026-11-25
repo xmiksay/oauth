@@ -188,13 +188,13 @@ pub async fn lock_referenced(
     cx: &Ctx,
     emails: &BTreeSet<&str>,
 ) -> anyhow::Result<()> {
-    let folded = refs::folded(emails);
-    if folded.is_empty() {
+    let lowered = refs::lowered(emails);
+    if lowered.is_empty() {
         return Ok(());
     }
     users::Entity::find()
         .filter(users::Column::TenantId.eq(cx.tenant_id))
-        .filter(Expr::expr(Func::lower(Expr::col(users::Column::Email))).is_in(folded))
+        .filter(Expr::expr(Func::lower(Expr::col(users::Column::Email))).is_in(lowered))
         .order_by_asc(users::Column::Id)
         .lock(LockType::KeyShare)
         .all(conn)

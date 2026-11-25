@@ -218,10 +218,14 @@ the Secret / config table in `docs/deploy.md`, the example `docs/examples/k8s.ym
   an app cascades to those, and an `ON CONFLICT DO NOTHING` insert runs no
   FK check. App writers lock it `FOR NO KEY UPDATE` (`app_rules::lock_app`;
   no conflict with key-share), deleting it or changing `client_id` /
-  `identifier_uri` takes `FOR UPDATE`; `oauth apply` takes every user lock,
-  then every app lock (`provision::apps::lock`), before its first app,
-  consent, session or token write (`apps::relock` refuses an app it didn't
-  lock). Consent before tokens: a multi-resource refresh holds its consent
+  `identifier_uri` takes `FOR UPDATE`; `oauth apply` takes every user lock
+  (the users and groups the file refers to `FOR KEY SHARE`, id order:
+  `users::lock_referenced` / `groups::lock_referenced`), then every app lock
+  (`provision::app_locks::lock`, which also takes `FOR KEY SHARE` on apps the
+  file only references), before its first app, consent, session or token
+  write and before `grant_locks::lock` — otherwise a later insert's FK check
+  would lock those parents after the grant locks are held
+  (`app_locks::relock` refuses an app it didn't lock). Consent before tokens: a multi-resource refresh holds its consent
   rows `FOR SHARE` (id order) before its token row, so a writer finishes
   every consent write before it revokes a token it doesn't hold through a
   user lock (scope deletion rewrites the grants in id order first, then
